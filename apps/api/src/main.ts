@@ -1,0 +1,14 @@
+import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { setupApp } from './setup-app';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  setupApp(app);
+  const port = Number(process.env.PORT ?? 3333);
+  await app.listen(port);
+  console.log(`API Delivery360 em http://localhost:${port}`);
+}
+
+void bootstrap();

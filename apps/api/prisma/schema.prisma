@@ -1,0 +1,176 @@
+// Núcleo (core) do Delivery360: restaurantes (tenants), módulos, planos, usuários,
+// auditoria e fila de eventos entre módulos.
+// Regra: toda tabela de negócio dos módulos terá a coluna tenant_id.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum StaffRole {
+  SUPER_ADMIN
+  ACCOUNT_MANAGER
+}
+
+enum TenantRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+/// Restaurante cliente. Cada um é isolado dos demais.
+model Tenant {
+  id        String       @id @default(uuid()) @db.Uuid
+  name      String
+  legalName String?      @map("legal_name")
+  cnpj      String?      @unique
+  phone     String?
+  email     String?
+  status    TenantStatus @default(ACTIVE)
+  planId    String?      @map("plan_id") @db.Uuid
+  plan      Plan?        @relation(fields: [planId], references: [id])
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  modules         TenantModule[]
+  memberships     Membership[]
+  accountManagers AccountManagerTenant[]
+  auditLogs       AuditLog[]
+  events          DomainEvent[]
+
+  @@map("tenants")
+}
+
+/// Catálogo de módulos (gestao, cardapio, entregas, trafego).
+model Module {
+  code        String  @id
+  name        String
+  description String?
+
+  plans   PlanModule[]
+  tenants TenantModule[]
+
+  @@map("modules")
+}
+
+/// Plano comercial = pacote de módulos.
+model Plan {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  modules PlanModule[]
+  tenants Tenant[]
+
+  @@map("plans")
+}
+
+model PlanModule {
+  planId     String @map("plan_id") @db.Uuid
+  moduleCode String @map("module_code")
+  plan       Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  module     Module @relation(fields: [moduleCode], references: [code])
+
+  @@id([planId, moduleCode])
+  @@map("plan_modules")
+}
+
+/// A "chave" de cada módulo por restaurante. Desligar não apaga dados.
+model TenantModule {
+  tenantId   String    @map("tenant_id") @db.Uuid
+  moduleCode String    @map("module_code")
+  active     Boolean   @default(true)
+  startsAt   DateTime? @map("starts_at")
+  /// Fim opcional (ex.: período de teste).
+  endsAt     DateTime? @map("ends_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  module     Module    @relation(fields: [moduleCode], references: [code])
+
+  @@id([tenantId, moduleCode])
+  @@map("tenant_modules")
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  name         String
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  /// Papel na nossa equipe; null para usuários de restaurante.
+  staffRole    StaffRole? @map("staff_role")
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  memberships   Membership[]
+  managedTenants AccountManagerTenant[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+/// Vínculo de um usuário com um restaurante.
+model Membership {
+  userId    String     @map("user_id") @db.Uuid
+  tenantId  String     @map("tenant_id") @db.Uuid
+  role      TenantRole
+  createdAt DateTime   @default(now()) @map("created_at")
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([userId, tenantId])
+  @@map("memberships")
+}
+
+/// Carteira do gestor de conta: quais restaurantes ele atende.
+model AccountManagerTenant {
+  userId   String @map("user_id") @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([userId, tenantId])
+  @@map("account_manager_tenants")
+}
+
+/// Quem alterou o quê, quando e em qual restaurante.
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String?  @map("tenant_id") @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id")
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}
+
+/// Fila de eventos entre módulos (ex.: pedido.entregue -> lançamento no financeiro).
+model DomainEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  type        String
+  payload     Json
+  createdAt   DateTime  @default(now()) @map("created_at")
+  processedAt DateTime? @map("processed_at")
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([processedAt, createdAt])
+  @@map("domain_events")
+}
