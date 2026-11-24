@@ -1,0 +1,62 @@
+# Delivery360
+
+Sistema modular de gestão para restaurantes e deliverys: loja online com pedido e pagamento,
+painel de pedidos, cozinha, entregas com motoboys, gestão (funcionários, folha, folgas, financeiro, DRE)
+e tráfego. Cada módulo é ligado ou desligado por restaurante no painel admin.
+
+## Estrutura
+
+```
+apps/
+  api/              NestJS + Prisma + PostgreSQL
+  web/              Next.js: painel admin, sistema do restaurante (e, em breve, loja online e cozinha)
+  app-entregador/   App iOS/Android (Expo) — Sprints 4 e 5
+  app-gerente/      App iOS/Android (Expo) — Sprints 8 e 9
+packages/
+  shared/           Códigos de módulo, papéis e tipos usados pela API, web e apps
+docs/               Plano de desenvolvimento
+```
+
+## Como rodar
+
+Requisitos: Node 22+, pnpm 10+, PostgreSQL 16 (ou Docker).
+
+```bash
+pnpm install
+docker compose up -d                # Postgres em localhost:5432 (ou use um Postgres seu)
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env.local
+pnpm --filter @delivery360/shared build
+pnpm db:migrate                     # cria as tabelas
+pnpm db:seed                        # módulos, planos e o super admin
+pnpm dev                            # API em :3333 e web em :3000
+```
+
+Login inicial (só desenvolvimento): `admin@delivery360.local` / `admin123`
+(mude em `SEED_ADMIN_EMAIL` e `SEED_ADMIN_PASSWORD` antes de rodar o seed em produção).
+
+## Testes
+
+```bash
+pnpm --filter @delivery360/api test        # regras de acesso
+pnpm --filter @delivery360/api test:e2e    # API completa contra o banco delivery360_test
+```
+
+Os testes e2e esvaziam o banco de teste a cada execução e se recusam a rodar se o nome do banco
+não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TEST_DATABASE_URL`).
+
+## Como funcionam os módulos
+
+- Códigos: `gestao`, `cardapio`, `entregas`, `trafego` (`packages/shared/src/modules.ts`).
+- O admin liga/desliga cada módulo por restaurante (com data de fim opcional, para teste grátis),
+  ou troca o plano, que liga os módulos do plano e desliga os demais. Nada é apagado ao desligar.
+- Na API, `@RequireModule('gestao')` bloqueia a rota se o módulo não estiver ativo para o restaurante
+  do cabeçalho `x-tenant-id`. O menu da web usa a mesma lista (`GET /tenant/context`).
+
+## Perfis
+
+| Perfil | Pode |
+| --- | --- |
+| Super admin | Tudo: restaurantes, planos, módulos, status, equipe, auditoria |
+| Gestor de conta | Ver e editar os restaurantes da sua carteira e seus usuários; entrar como cliente |
+| Dono / Gerente / Funcionário | Usar o sistema do restaurante nos módulos contratados |
