@@ -59,6 +59,7 @@ export default function PainelPedidosPage() {
   }
   if (!orders) return error ? <ErrorBox message={error} /> : <Spinner />;
 
+  const withCouriers = tenant.activeModules.includes('entregas');
   const canCancel = tenant.role === null || tenant.role === 'OWNER' || tenant.role === 'MANAGER';
   const done = orders.filter((o) => o.status === 'COMPLETED' || o.status === 'CANCELLED').reverse();
   const needsUnlock = sound && !soundUnlocked();
@@ -112,6 +113,7 @@ export default function PainelPedidosPage() {
                     now={now}
                     highlight={flash.has(o.id)}
                     canCancel={canCancel}
+                    withCouriers={withCouriers}
                     onSeen={() => setFlash((cur) => { const n = new Set(cur); n.delete(o.id); return n; })}
                     onMove={(to, note) => void move(o.id, to, note)}
                     onPrint={() => printOrder(o, tenant.name)}
@@ -150,6 +152,7 @@ function OrderCard({
   now,
   highlight,
   canCancel,
+  withCouriers,
   onSeen,
   onMove,
   onPrint,
@@ -158,11 +161,13 @@ function OrderCard({
   now: number;
   highlight: boolean;
   canCancel: boolean;
+  withCouriers: boolean;
   onSeen: () => void;
   onMove: (to: OrderStatus, note?: string) => void;
   onPrint: () => void;
 }) {
-  const action = primaryAction(o);
+  const action = primaryAction(o, withCouriers);
+  const awaitingCourier = withCouriers && o.type === 'DELIVERY' && o.status === 'READY';
   const mins = minutesSince(o, now);
   const late = mins >= 30;
 
@@ -209,7 +214,10 @@ function OrderCard({
             {action.label}
           </button>
         )}
-        {o.status === 'IN_PREPARATION' && o.type === 'DELIVERY' && (
+        {awaitingCourier && (
+          <Link href="/app/entregas" className="btn-primary flex-1 py-1.5">Despachar com motoboy</Link>
+        )}
+        {o.status === 'IN_PREPARATION' && o.type === 'DELIVERY' && !withCouriers && (
           <button className="btn-ghost py-1.5" onClick={() => onMove('READY')} title="Pronto, aguardando o motoboy">
             Pronto
           </button>

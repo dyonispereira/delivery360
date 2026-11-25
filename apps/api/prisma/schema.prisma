@@ -48,12 +48,14 @@ model Tenant {
   auditLogs       AuditLog[]
   events          DomainEvent[]
 
-  store          Store?
-  deliveryZones  DeliveryZone[]
-  menuCategories MenuCategory[]
-  products       Product[]
-  customers      Customer[]
-  orders         Order[]
+  store           Store?
+  deliveryZones   DeliveryZone[]
+  menuCategories  MenuCategory[]
+  products        Product[]
+  customers       Customer[]
+  orders          Order[]
+  couriers        Courier[]
+  deliveryBatches DeliveryBatch[]
 
   @@map("tenants")
 }
@@ -362,6 +364,12 @@ model Order {
   utmCampaign       String?              @map("utm_campaign")
   /// Primeira impressão do pedido (evita imprimir de novo em outra tela).
   printedAt         DateTime?            @map("printed_at")
+  /// Lote de entrega (motoboy) em que o pedido saiu.
+  batchId           String?              @map("batch_id") @db.Uuid
+  batch             DeliveryBatch?       @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  deliveredAt       DateTime?            @map("delivered_at")
+  /// Tentativas erradas do código de 4 dígitos (trava em 5).
+  deliveryCodeFails Int                  @default(0) @map("delivery_code_fails")
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
   tenant            Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -372,6 +380,7 @@ model Order {
 
   @@unique([tenantId, number])
   @@index([tenantId, status, createdAt])
+  @@index([batchId])
   @@map("orders")
 }
 
@@ -439,4 +448,51 @@ model Payment {
 
   @@unique([provider, externalId])
   @@map("payments")
+}
+
+// ---------- Entregas ----------
+
+enum BatchStatus {
+  OUT
+  DONE
+  CANCELLED
+}
+
+/// Motoboy cadastrado pelo restaurante. Entra na tela do entregador por um link secreto.
+model Courier {
+  id          String          @id @default(uuid()) @db.Uuid
+  tenantId    String          @map("tenant_id") @db.Uuid
+  name        String
+  phone       String
+  /// Quanto o restaurante paga por entrega (vai para a Gestão como custo).
+  feeCents    Int             @default(0) @map("fee_cents")
+  active      Boolean         @default(true)
+  /// Token do link /entregador/<token>; trocar o token derruba o link antigo.
+  accessToken String          @unique @map("access_token")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  batches     DeliveryBatch[]
+
+  @@index([tenantId])
+  @@map("couriers")
+}
+
+/// Lote: pedidos que saem juntos com um motoboy.
+model DeliveryBatch {
+  id         String      @id @default(uuid()) @db.Uuid
+  tenantId   String      @map("tenant_id") @db.Uuid
+  number     Int
+  courierId  String      @map("courier_id") @db.Uuid
+  status     BatchStatus @default(OUT)
+  createdBy  String?     @map("created_by") @db.Uuid
+  createdAt  DateTime    @default(now()) @map("created_at")
+  finishedAt DateTime?   @map("finished_at")
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courier    Courier     @relation(fields: [courierId], references: [id])
+  orders     Order[]
+
+  @@unique([tenantId, number])
+  @@index([courierId, status])
+  @@map("delivery_batches")
 }

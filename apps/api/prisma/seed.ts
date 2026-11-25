@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { randomBytes } from 'node:crypto';
 import { MODULES, MODULE_CODES, type ModuleCode } from '@delivery360/shared';
 
 const prisma = new PrismaClient();
@@ -51,7 +52,8 @@ async function main() {
 /** Restaurante de demonstração para o link de teste (só roda com SEED_DEMO=true e só uma vez). */
 async function seedDemo() {
   const slug = 'pizzaria-demo';
-  if (await prisma.store.findUnique({ where: { slug } })) return;
+  const existing = await prisma.store.findUnique({ where: { slug } });
+  if (existing) return seedDemoCourier(existing.tenantId);
   const plan = await prisma.plan.findUniqueOrThrow({ where: { name: 'Gestão 360' }, include: { modules: true } });
   const tenant = await prisma.tenant.create({
     data: {
@@ -114,7 +116,16 @@ async function seedDemo() {
       { tenantId: tenant.id, categoryId: bebidas.id, name: 'Suco natural 500ml', priceCents: 1000, position: 1 },
     ],
   });
+  await seedDemoCourier(tenant.id);
   console.log(`Restaurante demo criado: /loja/${slug} (dono: ${email})`);
+}
+
+/** Motoboy de demonstração (criado também em demos antigas, que não tinham). */
+async function seedDemoCourier(tenantId: string) {
+  if (await prisma.courier.count({ where: { tenantId } })) return;
+  await prisma.courier.create({
+    data: { tenantId, name: 'Carlos Demo', phone: '5511900000000', feeCents: 700, accessToken: randomBytes(18).toString('base64url') },
+  });
 }
 
 main()

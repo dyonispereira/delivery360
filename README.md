@@ -58,6 +58,17 @@ não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TES
   gateway de teste, ligado por `PAYMENTS_FAKE_ENABLED="true"`, que mostra o botão "Simular pagamento".
   **Nunca ligue isso em produção.** PIX não pago expira em 15 minutos.
 
+## Entregas (módulo Entregas)
+
+- Em **Entregas > Motoboys**, o restaurante cadastra o motoboy (nome, celular e quanto paga por entrega)
+  e envia pelo WhatsApp o link pessoal dele: `/entregador/<link>`. "Gerar novo link" derruba o antigo.
+- Com o módulo ligado, o pedido de entrega para em "Pronto" no painel. Em **Entregas > Lotes**,
+  marca-se os pedidos que saem juntos, escolhe-se o motoboy e eles passam para "Em entrega".
+- Na tela do entregador (celular), ele vê endereço, mapa, quanto cobrar e troco. Para finalizar,
+  digita os **4 últimos dígitos do telefone do cliente**. O motoboy não vê esses dígitos. Depois de
+  5 erros o código trava até o dono ou gerente liberar.
+- Cada entrega confirmada gera o evento `entrega.concluida` com o valor pago ao motoboy, para a Gestão.
+
 ## Como funcionam os módulos
 
 - Códigos: `gestao`, `cardapio`, `entregas`, `trafego` (`packages/shared/src/modules.ts`).

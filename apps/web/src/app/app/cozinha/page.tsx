@@ -54,7 +54,7 @@ export default function CozinhaPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {list.map((o) => (
-            <KitchenCard key={o.id} order={o} now={now} onMove={(to) => void move(o.id, to)} />
+            <KitchenCard key={o.id} order={o} now={now} withCouriers={tenant.activeModules.includes('entregas')} onMove={(to) => void move(o.id, to)} />
           ))}
         </div>
       )}
@@ -62,9 +62,9 @@ export default function CozinhaPage() {
   );
 }
 
-function KitchenCard({ order: o, now, onMove }: { order: BoardOrder; now: number; onMove: (to: OrderStatus) => void }) {
+function KitchenCard({ order: o, now, withCouriers, onMove }: { order: BoardOrder; now: number; withCouriers: boolean; onMove: (to: OrderStatus) => void }) {
   const mins = minutesSince(o, now);
-  const action = primaryAction(o);
+  const action = primaryAction(o, withCouriers);
   const header =
     o.status === 'PAID' ? 'bg-red-600' : o.status === 'IN_PREPARATION' ? 'bg-amber-500 text-zinc-900' : 'bg-emerald-600';
   const label = o.status === 'PAID' ? 'NOVO' : o.status === 'IN_PREPARATION' ? 'EM PREPARO' : 'PRONTO';
@@ -96,6 +96,7 @@ function KitchenCard({ order: o, now, onMove }: { order: BoardOrder; now: number
         </ul>
         {o.notes && <p className="font-bold text-amber-300">⚠ {o.notes}</p>}
       </div>
+      {!action && o.status === 'READY' && <p className="m-3 rounded-lg bg-zinc-700 py-3 text-center font-semibold">Aguardando motoboy</p>}
       {action && (
         <button className="m-3 rounded-lg bg-white py-3 text-lg font-bold text-zinc-900 active:scale-95" onClick={() => onMove(action.to)}>
           {action.label}
