@@ -29,6 +29,7 @@ export class UpdateStoreDto {
   @IsOptional() @IsString() @MinLength(2) @MaxLength(80) displayName?: string;
   @IsOptional() @IsString() @MaxLength(500) description?: string;
   @IsOptional() @IsUrl({ require_protocol: true }) logoUrl?: string;
+  @IsOptional() @IsUrl({ require_protocol: true }) coverUrl?: string;
   @IsOptional() @Matches(/^\d{10,13}$/, { message: 'WhatsApp: só números, com DDD.' }) whatsapp?: string;
   @IsOptional() @IsString() @MaxLength(80) city?: string;
   @IsOptional() @IsBoolean() isOpen?: boolean;

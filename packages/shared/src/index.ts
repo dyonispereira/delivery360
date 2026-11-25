@@ -4,3 +4,4 @@ export * from './api-types';
 export * from './orders';
 export * from './costing';
 export * from './channels';
+export * from './reorder';

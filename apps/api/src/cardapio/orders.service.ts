@@ -27,6 +27,7 @@ const ONLINE_METHODS: PaymentMethod[] = ['PIX', 'CREDIT_CARD'];
 
 /** Até quantos dias depois de receber o cliente ainda pode avaliar e dar gorjeta. */
 const FEEDBACK_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function trackingCode(): string {
   // 12 caracteres sem ambiguidade (sem 0/O/1/l): difícil de adivinhar, fácil de ditar.
@@ -82,7 +83,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async getPublicMenu(slug: string) {
     const store = await this.findPublicStore(slug);
     const tenantId = store.tenantId;
-    const [categories, zones] = await Promise.all([
+    const [categories, zones, ratings, top] = await Promise.all([
       this.prisma.menuCategory.findMany({
         where: { tenantId, active: true },
         orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
@@ -114,13 +115,29 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         },
       }),
       this.prisma.deliveryZone.findMany({ where: { tenantId, active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true, feeCents: true } }),
+      // Nota média das avaliações dos últimos 180 dias.
+      this.prisma.order.aggregate({
+        where: { tenantId, ratedAt: { gte: new Date(Date.now() - 180 * DAY_MS) }, ratingStore: { not: null } },
+        _avg: { ratingStore: true },
+        _count: { ratingStore: true },
+      }),
+      // Mais pedidos dos últimos 30 dias (só pedidos que não foram cancelados).
+      this.prisma.orderItem.groupBy({
+        by: ['productId'],
+        where: { productId: { not: null }, order: { tenantId, status: { not: 'CANCELLED' }, createdAt: { gte: new Date(Date.now() - 30 * DAY_MS) } } },
+        _sum: { quantity: true },
+        orderBy: { _sum: { quantity: 'desc' } },
+        take: 12,
+      }),
     ]);
+    const visible = new Set(categories.flatMap((c) => c.products.filter((p) => p.available).map((p) => p.id)));
     return {
       store: {
         slug: store.slug,
         displayName: store.displayName,
         description: store.description,
         logoUrl: store.logoUrl,
+        coverUrl: store.coverUrl,
         whatsapp: store.whatsapp,
         isOpen: store.isOpen,
         acceptsDelivery: store.acceptsDelivery,
@@ -128,8 +145,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         minOrderCents: store.minOrderCents,
         paymentMethods: store.paymentMethods.filter((m) => m !== 'CREDIT_CARD'),
         estimatedMinutes: store.estimatedMinutes,
+        rating: ratings._count.ratingStore >= 3 ? { average: Math.round((ratings._avg.ratingStore ?? 0) * 10) / 10, count: ratings._count.ratingStore } : null,
       },
       categories: categories.filter((c) => c.products.length > 0),
+      topProductIds: top.map((t) => t.productId!).filter((id) => visible.has(id)).slice(0, 8),
       zones,
     };
   }
@@ -315,12 +334,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           ? { street: order.addressStreet, number: order.addressNumber, complement: order.addressComplement, zone: order.deliveryZoneName }
           : null,
       items: order.items.map((i) => ({
+        productId: i.productId,
         name: i.name,
         quantity: i.quantity,
         unitPriceCents: i.unitPriceCents,
         totalCents: i.totalCents,
         notes: i.notes,
-        options: i.options.map((o) => ({ groupName: o.groupName, name: o.name, priceCents: o.priceCents })),
+        options: i.options.map((o) => ({ optionId: o.optionId, groupName: o.groupName, name: o.name, priceCents: o.priceCents })),
       })),
       subtotalCents: order.subtotalCents,
       deliveryFeeCents: order.deliveryFeeCents,

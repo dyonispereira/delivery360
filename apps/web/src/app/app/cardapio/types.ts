@@ -25,6 +25,7 @@ export interface Store {
   displayName: string;
   description: string | null;
   logoUrl: string | null;
+  coverUrl: string | null;
   whatsapp: string | null;
   city: string | null;
   isOpen: boolean;
