@@ -30,14 +30,20 @@ export interface BoardOrder {
 }
 
 /** Próximo passo principal de cada status (o botão grande do cartão). */
-export function primaryAction(o: Pick<BoardOrder, 'status' | 'type'>): { to: OrderStatus; label: string } | null {
+/**
+ * Com o módulo Entregas, o pedido de entrega para em "Pronto" e sai pelo lote do motoboy
+ * (tela Entregas); sem o módulo, a própria loja marca "Saiu para entrega".
+ */
+export function primaryAction(o: Pick<BoardOrder, 'status' | 'type'>, withCouriers = false): { to: OrderStatus; label: string } | null {
   switch (o.status) {
     case 'PAID':
       return { to: 'IN_PREPARATION', label: 'Iniciar preparo' };
     case 'IN_PREPARATION':
-      return o.type === 'DELIVERY' ? { to: 'OUT_FOR_DELIVERY', label: 'Saiu para entrega' } : { to: 'READY', label: 'Pronto para retirar' };
+      if (o.type === 'PICKUP') return { to: 'READY', label: 'Pronto para retirar' };
+      return withCouriers ? { to: 'READY', label: 'Pronto' } : { to: 'OUT_FOR_DELIVERY', label: 'Saiu para entrega' };
     case 'READY':
-      return o.type === 'DELIVERY' ? { to: 'OUT_FOR_DELIVERY', label: 'Saiu para entrega' } : { to: 'COMPLETED', label: 'Cliente retirou' };
+      if (o.type === 'PICKUP') return { to: 'COMPLETED', label: 'Cliente retirou' };
+      return withCouriers ? null : { to: 'OUT_FOR_DELIVERY', label: 'Saiu para entrega' };
     case 'OUT_FOR_DELIVERY':
       return { to: 'COMPLETED', label: 'Finalizar (entregue)' };
     default:

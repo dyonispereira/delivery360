@@ -19,6 +19,7 @@ import { CreateOrderDto } from './cardapio.dto';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
 import { ACTIVE_STATUSES, canTransition } from './order-status';
 import { AuditService } from '../core/audit.service';
+import { closeBatchIfDone } from '../entregas/batch-utils';
 
 /** Pagamentos que dependem de confirmação do gateway antes de o pedido entrar na operação. */
 const ONLINE_METHODS: PaymentMethod[] = ['PIX', 'CREDIT_CARD'];
@@ -276,6 +277,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         statusHistory: { orderBy: { createdAt: 'asc' }, select: { status: true, createdAt: true } },
         payments: { orderBy: { createdAt: 'desc' }, take: 1 },
         tenant: { select: { store: { select: { slug: true, displayName: true, whatsapp: true, estimatedMinutes: true } } } },
+        batch: { select: { courier: { select: { name: true } } } },
       },
     });
     if (!order) throw new NotFoundException('Pedido não encontrado.');
@@ -314,6 +316,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         : null,
       history: order.statusHistory,
       store: order.tenant.store,
+      // Só o primeiro nome do motoboy, enquanto o pedido está com ele.
+      courierName: order.status === 'OUT_FOR_DELIVERY' && order.batch ? order.batch.courier.name.split(' ')[0] : null,
     };
   }
 
@@ -416,6 +420,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         tx,
       );
       await this.events.publish(tenantId, to === 'CANCELLED' ? 'pedido.cancelado' : 'pedido.status', { orderId, from: order.status, to, totalCents: order.totalCents }, tx);
+      if (to === 'COMPLETED') await tx.order.update({ where: { id: orderId }, data: { deliveredAt: new Date() } });
+      await closeBatchIfDone(tx, order.batchId);
       return tx.order.findUniqueOrThrow({ where: { id: orderId } });
     });
   }

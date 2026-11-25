@@ -99,6 +99,9 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
             ))}
           </ol>
         )}
+        {order.status === 'OUT_FOR_DELIVERY' && order.courierName && (
+          <p className="mt-4 text-sm font-medium">🛵 {order.courierName} está levando seu pedido.</p>
+        )}
         {order.store && !FINAL.includes(order.status) && order.status !== 'AWAITING_PAYMENT' && (
           <p className="mt-4 text-sm text-zinc-500">Tempo estimado: cerca de {order.store.estimatedMinutes} minutos.</p>
         )}
@@ -178,7 +181,7 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
           <p className="text-zinc-600">Retire seu pedido no balcão informando o número #{order.number}.</p>
         )}
         {order.type === 'DELIVERY' && (
-          <p className="mt-2 text-zinc-500">Na entrega, o entregador vai pedir os 4 últimos dígitos do seu telefone para confirmar.</p>
+          <p className="mt-2 text-zinc-500">Na entrega, informe ao entregador os <b>4 últimos dígitos do seu telefone</b>: é o código que confirma que o pedido chegou em você.</p>
         )}
       </section>
 

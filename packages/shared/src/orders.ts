@@ -101,4 +101,5 @@ export interface OrderTracking {
   payment: { status: PaymentStatus; pixCopyPaste: string | null; expiresAt: string | null; canSimulate: boolean } | null;
   history: { status: OrderStatus; createdAt: string }[];
   store: { slug: string; displayName: string; whatsapp: string | null; estimatedMinutes: number } | null;
+  courierName: string | null;
 }
