@@ -1,6 +1,6 @@
-import type { PaymentMethod } from '@delivery360/shared';
+import type { CostItem, PaymentMethod } from '@delivery360/shared';
 
-export interface Option { id: string; name: string; priceCents: number; available: boolean; position: number }
+export interface Option { id: string; name: string; priceCents: number; costCents?: number; available: boolean; position: number }
 export interface Group { id: string; name: string; minSelect: number; maxSelect: number; position: number; options: Option[] }
 export interface Product {
   id: string;
@@ -11,6 +11,9 @@ export interface Product {
   imageUrl: string | null;
   active: boolean;
   available: boolean;
+  /** Ficha técnica (só dono e gerente recebem). */
+  costItems?: CostItem[];
+  extraCostBps?: number;
   optionGroups: Group[];
 }
 export interface Category { id: string; name: string; position: number; active: boolean; products: Product[] }

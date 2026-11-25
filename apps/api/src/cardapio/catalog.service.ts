@@ -33,6 +33,11 @@ export function slugify(name: string): string {
  * Cadastro do cardápio e configuração da loja, sempre dentro do restaurante atual.
  * Toda busca por id filtra também por tenantId: um restaurante nunca mexe no cardápio de outro.
  */
+
+/** Ficha técnica vai para o banco como JSON simples (sem as classes do validador). */
+const toJson = (items: { name: string; kind: string; costCents: number }[]) =>
+  items.map((i) => ({ name: i.name.trim(), kind: i.kind, costCents: i.costCents })) as Prisma.InputJsonValue;
+
 @Injectable()
 export class CatalogService {
   constructor(
@@ -149,16 +154,28 @@ export class CatalogService {
     return { ok: true };
   }
 
+  async costRates(tenantId: string) {
+    const s = await this.prisma.financeSettings.findUnique({ where: { tenantId } });
+    return {
+      salesTaxBps: s?.salesTaxBps ?? 0,
+      pixFeeBps: s?.pixFeeBps ?? 0,
+      creditFeeBps: s?.creditFeeBps ?? 0,
+      cardOnDeliveryFeeBps: s?.cardOnDeliveryFeeBps ?? 0,
+      targetMarginBps: s?.targetMarginBps ?? 2000,
+      configured: !!s,
+    };
+  }
+
   async createProduct(tenantId: string, dto: ProductDto) {
     await this.own('menuCategory', tenantId, dto.categoryId);
     const position = dto.position ?? (await this.prisma.product.count({ where: { categoryId: dto.categoryId } }));
-    return this.prisma.product.create({ data: { ...dto, tenantId, name: dto.name.trim(), position } });
+    return this.prisma.product.create({ data: { ...dto, costItems: toJson(dto.costItems ?? []), tenantId, name: dto.name.trim(), position } });
   }
 
   async updateProduct(tenantId: string, id: string, dto: UpdateProductDto) {
     await this.own('product', tenantId, id);
     if (dto.categoryId) await this.own('menuCategory', tenantId, dto.categoryId);
-    return this.prisma.product.update({ where: { id }, data: { ...dto, name: dto.name?.trim() } });
+    return this.prisma.product.update({ where: { id }, data: { ...dto, costItems: dto.costItems ? toJson(dto.costItems) : undefined, name: dto.name?.trim() } });
   }
 
   async deleteProduct(tenantId: string, id: string) {
@@ -193,7 +210,7 @@ export class CatalogService {
   async createOption(tenantId: string, groupId: string, dto: OptionDto) {
     await this.own('optionGroup', tenantId, groupId);
     const position = dto.position ?? (await this.prisma.option.count({ where: { groupId } }));
-    return this.prisma.option.create({ data: { tenantId, groupId, name: dto.name.trim(), priceCents: dto.priceCents, available: dto.available ?? true, position } });
+    return this.prisma.option.create({ data: { tenantId, groupId, name: dto.name.trim(), priceCents: dto.priceCents, costCents: dto.costCents ?? 0, available: dto.available ?? true, position } });
   }
 
   async updateOption(tenantId: string, id: string, dto: UpdateOptionDto) {

@@ -11,7 +11,7 @@ import { useCurrentTenant } from '../tenant-context';
 const ROADMAP: Record<string, string> = {
   cardapio: 'Loja online, pagamento, painel de pedidos, impressão e cozinha: Sprints 1 a 3.',
   entregas: 'Motoboys, lotes de entrega e app do entregador: Sprints 4 e 5.',
-  gestao: 'Funcionários, financeiro, folha, folgas e DRE: Sprints 6 a 9.',
+  gestao: 'Funcionários, folha e folgas: próximas sprints (o financeiro e a DRE já estão em Gestão).',
   trafego: 'Campanhas, links UTM e retorno por pedido: Sprint 10.',
 };
 

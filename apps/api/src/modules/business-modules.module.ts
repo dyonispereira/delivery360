@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { CardapioController, EntregasController, GestaoController, TrafegoController } from './modules.controllers';
+import { CardapioController, EntregasController, TrafegoController } from './modules.controllers';
 
-@Module({ controllers: [GestaoController, CardapioController, EntregasController, TrafegoController] })
+@Module({ controllers: [CardapioController, EntregasController, TrafegoController] })
 export class BusinessModulesModule {}

@@ -67,9 +67,18 @@ export class CardapioManageController {
     return this.catalog.deleteZone(t.tenantId, id);
   }
 
+  /** Impostos e taxas do restaurante para a ficha técnica (configurados em Gestão). */
+  @TenantRoles('OWNER', 'MANAGER')
+  @Get('cost-rates')
+  costRates(@CurrentTenant() t: TenantContext) {
+    return this.catalog.costRates(t.tenantId);
+  }
+
   @Get('menu')
-  getMenu(@CurrentTenant() t: TenantContext) {
-    return this.catalog.getMenu(t.tenantId);
+  async getMenu(@CurrentTenant() t: TenantContext) {
+    const menu = await this.catalog.getMenu(t.tenantId);
+    // Custos (ficha técnica) são só para dono e gerente.
+    return t.role === 'STAFF' ? JSON.parse(JSON.stringify(menu, (k, v) => (k === 'costItems' || k === 'costCents' || k === 'extraCostBps' ? undefined : v))) : menu;
   }
 
   @TenantRoles('OWNER', 'MANAGER')

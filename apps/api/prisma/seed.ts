@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { MODULES, MODULE_CODES, type ModuleCode } from '@delivery360/shared';
+import { DEFAULT_ACCOUNTS, GROUPS } from '../src/gestao/chart';
 
 const prisma = new PrismaClient();
 
@@ -53,7 +54,11 @@ async function main() {
 async function seedDemo() {
   const slug = 'pizzaria-demo';
   const existing = await prisma.store.findUnique({ where: { slug } });
-  if (existing) return seedDemoCourier(existing.tenantId);
+  if (existing) {
+    await seedDemoCourier(existing.tenantId);
+    await seedDemoCosts(existing.tenantId);
+    return seedDemoFinance(existing.tenantId);
+  }
   const plan = await prisma.plan.findUniqueOrThrow({ where: { name: 'Gestão 360' }, include: { modules: true } });
   const tenant = await prisma.tenant.create({
     data: {
@@ -117,6 +122,8 @@ async function seedDemo() {
     ],
   });
   await seedDemoCourier(tenant.id);
+  await seedDemoCosts(tenant.id);
+  await seedDemoFinance(tenant.id);
   console.log(`Restaurante demo criado: /loja/${slug} (dono: ${email})`);
 }
 
@@ -134,3 +141,66 @@ main()
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());
+
+/** Algumas contas a pagar de exemplo para a Gestão do restaurante demo não abrir vazia. */
+async function seedDemoFinance(tenantId: string) {
+  if (await prisma.financialEntry.count({ where: { tenantId, source: 'manual' } })) return;
+  await prisma.account.createMany({
+    data: DEFAULT_ACCOUNTS.map(([code, name]) => {
+      const group = Number(code.split('.')[0]);
+      return { tenantId, code, name, group, kind: GROUPS.find((g) => g.group === group)!.kind, system: true };
+    }),
+    skipDuplicates: true,
+  });
+  const accounts = await prisma.account.findMany({ where: { tenantId } });
+  const id = (code: string) => accounts.find((a) => a.code === code)!.id;
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const day = (d: number) => new Date(`${today.slice(0, 8)}${String(d).padStart(2, '0')}T00:00:00Z`);
+  const first = day(1);
+  const items: [string, string, string, number, number, boolean][] = [
+    ['5.1', 'Aluguel', 'Imobiliária Centro', 350_000, 10, true],
+    ['5.2', 'Conta de energia', 'Concessionária', 89_000, 15, true],
+    ['3.1', 'Compra de queijo e calabresa', 'Distribuidora Boa Massa', 420_000, 20, false],
+    ['3.3', 'Caixas de pizza', 'Embalagens Já', 65_000, 25, false],
+    ['8.1', 'Honorários do contador', 'Contabilidade Silva', 45_000, 5, true],
+    ['7.1', 'Anúncios Instagram', 'Meta', 60_000, 28, false],
+  ];
+  await prisma.financialEntry.createMany({
+    data: items.map(([code, description, counterparty, amountCents, d, paid]) => ({
+      tenantId,
+      type: 'PAYABLE' as const,
+      accountId: id(code),
+      description,
+      counterparty,
+      amountCents,
+      competenceDate: first,
+      dueDate: day(d),
+      status: paid ? ('PAID' as const) : ('OPEN' as const),
+      paidAt: paid ? day(d) : null,
+    })),
+  });
+}
+
+/** Fichas técnicas de exemplo e impostos/taxas do restaurante demo (só preenche o que está vazio). */
+async function seedDemoCosts(tenantId: string) {
+  await prisma.financeSettings.upsert({
+    where: { tenantId },
+    create: { tenantId, salesTaxBps: 600, pixFeeBps: 99, creditFeeBps: 400, cardOnDeliveryFeeBps: 250, targetMarginBps: 2000 },
+    update: {},
+  });
+  const sheets: Record<string, [string, 'INGREDIENT' | 'PACKAGING' | 'OTHER', number][]> = {
+    Calabresa: [['Massa', 'INGREDIENT', 350], ['Molho de tomate', 'INGREDIENT', 150], ['Mussarela', 'INGREDIENT', 900], ['Calabresa', 'INGREDIENT', 600], ['Cebola e azeitona', 'INGREDIENT', 120], ['Caixa de pizza', 'PACKAGING', 250]],
+    Margherita: [['Massa', 'INGREDIENT', 350], ['Molho de tomate', 'INGREDIENT', 150], ['Mussarela', 'INGREDIENT', 900], ['Tomate e manjericão', 'INGREDIENT', 250], ['Caixa de pizza', 'PACKAGING', 250]],
+    'Frango com Catupiry': [['Massa', 'INGREDIENT', 350], ['Molho de tomate', 'INGREDIENT', 150], ['Frango desfiado', 'INGREDIENT', 700], ['Catupiry', 'INGREDIENT', 650], ['Caixa de pizza', 'PACKAGING', 250]],
+    'Refrigerante 2L': [['Refrigerante 2L', 'INGREDIENT', 700]],
+    'Suco natural 500ml': [['Frutas', 'INGREDIENT', 250], ['Copo e tampa', 'PACKAGING', 60]],
+  };
+  const products = await prisma.product.findMany({ where: { tenantId } });
+  for (const p of products) {
+    const sheet = sheets[p.name];
+    if (!sheet || (Array.isArray(p.costItems) && p.costItems.length > 0)) continue;
+    await prisma.product.update({ where: { id: p.id }, data: { costItems: sheet.map(([name, kind, costCents]) => ({ name, kind, costCents })) } });
+  }
+  await prisma.option.updateMany({ where: { tenantId, name: { in: ['Catupiry', 'Cheddar'] }, costCents: 0 }, data: { costCents: 300 } });
+  await prisma.option.updateMany({ where: { tenantId, name: 'Bacon', costCents: 0 }, data: { costCents: 200 } });
+}

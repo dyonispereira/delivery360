@@ -16,6 +16,7 @@ import { EventsService } from '../core/events.service';
 import { activeModuleCodes } from '../access/access.rules';
 import { PAYMENT_GATEWAY, type PaymentGateway } from '../payments/payment-gateway';
 import { CreateOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
+import { unitCost, type CostItem } from '@delivery360/shared';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
 import { ACTIVE_STATUSES, canTransition } from './order-status';
 import { AuditService } from '../core/audit.service';
@@ -156,6 +157,15 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }),
       this.prisma.deliveryZone.findMany({ where: { tenantId } }),
     ]);
+    const costOf = (productId: string, optionIds: string[]) => {
+      const p = products.find((x) => x.id === productId);
+      if (!p) return 0;
+      const options = p.optionGroups.flatMap((g) => g.options);
+      return unitCost(
+        (p.costItems as unknown as CostItem[]) ?? [],
+        optionIds.map((id) => options.find((o) => o.id === id)?.costCents ?? 0),
+      );
+    };
     const menu = new Map<string, MenuProduct>(
       products.map((p) => [
         p.id,
@@ -243,6 +253,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
               productId: i.productId,
               name: i.name,
               unitPriceCents: i.unitPriceCents,
+              // CMV teórico pela ficha técnica (produto + adicionais), congelado no momento da venda.
+              unitCostCents: costOf(i.productId, i.options.map((o) => o.optionId)),
               quantity: i.quantity,
               notes: i.notes,
               totalCents: i.totalCents,

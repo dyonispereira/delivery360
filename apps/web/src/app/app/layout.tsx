@@ -71,7 +71,10 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
           { href: '/app/cozinha', label: 'Cozinha' },
         ]
       : []),
-    ...tenant.activeModules.map((m) => ({ href: MODULES[m].path, label: MODULES[m].name })),
+    // Financeiro (Gestão) é só do dono e do gerente.
+    ...tenant.activeModules
+      .filter((m) => m !== 'gestao' || tenant.role !== 'STAFF')
+      .map((m) => ({ href: MODULES[m].path, label: MODULES[m].name })),
   ];
 
   return (
