@@ -58,6 +58,7 @@ async function seedDemo() {
     await seedDemoCourier(existing.tenantId);
     await seedDemoCosts(existing.tenantId);
     await seedDemoChannels(existing.tenantId);
+    await seedDemoPeople(existing.tenantId);
     return seedDemoFinance(existing.tenantId);
   }
   const plan = await prisma.plan.findUniqueOrThrow({ where: { name: 'Gestão 360' }, include: { modules: true } });
@@ -125,6 +126,7 @@ async function seedDemo() {
   await seedDemoCourier(tenant.id);
   await seedDemoCosts(tenant.id);
   await seedDemoChannels(tenant.id);
+  await seedDemoPeople(tenant.id);
   await seedDemoFinance(tenant.id);
   console.log(`Restaurante demo criado: /loja/${slug} (dono: ${email})`);
 }
@@ -232,4 +234,17 @@ async function seedDemoChannels(tenantId: string) {
   for (const c of channels) {
     await prisma.channelSetting.upsert({ where: { tenantId_channel: { tenantId, channel: c.channel } }, create: { tenantId, active: true, ...c }, update: {} });
   }
+}
+
+/** Demo da equipe: CLT com folga fixa, estágio e diarista de fim de semana. */
+async function seedDemoPeople(tenantId: string) {
+  if ((await prisma.employee.count({ where: { tenantId } })) > 0) return;
+  const d = (s: string) => new Date(`${s}T00:00:00.000Z`);
+  const people = [
+    { name: 'Carla Souza', role: 'Pizzaiola', type: 'CLT' as const, salaryCents: 320_000, transportCents: 26_400, mealCents: 30_000, weeklyDayOff: 1, admissionDate: d('2024-03-01') },
+    { name: 'Diego Lima', role: 'Atendente', type: 'CLT' as const, salaryCents: 180_000, transportCents: 26_400, weeklyDayOff: 2, admissionDate: d('2025-06-10') },
+    { name: 'Júlia Alves', role: 'Auxiliar de cozinha', type: 'ESTAGIO' as const, salaryCents: 110_000, weeklyDayOff: 3, admissionDate: d('2026-02-01') },
+    { name: 'Rafael Dias', role: 'Garçom (fim de semana)', type: 'DIARISTA' as const, dailyRateCents: 13_000, admissionDate: d('2025-01-01') },
+  ];
+  for (const p of people) await prisma.employee.create({ data: { tenantId, ...p } });
 }

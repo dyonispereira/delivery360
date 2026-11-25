@@ -19,8 +19,15 @@ As senhas são geradas pelo Render. Veja em **delivery360 > Environment**:
 | --- | --- | --- |
 | Super admin | `admin@delivery360.app` | `SEED_ADMIN_PASSWORD` |
 | Dono da Pizzaria Demo | `dono@pizzaria-demo.local` | `SEED_DEMO_PASSWORD` |
+| Dono da Pizzaria Simulada | `dono@pizzaria-simulada.local` | `SEED_SIMULATION_PASSWORD` (sem a variável: `simulacao123`) |
 
 Loja de demonstração: `<link>/loja/pizzaria-demo`. O PIX é simulado (botão "Simular pagamento").
+
+A **Pizzaria Simulada** (`<link>/loja/pizzaria-simulada`) é criada uma vez, no primeiro deploy, com 30 dias de operação
+até aquele dia: cerca de R$ 80 mil em vendas (loja, iFood, 99Food e Keeta), 10 funcionários (2 de férias, 2 com férias
+vencendo no mês seguinte), 5 motoboys, aluguel, energia, água, internet, compras de fornecedores, folha do mês anterior
+fechada e a do mês atual em rascunho. Também deixa pedidos em andamento (novos, em preparo, prontos e na rua).
+Para não criar, use `SEED_SIMULATION=false`. Localmente: `pnpm --filter @delivery360/api build && node apps/api/dist/simulation/run.js`.
 
 ## Limites do plano grátis
 

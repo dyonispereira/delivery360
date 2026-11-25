@@ -5,6 +5,8 @@ cd "$(dirname "$0")/.."
 
 pnpm --filter @delivery360/api exec prisma migrate deploy
 pnpm --filter @delivery360/api exec prisma db seed
+# Pizzaria Simulada (idempotente; SEED_SIMULATION=false desliga). Se falhar, o site sobe mesmo assim.
+node apps/api/dist/simulation/run.js || echo "[simulação] não foi criada"
 
 PORT=3333 node apps/api/dist/main.js &
 API_PID=$!
