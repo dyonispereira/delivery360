@@ -18,6 +18,9 @@ import {
 } from 'class-validator';
 
 export const PAYMENT_METHODS = ['PIX', 'CREDIT_CARD', 'CASH_ON_DELIVERY', 'CARD_ON_DELIVERY'] as const;
+/** Código PDV: letras, números, ponto, hífen e sublinhado (vazio apaga). */
+const PDV = /^[A-Za-z0-9._-]{0,40}$/;
+const PDV_MSG = { message: 'Código PDV: use até 40 letras, números, ponto, hífen ou sublinhado.' };
 const MAX_CENTS = 10_000_000; // R$ 100 mil
 
 export class UpdateStoreDto {
@@ -64,6 +67,13 @@ export class CostItemDto {
   @IsInt() @Min(0) @Max(MAX_CENTS) costCents: number;
 }
 
+/** Preço em cada app, em centavos. Sem valor = mesmo preço da loja. */
+export class ChannelPricesDto {
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) IFOOD?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) FOOD99?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) KEETA?: number;
+}
+
 export class ProductDto {
   @IsUUID() categoryId: string;
   @IsString() @MinLength(1) @MaxLength(120) name: string;
@@ -76,6 +86,8 @@ export class ProductDto {
   @IsOptional() @IsArray() @ArrayMaxSize(40) @ValidateNested({ each: true }) @Type(() => CostItemDto) costItems?: CostItemDto[];
   /** Outras despesas variáveis do produto, em pontos-base (100 = 1%). */
   @IsOptional() @IsInt() @Min(0) @Max(5000) extraCostBps?: number;
+  @IsOptional() @IsString() @Matches(PDV, PDV_MSG) pdvCode?: string;
+  @IsOptional() @ValidateNested() @Type(() => ChannelPricesDto) channelPrices?: ChannelPricesDto;
 }
 export class UpdateProductDto {
   @IsOptional() @IsUUID() categoryId?: string;
@@ -88,6 +100,8 @@ export class UpdateProductDto {
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsArray() @ArrayMaxSize(40) @ValidateNested({ each: true }) @Type(() => CostItemDto) costItems?: CostItemDto[];
   @IsOptional() @IsInt() @Min(0) @Max(5000) extraCostBps?: number;
+  @IsOptional() @IsString() @Matches(PDV, PDV_MSG) pdvCode?: string;
+  @IsOptional() @ValidateNested() @Type(() => ChannelPricesDto) channelPrices?: ChannelPricesDto;
 }
 
 export class OptionGroupDto {
@@ -107,6 +121,7 @@ export class OptionDto {
   @IsString() @MinLength(1) @MaxLength(80) name: string;
   @IsInt() @Min(0) @Max(MAX_CENTS) priceCents: number;
   @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) costCents?: number;
+  @IsOptional() @IsString() @Matches(PDV, PDV_MSG) pdvCode?: string;
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsInt() position?: number;
 }
@@ -114,6 +129,7 @@ export class UpdateOptionDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
   @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) priceCents?: number;
   @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) costCents?: number;
+  @IsOptional() @IsString() @Matches(PDV, PDV_MSG) pdvCode?: string;
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsInt() position?: number;
 }
@@ -167,4 +183,68 @@ export class RateOrderDto {
 export class TipDto {
   /** De R$ 1 a R$ 200. */
   @IsInt() @Min(100, { message: 'A gorjeta mínima é R$ 1,00.' }) @Max(20_000, { message: 'A gorjeta máxima é R$ 200,00.' }) amountCents: number;
+}
+
+// ---------- Canais de venda (iFood, 99Food, Keeta) ----------
+
+export const MARKETPLACE_CODES = ['IFOOD', 'FOOD99', 'KEETA'] as const;
+export type MarketplaceCode = (typeof MARKETPLACE_CODES)[number];
+
+export class ChannelSettingDto {
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsString() @MaxLength(80) merchantId?: string;
+  /** Comissão do app, em pontos-base (100 = 1%). */
+  @IsOptional() @IsInt() @Min(0) @Max(5000) commissionBps?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(2000) paymentFeeBps?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(120) payoutDays?: number;
+}
+
+export class ChannelOrderOptionDto {
+  @IsOptional() @IsString() @MaxLength(40) pdvCode?: string;
+  @IsString() @MinLength(1) @MaxLength(120) name: string;
+  @IsOptional() @IsString() @MaxLength(80) groupName?: string;
+  /** Preço de uma unidade do adicional no app. */
+  @IsInt() @Min(0) @Max(MAX_CENTS) priceCents: number;
+  @IsOptional() @IsInt() @Min(1) @Max(50) quantity?: number;
+}
+
+export class ChannelOrderItemDto {
+  /** Código PDV cadastrado no app: liga o item ao produto do cardápio (mesmo produto em todos os canais). */
+  @IsOptional() @IsString() @MaxLength(40) pdvCode?: string;
+  @IsString() @MinLength(1) @MaxLength(160) name: string;
+  @IsInt() @Min(1) @Max(100) quantity: number;
+  /** Preço de uma unidade no app, sem os adicionais. */
+  @IsInt() @Min(0) @Max(MAX_CENTS) unitPriceCents: number;
+  @IsOptional() @IsString() @MaxLength(300) notes?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ChannelOrderOptionDto) options?: ChannelOrderOptionDto[];
+}
+
+export class ChannelAddressDto {
+  @IsString() @MinLength(2) @MaxLength(160) street: string;
+  @IsString() @MinLength(1) @MaxLength(20) number: string;
+  @IsOptional() @IsString() @MaxLength(80) complement?: string;
+  @IsOptional() @IsString() @MaxLength(120) reference?: string;
+  @IsOptional() @IsString() @MaxLength(80) neighborhood?: string;
+}
+
+/**
+ * Pedido de app de delivery no formato único do sistema. Cada integração (iFood, 99Food, Keeta)
+ * converte o pedido do app para este formato; o resto (cozinha, entregas, financeiro) é igual.
+ */
+export class ChannelOrderDto {
+  @IsIn(MARKETPLACE_CODES) channel: MarketplaceCode;
+  @IsString() @MinLength(1) @MaxLength(80) externalId: string;
+  @IsOptional() @IsString() @MaxLength(20) externalCode?: string;
+  @IsIn(['DELIVERY', 'PICKUP']) type: 'DELIVERY' | 'PICKUP';
+  @ValidateNested() @Type(() => CustomerInputDto) customer: CustomerInputDto;
+  @IsOptional() @ValidateNested() @Type(() => ChannelAddressDto) address?: ChannelAddressDto;
+  @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => ChannelOrderItemDto) items: ChannelOrderItemDto[];
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) deliveryFeeCents?: number;
+  /** Desconto bancado pelo restaurante (cupom da loja). */
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) discountCents?: number;
+  @IsIn(['APP_ONLINE', 'CASH_ON_DELIVERY', 'CARD_ON_DELIVERY']) paymentMethod: 'APP_ONLINE' | 'CASH_ON_DELIVERY' | 'CARD_ON_DELIVERY';
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) changeForCents?: number;
+  /** Código de entrega que o app mostra ao cliente (4 dígitos). */
+  @IsOptional() @Matches(/^\d{4}$/, { message: 'Código de entrega: 4 números.' }) deliveryCode?: string;
+  @IsOptional() @IsString() @MaxLength(500) notes?: string;
 }

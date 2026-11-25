@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { formatBRL } from '@delivery360/shared';
+import { CHANNEL_LABELS, formatBRL, SALES_CHANNELS, type SalesChannel } from '@delivery360/shared';
 import { ErrorBox, Spinner } from '@/components/ui';
 import { api } from '@/lib/api';
 import { monthEnd, monthLabel, monthStart, shiftMonth } from './shared';
@@ -31,15 +31,16 @@ const cmvTone = (n: number | null) => (n === null ? '' : n <= 30 ? 'text-emerald
 /** Quanto cada produto vendido deixou de lucro no mês, pela ficha técnica gravada em cada venda. */
 export function Margin() {
   const [month, setMonth] = useState(monthStart());
+  const [channel, setChannel] = useState<SalesChannel | ''>('');
   const [data, setData] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setData(null);
-    api<Result>(`/gestao/products-margin?from=${month}&to=${monthEnd(month)}`, { tenant: true })
+    api<Result>(`/gestao/products-margin?from=${month}&to=${monthEnd(month)}${channel ? `&channel=${channel}` : ''}`, { tenant: true })
       .then(setData)
       .catch((e) => setError(e.message));
-  }, [month]);
+  }, [month, channel]);
 
   return (
     <div className="space-y-4">
@@ -47,6 +48,12 @@ export function Margin() {
         <button className="btn-ghost px-3 py-1" onClick={() => setMonth(shiftMonth(month, -1))} aria-label="Mês anterior">‹</button>
         <h2 className="min-w-44 text-center text-lg font-semibold">{monthLabel(month)}</h2>
         <button className="btn-ghost px-3 py-1" onClick={() => setMonth(shiftMonth(month, 1))} aria-label="Próximo mês">›</button>
+        <select className="input ml-auto w-auto py-1.5 text-sm" aria-label="Canal de venda" value={channel} onChange={(e) => setChannel(e.target.value as SalesChannel | '')}>
+          <option value="">Todos os canais</option>
+          {SALES_CHANNELS.map((c) => (
+            <option key={c} value={c}>{CHANNEL_LABELS[c]}</option>
+          ))}
+        </select>
       </div>
       <ErrorBox message={error} />
       {!data ? (

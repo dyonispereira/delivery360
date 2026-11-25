@@ -1,9 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseEnumPipe, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { EntryStatus, EntryType } from '@prisma/client';
 import { MODULES } from '@delivery360/shared';
 import { CurrentTenant, CurrentUser, RequireModule, TenantRoles } from '../access/access.decorators';
 import type { AuthUser, TenantContext } from '../access/access.types';
-import { AccountDto, EntryDto, FinanceSettingsDto, PayDto, PayManyDto, PeriodQuery, UpdateAccountDto, UpdateEntryDto } from './gestao.dto';
+import { AccountDto, EntryDto, FinanceSettingsDto, MarginQuery, PayDto, PayManyDto, PayoutDto, PeriodQuery, UpdateAccountDto, UpdateEntryDto } from './gestao.dto';
 import { GestaoService } from './gestao.service';
 
 const UUID = new ParseUUIDPipe();
@@ -33,8 +33,25 @@ export class GestaoController {
   }
 
   @Get('products-margin')
-  productsMargin(@CurrentTenant() t: TenantContext, @Query() q: PeriodQuery) {
-    return this.gestao.productsMargin(t.tenantId, q.from, q.to);
+  productsMargin(@CurrentTenant() t: TenantContext, @Query() q: MarginQuery) {
+    return this.gestao.productsMargin(t.tenantId, q.from, q.to, q.channel);
+  }
+
+  /** Resultado por canal de venda (loja, iFood, 99Food, Keeta) e o que cada app tem para repassar. */
+  @Get('channels')
+  channels(@CurrentTenant() t: TenantContext, @Query() q: PeriodQuery) {
+    return this.gestao.channels(t.tenantId, q.from, q.to);
+  }
+
+  @Post('channels/:channel/payout')
+  @HttpCode(200)
+  payout(
+    @CurrentTenant() t: TenantContext,
+    @CurrentUser() user: AuthUser,
+    @Param('channel', new ParseEnumPipe({ IFOOD: 'IFOOD', FOOD99: 'FOOD99', KEETA: 'KEETA' })) channel: 'IFOOD' | 'FOOD99' | 'KEETA',
+    @Body() dto: PayoutDto,
+  ) {
+    return this.gestao.registerPayout(t.tenantId, user.id, channel, dto.until, dto.paidAt);
   }
 
   @Get('settings')

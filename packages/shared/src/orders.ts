@@ -2,7 +2,8 @@
 
 export type OrderType = 'DELIVERY' | 'PICKUP';
 export type OrderStatus = 'AWAITING_PAYMENT' | 'PAID' | 'IN_PREPARATION' | 'READY' | 'OUT_FOR_DELIVERY' | 'COMPLETED' | 'CANCELLED';
-export type PaymentMethod = 'PIX' | 'CREDIT_CARD' | 'CASH_ON_DELIVERY' | 'CARD_ON_DELIVERY';
+/** APP_ONLINE = pago dentro do app de delivery (iFood, 99Food, Keeta); o app repassa depois. */
+export type PaymentMethod = 'PIX' | 'CREDIT_CARD' | 'CASH_ON_DELIVERY' | 'CARD_ON_DELIVERY' | 'APP_ONLINE';
 export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED' | 'REFUNDED';
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
@@ -20,6 +21,7 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   CREDIT_CARD: 'Cartão de crédito (online)',
   CASH_ON_DELIVERY: 'Dinheiro na entrega',
   CARD_ON_DELIVERY: 'Cartão na entrega (maquininha)',
+  APP_ONLINE: 'Pago no app',
 };
 
 /** Centavos -> "R$ 12,50". */

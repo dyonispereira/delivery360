@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { DELIVERY_FAIL_LABELS, formatBRL, PAYMENT_METHOD_LABELS, type DeliveryFailReason, type OrderStatus, type PaymentMethod } from '@delivery360/shared';
+import { CHANNEL_LABELS, DELIVERY_FAIL_LABELS, formatBRL, PAYMENT_METHOD_LABELS, type DeliveryFailReason, type OrderStatus, type PaymentMethod, type SalesChannel } from '@delivery360/shared';
 import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
 
@@ -22,6 +22,10 @@ interface CourierOrder {
   notes: string | null;
   deliveredAt: string | null;
   locked: boolean;
+  /** Pedido de app (iFood, 99Food, Keeta) com código de entrega do próprio app. */
+  channel?: SalesChannel;
+  externalCode?: string | null;
+  appCode?: boolean;
 }
 interface CourierView {
   courier: { name: string };
@@ -31,7 +35,7 @@ interface CourierView {
 
 /** O que o motoboy precisa receber na porta. */
 function toCollect(o: CourierOrder): { text: string; tone: string } {
-  if (o.paymentMethod === 'PIX' || o.paymentMethod === 'CREDIT_CARD') return { text: 'Já pago pelo app. Não cobrar.', tone: 'bg-emerald-100 text-emerald-900' };
+  if (o.paymentMethod === 'PIX' || o.paymentMethod === 'CREDIT_CARD' || o.paymentMethod === 'APP_ONLINE') return { text: 'Já pago pelo app. Não cobrar.', tone: 'bg-emerald-100 text-emerald-900' };
   if (o.paymentMethod === 'CARD_ON_DELIVERY') return { text: `Cobrar ${formatBRL(o.totalCents)} na maquininha`, tone: 'bg-amber-100 text-amber-900' };
   const change = o.changeForCents ? ` · troco para ${formatBRL(o.changeForCents)} (levar ${formatBRL(o.changeForCents - o.totalCents)})` : '';
   return { text: `Receber ${formatBRL(o.totalCents)} em dinheiro${change}`, tone: 'bg-amber-100 text-amber-900' };
@@ -232,7 +236,9 @@ export default function EntregadorPage({ params }: { params: Promise<{ token: st
             <header className="flex items-start justify-between gap-2">
               <div>
                 <div className="text-lg font-bold">#{o.number} · {o.customerName}</div>
-                <div className="text-xs text-zinc-500">Tel.: {o.phoneHint}</div>
+                <div className="text-xs text-zinc-500">
+                  {o.channel && o.channel !== 'LOJA' ? `${CHANNEL_LABELS[o.channel]}${o.externalCode ? ` ${o.externalCode}` : ''} · ` : ''}Tel.: {o.phoneHint}
+                </div>
               </div>
               <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-medium">{o.deliveryZoneName}</span>
             </header>
@@ -326,7 +332,13 @@ function ConfirmDialog({ token, order, onClose, onDone }: { token: string; order
           <>
             <div>
               <h2 className="text-lg font-bold">Pedido #{order.number}</h2>
-              <p className="text-sm text-zinc-600">Peça ao cliente os <b>4 últimos números do telefone</b> dele.</p>
+              {order.appCode ? (
+                <p className="text-sm text-zinc-600">
+                  Peça ao cliente o <b>código de entrega do {CHANNEL_LABELS[order.channel ?? 'LOJA']}</b> (4 números que aparecem no app dele).
+                </p>
+              ) : (
+                <p className="text-sm text-zinc-600">Peça ao cliente os <b>4 últimos números do telefone</b> dele.</p>
+              )}
             </div>
             <input
               autoFocus

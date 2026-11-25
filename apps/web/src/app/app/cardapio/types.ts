@@ -1,6 +1,6 @@
-import type { CostItem, PaymentMethod } from '@delivery360/shared';
+import type { ChannelPrices, CostItem, PaymentMethod } from '@delivery360/shared';
 
-export interface Option { id: string; name: string; priceCents: number; costCents?: number; available: boolean; position: number }
+export interface Option { id: string; name: string; priceCents: number; costCents?: number; pdvCode?: string | null; available: boolean; position: number }
 export interface Group { id: string; name: string; minSelect: number; maxSelect: number; position: number; options: Option[] }
 export interface Product {
   id: string;
@@ -14,6 +14,9 @@ export interface Product {
   /** Ficha técnica (só dono e gerente recebem). */
   costItems?: CostItem[];
   extraCostBps?: number;
+  /** Código PDV: o mesmo no iFood, 99Food, Keeta e na loja própria. */
+  pdvCode?: string | null;
+  channelPrices?: ChannelPrices;
   optionGroups: Group[];
 }
 export interface Category { id: string; name: string; position: number; active: boolean; products: Product[] }

@@ -10,15 +10,17 @@ import { Accounts } from './accounts';
 import { Dre } from './dre';
 import { Entries } from './entries';
 import { Margin } from './margin';
+import { Channels } from './channels';
 import { Settings } from './settings';
 import { monthLabel } from './shared';
 
-type Tab = 'resumo' | 'pagar' | 'receber' | 'dre' | 'margem' | 'contas' | 'impostos';
+type Tab = 'resumo' | 'pagar' | 'receber' | 'dre' | 'canais' | 'margem' | 'contas' | 'impostos';
 const TABS: { key: Tab; label: string }[] = [
   { key: 'resumo', label: 'Resumo' },
   { key: 'pagar', label: 'Contas a pagar' },
   { key: 'receber', label: 'Contas a receber' },
   { key: 'dre', label: 'DRE (resultado)' },
+  { key: 'canais', label: 'Canais de venda' },
   { key: 'margem', label: 'Margem dos produtos' },
   { key: 'contas', label: 'Plano de contas' },
   { key: 'impostos', label: 'Impostos e taxas' },
@@ -74,6 +76,7 @@ export default function GestaoPage() {
       {tab === 'pagar' && <Entries type="PAYABLE" />}
       {tab === 'receber' && <Entries type="RECEIVABLE" />}
       {tab === 'dre' && <Dre />}
+      {tab === 'canais' && <Channels />}
       {tab === 'margem' && <Margin />}
       {tab === 'contas' && <Accounts />}
       {tab === 'impostos' && <Settings />}

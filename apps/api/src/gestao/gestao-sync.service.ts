@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { DomainEvent, EntryStatus, EntryType, Prisma } from '@prisma/client';
+import { DomainEvent, EntryStatus, EntryType, Prisma, SalesChannel } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { paymentFeeBps, PAYMENT_METHOD_LABELS, type PaymentMethod } from '@delivery360/shared';
+import { CHANNEL_LABELS, CHANNEL_REVENUE_ACCOUNT, paymentFeeBps, PAYMENT_METHOD_LABELS, type PaymentMethod } from '@delivery360/shared';
 import { DEFAULT_ACCOUNTS, GROUPS, localDate, toDbDate } from './chart';
 
 type Tx = Prisma.TransactionClient;
@@ -13,8 +13,9 @@ const ONLINE = ['PIX', 'CREDIT_CARD'];
  * Liga os módulos à Gestão: lê a fila de eventos (domain_events) e gera os lançamentos
  * do financeiro. Idempotente: cada lançamento automático tem uma chave única.
  *
- * - pedido.recebido   → a receber 1.2 com a forma de pagamento do cliente (PIX/cartão online já entra baixado),
- *                       taxa da forma de pagamento 2.3 e imposto sobre a venda 2.1 (configurados em Gestão)
+ * - pedido.recebido   → a receber na conta do canal (1.2 loja, 1.3 iFood, 1.6 99Food, 1.7 Keeta) com a forma de pagamento
+ *                       (PIX/cartão online já entra baixado; pago no app vence no dia do repasse do app),
+ *                       taxa da forma de pagamento 2.3, comissão do app 2.2 e imposto sobre a venda 2.1
  * - pedido.status → COMPLETED → baixa do a receber (dinheiro/maquininha recebidos na entrega)
  * - pedido.cancelado  → cancela o a receber e o imposto; se já estava pago, a pagar 2.5 (devolver ao cliente)
  * - entrega.concluida → a pagar 6.1 ao motoboy (valor por entrega)
@@ -92,6 +93,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
       case 'pedido.recebido': {
         const order = await this.order(tx, String(p.orderId));
         if (!order) return;
+        if (order.channel !== 'LOJA') return this.marketplaceSale(tx, t, day, order);
         const online = ONLINE.includes(order.paymentMethod);
         const method = order.paymentMethod as PaymentMethod;
         await this.upsert(tx, t, `order:${order.id}:sale`, {
@@ -104,6 +106,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           status: online ? 'PAID' : 'OPEN',
           source: 'cardapio',
           paymentMethod: method,
+          channel: 'LOJA',
         });
         const rates = await this.rates(tx, t);
         // Taxa: a que o gateway informou; se não veio, a configurada para a forma de pagamento.
@@ -120,6 +123,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
             status: online ? 'PAID' : 'OPEN',
             source: 'cardapio',
             paymentMethod: method,
+            channel: 'LOJA',
           });
         }
         const tax = Math.round((order.totalCents * rates.salesTaxBps) / 10_000);
@@ -133,6 +137,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
             dueDay: nextMonthDay(day, rates.taxDueDay),
             status: 'OPEN',
             source: 'cardapio',
+            channel: 'LOJA',
           });
         }
         return;
@@ -140,8 +145,14 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
       case 'pedido.status': {
         if (p.to !== 'COMPLETED') return;
         // Dinheiro ou maquininha: recebido quando o pedido é entregue/retirado.
+        // Pago no app não: esse entra no dia do repasse do app.
         await tx.financialEntry.updateMany({
-          where: { tenantId: t, externalKey: { in: [`order:${String(p.orderId)}:sale`, `order:${String(p.orderId)}:fee`] }, status: 'OPEN' },
+          where: {
+            tenantId: t,
+            externalKey: { in: [`order:${String(p.orderId)}:sale`, `order:${String(p.orderId)}:fee`] },
+            status: 'OPEN',
+            paymentMethod: { not: 'APP_ONLINE' },
+          },
           data: { status: 'PAID', paidAt: toDbDate(day) },
         });
         return;
@@ -152,7 +163,11 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         if (!sale || sale.status === 'CANCELLED') return;
         // Venda desfeita: o imposto não é devido; a taxa só some se ainda não foi descontada.
         await tx.financialEntry.updateMany({
-          where: { tenantId: t, externalKey: { in: [`order:${String(p.orderId)}:tax`, `order:${String(p.orderId)}:fee`] }, status: 'OPEN' },
+          where: {
+            tenantId: t,
+            externalKey: { in: ['tax', 'fee', 'commission'].map((k) => `order:${String(p.orderId)}:${k}`) },
+            status: 'OPEN',
+          },
           data: { status: 'CANCELLED', notes: 'Pedido cancelado' },
         });
         if (sale.status === 'OPEN') {
@@ -169,6 +184,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           day,
           status: 'OPEN',
           source: 'cardapio',
+          channel: sale.channel ?? undefined,
         });
         return;
       }
@@ -238,8 +254,88 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
   private order(tx: Tx, id: string) {
     return tx.order.findUnique({
       where: { id },
-      select: { id: true, number: true, type: true, customerName: true, totalCents: true, paymentMethod: true, payments: { where: { status: 'PAID' }, select: { feeCents: true } } },
+      select: {
+        id: true,
+        number: true,
+        type: true,
+        customerName: true,
+        totalCents: true,
+        paymentMethod: true,
+        channel: true,
+        externalCode: true,
+        payments: { where: { status: 'PAID' }, select: { feeCents: true } },
+      },
     });
+  }
+
+  /**
+   * Venda de app de delivery: receita na conta do app, comissão 2.2 e, se pago no app, taxa do app 2.3.
+   * Pago no app: o app repassa depois (vence em "dias para o repasse"); comissão e taxa saem descontadas no repasse.
+   * Pago na entrega (dinheiro/maquininha): recebido quando o pedido é finalizado, como na loja.
+   */
+  private async marketplaceSale(tx: Tx, t: string, day: string, order: NonNullable<Awaited<ReturnType<GestaoSyncService['order']>>>) {
+    const channel = order.channel;
+    const label = CHANNEL_LABELS[channel];
+    const cfg = await tx.channelSetting.findUnique({ where: { tenantId_channel: { tenantId: t, channel } } });
+    const rates = await this.rates(tx, t);
+    const method = order.paymentMethod as PaymentMethod;
+    const inApp = method === 'APP_ONLINE';
+    const payoutDay = addDays(day, cfg?.payoutDays ?? 30);
+    const ref = `pedido #${order.number}${order.externalCode ? ` (${label} ${order.externalCode})` : ''}`;
+    const base = { day, source: 'cardapio', channel };
+
+    await this.upsert(tx, t, `order:${order.id}:sale`, {
+      ...base,
+      type: 'RECEIVABLE',
+      code: CHANNEL_REVENUE_ACCOUNT[channel],
+      description: `Venda ${label} · ${ref}`,
+      counterparty: inApp ? label : order.customerName,
+      amountCents: order.totalCents,
+      dueDay: inApp ? payoutDay : undefined,
+      status: 'OPEN',
+      paymentMethod: method,
+    });
+    const commission = Math.round((order.totalCents * (cfg?.commissionBps ?? 0)) / 10_000);
+    if (commission > 0) {
+      await this.upsert(tx, t, `order:${order.id}:commission`, {
+        ...base,
+        type: 'PAYABLE',
+        code: '2.2',
+        description: `Comissão ${label} · ${ref}`,
+        counterparty: label,
+        amountCents: commission,
+        dueDay: payoutDay,
+        status: 'OPEN',
+        paymentMethod: method,
+      });
+    }
+    const feeBps = inApp ? (cfg?.paymentFeeBps ?? 0) : paymentFeeBps(rates, method);
+    const fee = Math.round((order.totalCents * feeBps) / 10_000);
+    if (fee > 0) {
+      await this.upsert(tx, t, `order:${order.id}:fee`, {
+        ...base,
+        type: 'PAYABLE',
+        code: '2.3',
+        description: `Taxa ${inApp ? `pagamento ${label}` : PAYMENT_METHOD_LABELS[method]} · ${ref}`,
+        counterparty: inApp ? label : null,
+        amountCents: fee,
+        dueDay: inApp ? payoutDay : undefined,
+        status: 'OPEN',
+        paymentMethod: method,
+      });
+    }
+    const tax = Math.round((order.totalCents * rates.salesTaxBps) / 10_000);
+    if (tax > 0) {
+      await this.upsert(tx, t, `order:${order.id}:tax`, {
+        ...base,
+        type: 'PAYABLE',
+        code: '2.1',
+        description: `Imposto sobre a venda · ${ref}`,
+        amountCents: tax,
+        dueDay: nextMonthDay(day, rates.taxDueDay),
+        status: 'OPEN',
+      });
+    }
   }
 
   private async upsert(
@@ -257,6 +353,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
       status: EntryStatus;
       source: string;
       paymentMethod?: string;
+      channel?: SalesChannel;
     },
   ) {
     await this.ensureChart(tenantId, tx);
@@ -279,6 +376,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         status: e.status,
         paidAt: e.status === 'PAID' ? date : null,
         source: e.source,
+        channel: e.channel ?? null,
       },
     });
   }
@@ -288,4 +386,11 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
 function nextMonthDay(day: string, n: number) {
   const [y, m] = day.split('-').map(Number);
   return new Date(Date.UTC(y, m, n)).toISOString().slice(0, 10);
+}
+
+/** Data + N dias (ex.: repasse do app 30 dias depois da venda). */
+function addDays(day: string, n: number) {
+  const d = new Date(`${day}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }

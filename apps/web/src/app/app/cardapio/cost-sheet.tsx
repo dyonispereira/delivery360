@@ -2,9 +2,22 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { COST_KIND_LABELS, costSheet, DEFAULT_RATES, formatBRL, parseBRL, type CostItem, type CostItemKind, type FinanceRates } from '@delivery360/shared';
+import {
+  CHANNEL_LABELS,
+  channelSheets,
+  COST_KIND_LABELS,
+  costSheet,
+  DEFAULT_RATES,
+  formatBRL,
+  parseBRL,
+  type ChannelConfig,
+  type ChannelPrices,
+  type CostItem,
+  type CostItemKind,
+  type FinanceRates,
+} from '@delivery360/shared';
 
-export type RatesInfo = FinanceRates & { configured: boolean };
+export type RatesInfo = FinanceRates & { configured: boolean; channels?: ChannelConfig[] };
 
 interface Row {
   name: string;
@@ -25,9 +38,11 @@ export function CostSheetEditor({
   items,
   extraCostBps,
   rates,
+  channelPrices = {},
   onChange,
 }: {
   priceCents: number;
+  channelPrices?: ChannelPrices;
   items: CostItem[];
   extraCostBps: number;
   rates: RatesInfo | null;
@@ -150,6 +165,7 @@ export function CostSheetEditor({
           {s.suggestedPriceCents > priceCents ? ' (acima do preço atual)' : ''}
         </p>
       )}
+      <ChannelResults priceCents={priceCents} items={parsed(rows)} rates={r} extraBps={extraBps} prices={channelPrices} />
       {!r.configured && (
         <p className="text-xs text-amber-800">
           Impostos e taxas ainda não configurados (contando 0%).{' '}
@@ -165,6 +181,41 @@ function Line({ label, value, strong, tone = '' }: { label: string; value: strin
     <div className={`flex justify-between gap-2 ${strong ? 'font-semibold' : 'text-zinc-600'} ${tone}`}>
       <dt>{label}</dt>
       <dd className="whitespace-nowrap">{value}</dd>
+    </div>
+  );
+}
+
+/** Mesmo produto, resultado diferente em cada canal: o app cobra comissão e taxa e pode ter outro preço. */
+function ChannelResults({ priceCents, items, rates, extraBps, prices }: { priceCents: number; items: CostItem[]; rates: RatesInfo; extraBps: number; prices: ChannelPrices }) {
+  const channels = rates.channels ?? [];
+  if (!channels.some((c) => c.active) || items.length === 0) return null;
+  const rows = channelSheets(priceCents, items, rates, extraBps, channels, prices);
+  return (
+    <div className="space-y-1">
+      <h4 className="text-sm font-semibold">Resultado por canal</h4>
+      <table className="w-full text-xs">
+        <thead className="text-zinc-500">
+          <tr>
+            <th className="py-1 text-left font-normal">Canal</th>
+            <th className="text-right font-normal">Preço</th>
+            <th className="text-right font-normal">Comissão</th>
+            <th className="text-right font-normal">Lucro</th>
+            <th className="text-right font-normal">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ channel, sheet, commissionCents }) => (
+            <tr key={channel} className="border-t border-zinc-100">
+              <td className="py-1">{CHANNEL_LABELS[channel]}</td>
+              <td className="text-right">{formatBRL(sheet.priceCents)}</td>
+              <td className="text-right text-zinc-500">{commissionCents ? `− ${formatBRL(commissionCents)}` : '—'}</td>
+              <td className={`text-right font-medium ${sheet.profitCents < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{formatBRL(sheet.profitCents)}</td>
+              <td className={`text-right ${sheet.profitCents < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{fmtPct(sheet.resultPct)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-[11px] text-zinc-500">No app conta a comissão e a taxa de pagamento do app (configure em Cardápio, aba Canais de venda).</p>
     </div>
   );
 }

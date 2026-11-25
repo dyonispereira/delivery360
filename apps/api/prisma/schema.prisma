@@ -59,6 +59,7 @@ model Tenant {
   accounts         Account[]
   financialEntries FinancialEntry[]
   financeSettings  FinanceSettings?
+  channelSettings  ChannelSetting[]
 
   @@map("tenants")
 }
@@ -212,6 +213,16 @@ enum PaymentMethod {
   CREDIT_CARD
   CASH_ON_DELIVERY
   CARD_ON_DELIVERY
+  /// Pago dentro do app de delivery (iFood, 99Food, Keeta); o app repassa depois.
+  APP_ONLINE
+}
+
+/// Canal de venda: loja própria ou app de delivery.
+enum SalesChannel {
+  LOJA
+  IFOOD
+  FOOD99
+  KEETA
 }
 
 enum PaymentStatus {
@@ -274,28 +285,33 @@ model MenuCategory {
 }
 
 model Product {
-  id           String        @id @default(uuid()) @db.Uuid
-  tenantId     String        @map("tenant_id") @db.Uuid
-  categoryId   String        @map("category_id") @db.Uuid
-  name         String
-  description  String?
-  priceCents   Int           @map("price_cents")
-  imageUrl     String?       @map("image_url")
-  position     Int           @default(0)
+  id            String        @id @default(uuid()) @db.Uuid
+  tenantId      String        @map("tenant_id") @db.Uuid
+  categoryId    String        @map("category_id") @db.Uuid
+  name          String
+  description   String?
+  priceCents    Int           @map("price_cents")
+  imageUrl      String?       @map("image_url")
+  position      Int           @default(0)
   /// Some da loja (ex.: fora do cardápio).
-  active       Boolean       @default(true)
+  active        Boolean       @default(true)
   /// Esgotado no momento: aparece, mas não pode ser pedido.
-  available    Boolean       @default(true)
+  available     Boolean       @default(true)
+  /// Código PDV: o mesmo em todos os canais (loja, iFood, 99Food, Keeta) para reconhecer o item.
+  pdvCode       String?       @map("pdv_code")
+  /// Preço em cada app, em centavos ({ "IFOOD": 3290 }). Sem preço = mesmo da loja.
+  channelPrices Json          @default("{}") @map("channel_prices")
   /// Ficha técnica: [{ name, kind: INGREDIENT|PACKAGING|OTHER, costCents }] por unidade.
-  costItems    Json          @default("[]") @map("cost_items")
+  costItems     Json          @default("[]") @map("cost_items")
   /// Outras despesas variáveis só deste produto (pontos-base, 100 = 1%).
-  extraCostBps Int           @default(0) @map("extra_cost_bps")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
-  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  category     MenuCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  optionGroups OptionGroup[]
+  extraCostBps  Int           @default(0) @map("extra_cost_bps")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category      MenuCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  optionGroups  OptionGroup[]
 
+  @@unique([tenantId, pdvCode])
   @@index([tenantId, categoryId, position])
   @@map("products")
 }
@@ -323,6 +339,8 @@ model Option {
   priceCents Int         @default(0) @map("price_cents")
   /// Custo do adicional (ex.: bacon extra R$ 1,50), soma no CMV da venda.
   costCents  Int         @default(0) @map("cost_cents")
+  /// Código PDV do adicional (pode repetir em produtos diferentes).
+  pdvCode    String?     @map("pdv_code")
   available  Boolean     @default(true)
   position   Int         @default(0)
   group      OptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -369,6 +387,14 @@ model Order {
   discountCents     Int                  @default(0) @map("discount_cents")
   totalCents        Int                  @map("total_cents")
   paymentMethod     PaymentMethod        @map("payment_method")
+  /// De onde veio o pedido (loja própria ou app de delivery).
+  channel           SalesChannel         @default(LOJA)
+  /// Id do pedido no app de delivery (evita importar duas vezes).
+  externalId        String?              @map("external_id")
+  /// Número do pedido mostrado pelo app (ex.: "#4821" no iFood).
+  externalCode      String?              @map("external_code")
+  /// Código de entrega informado pelo app (no lugar dos 4 últimos dígitos do telefone).
+  deliveryCode      String?              @map("delivery_code")
   /// Troco para quanto (dinheiro na entrega).
   changeForCents    Int?                 @map("change_for_cents")
   utmSource         String?              @map("utm_source")
@@ -400,6 +426,7 @@ model Order {
   tip               Tip?
 
   @@unique([tenantId, number])
+  @@unique([tenantId, channel, externalId])
   @@index([tenantId, status, createdAt])
   @@index([batchId])
   @@map("orders")
@@ -651,29 +678,31 @@ enum EntryStatus {
 
 /// Conta a pagar ou a receber. A DRE usa a data de competência; o caixa usa a data do pagamento.
 model FinancialEntry {
-  id             String      @id @default(uuid()) @db.Uuid
-  tenantId       String      @map("tenant_id") @db.Uuid
+  id             String        @id @default(uuid()) @db.Uuid
+  tenantId       String        @map("tenant_id") @db.Uuid
   type           EntryType
-  accountId      String      @map("account_id") @db.Uuid
+  accountId      String        @map("account_id") @db.Uuid
   description    String
   counterparty   String?
-  amountCents    Int         @map("amount_cents")
-  competenceDate DateTime    @map("competence_date") @db.Date
-  dueDate        DateTime    @map("due_date") @db.Date
-  status         EntryStatus @default(OPEN)
-  paidAt         DateTime?   @map("paid_at") @db.Date
+  amountCents    Int           @map("amount_cents")
+  competenceDate DateTime      @map("competence_date") @db.Date
+  dueDate        DateTime      @map("due_date") @db.Date
+  status         EntryStatus   @default(OPEN)
+  paidAt         DateTime?     @map("paid_at") @db.Date
   notes          String?
   /// Forma de pagamento informada pelo cliente (vendas).
-  paymentMethod  String?     @map("payment_method")
+  paymentMethod  String?       @map("payment_method")
+  /// Canal de venda do pedido que gerou o lançamento (loja, iFood, 99Food, Keeta).
+  channel        SalesChannel?
   /// "manual" ou o módulo que gerou (cardapio, entregas...).
-  source         String      @default("manual")
+  source         String        @default("manual")
   /// Chave do lançamento automático (evita duplicar se o evento for processado de novo).
-  externalKey    String?     @map("external_key")
-  createdBy      String?     @map("created_by") @db.Uuid
-  createdAt      DateTime    @default(now()) @map("created_at")
-  updatedAt      DateTime    @updatedAt @map("updated_at")
-  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  account        Account     @relation(fields: [accountId], references: [id])
+  externalKey    String?       @map("external_key")
+  createdBy      String?       @map("created_by") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account        Account       @relation(fields: [accountId], references: [id])
 
   @@unique([tenantId, externalKey])
   @@index([tenantId, type, status, dueDate])
@@ -695,4 +724,21 @@ model FinanceSettings {
   tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@map("finance_settings")
+}
+
+/// Configuração de cada app de delivery do restaurante (comissão, taxa e prazo de repasse).
+model ChannelSetting {
+  tenantId      String       @map("tenant_id") @db.Uuid
+  channel       SalesChannel
+  active        Boolean      @default(false)
+  /// Código da loja no app (merchant id).
+  merchantId    String?      @map("merchant_id")
+  commissionBps Int          @default(0) @map("commission_bps")
+  paymentFeeBps Int          @default(0) @map("payment_fee_bps")
+  payoutDays    Int          @default(30) @map("payout_days")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, channel])
+  @@map("channel_settings")
 }

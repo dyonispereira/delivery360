@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { ChannelTag } from './channel-tag';
 import { DELIVERY_FAIL_LABELS, formatBRL, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type OrderStatus } from '@delivery360/shared';
 import { ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { useCurrentTenant } from '../tenant-context';
@@ -142,6 +143,7 @@ export default function PainelPedidosPage() {
                 title="Ver detalhes da entrega"
               >
                 <b>#{o.number}</b>
+                <ChannelTag channel={o.channel} code={o.externalCode} />
                 <span className="flex-1">{o.customerName}</span>
                 {o.ratingStore && <Stars value={o.ratingStore} size="text-sm" />}
                 <span>{formatBRL(o.totalCents)}</span>
@@ -202,7 +204,9 @@ function OrderCard({
     >
       <header className="flex items-start justify-between gap-2">
         <div>
-          <div className="text-lg font-bold">#{o.number}</div>
+          <div className="text-lg font-bold">
+            #{o.number} <ChannelTag channel={o.channel} code={o.externalCode} className="align-middle" />
+          </div>
           <div className="text-sm font-medium">{o.customerName}</div>
         </div>
         <div className="text-right text-xs">

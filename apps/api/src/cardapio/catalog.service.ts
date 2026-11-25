@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MARKETPLACES } from '@delivery360/shared';
 import { AuditService } from '../core/audit.service';
 import {
   CategoryDto,
@@ -35,6 +36,11 @@ export function slugify(name: string): string {
  */
 
 /** Ficha técnica vai para o banco como JSON simples (sem as classes do validador). */
+/** "" vira null (sem código PDV). */
+const pdv = (v: string | undefined) => (v === undefined ? undefined : v.trim() || null);
+const prices = (v: object | undefined) => (v === undefined ? undefined : (Object.fromEntries(Object.entries(v).filter(([, c]) => typeof c === 'number')) as Prisma.InputJsonValue));
+const PDV_TAKEN = 'Já existe outro produto com este código PDV.';
+
 const toJson = (items: { name: string; kind: string; costCents: number }[]) =>
   items.map((i) => ({ name: i.name.trim(), kind: i.kind, costCents: i.costCents })) as Prisma.InputJsonValue;
 
@@ -163,19 +169,47 @@ export class CatalogService {
       cardOnDeliveryFeeBps: s?.cardOnDeliveryFeeBps ?? 0,
       targetMarginBps: s?.targetMarginBps ?? 2000,
       configured: !!s,
+      channels: await this.channelConfigs(tenantId),
     };
+  }
+
+  /** Apps de delivery do restaurante (os que não foram configurados vêm desligados). */
+  async channelConfigs(tenantId: string) {
+    const rows = await this.prisma.channelSetting.findMany({ where: { tenantId } });
+    return MARKETPLACES.map((channel) => {
+      const r = rows.find((x) => x.channel === channel);
+      return {
+        channel,
+        active: r?.active ?? false,
+        merchantId: r?.merchantId ?? null,
+        commissionBps: r?.commissionBps ?? 0,
+        paymentFeeBps: r?.paymentFeeBps ?? 0,
+        payoutDays: r?.payoutDays ?? 30,
+      };
+    });
   }
 
   async createProduct(tenantId: string, dto: ProductDto) {
     await this.own('menuCategory', tenantId, dto.categoryId);
     const position = dto.position ?? (await this.prisma.product.count({ where: { categoryId: dto.categoryId } }));
-    return this.prisma.product.create({ data: { ...dto, costItems: toJson(dto.costItems ?? []), tenantId, name: dto.name.trim(), position } });
+    return this.prisma.product
+      .create({ data: { ...dto, costItems: toJson(dto.costItems ?? []), pdvCode: pdv(dto.pdvCode), channelPrices: prices(dto.channelPrices), tenantId, name: dto.name.trim(), position } })
+      .catch((e) => {
+        throw this.unique(e, PDV_TAKEN);
+      });
   }
 
   async updateProduct(tenantId: string, id: string, dto: UpdateProductDto) {
     await this.own('product', tenantId, id);
     if (dto.categoryId) await this.own('menuCategory', tenantId, dto.categoryId);
-    return this.prisma.product.update({ where: { id }, data: { ...dto, costItems: dto.costItems ? toJson(dto.costItems) : undefined, name: dto.name?.trim() } });
+    return this.prisma.product
+      .update({
+        where: { id },
+        data: { ...dto, costItems: dto.costItems ? toJson(dto.costItems) : undefined, pdvCode: pdv(dto.pdvCode), channelPrices: prices(dto.channelPrices), name: dto.name?.trim() },
+      })
+      .catch((e) => {
+        throw this.unique(e, PDV_TAKEN);
+      });
   }
 
   async deleteProduct(tenantId: string, id: string) {
@@ -210,12 +244,12 @@ export class CatalogService {
   async createOption(tenantId: string, groupId: string, dto: OptionDto) {
     await this.own('optionGroup', tenantId, groupId);
     const position = dto.position ?? (await this.prisma.option.count({ where: { groupId } }));
-    return this.prisma.option.create({ data: { tenantId, groupId, name: dto.name.trim(), priceCents: dto.priceCents, costCents: dto.costCents ?? 0, available: dto.available ?? true, position } });
+    return this.prisma.option.create({ data: { tenantId, groupId, name: dto.name.trim(), priceCents: dto.priceCents, costCents: dto.costCents ?? 0, pdvCode: pdv(dto.pdvCode) ?? null, available: dto.available ?? true, position } });
   }
 
   async updateOption(tenantId: string, id: string, dto: UpdateOptionDto) {
     await this.own('option', tenantId, id);
-    return this.prisma.option.update({ where: { id }, data: { ...dto, name: dto.name?.trim() } });
+    return this.prisma.option.update({ where: { id }, data: { ...dto, pdvCode: pdv(dto.pdvCode), name: dto.name?.trim() } });
   }
 
   async deleteOption(tenantId: string, id: string) {

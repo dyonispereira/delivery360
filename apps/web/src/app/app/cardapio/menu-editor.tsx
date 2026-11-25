@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { costSheet, DEFAULT_RATES, formatBRL, parseBRL, type FinanceRates } from '@delivery360/shared';
+import { CHANNEL_LABELS, costSheet, DEFAULT_RATES, formatBRL, parseBRL, type ChannelPrices, type FinanceRates } from '@delivery360/shared';
 import { CostSheetEditor, type RatesInfo } from './cost-sheet';
 import { Badge, ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -110,6 +110,7 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
                     </div>
                     <div className="text-xs text-zinc-500">
                       {formatBRL(p.priceCents)}
+                      {p.pdvCode && ` · PDV ${p.pdvCode}`}
                       {p.optionGroups.length > 0 && ` · ${p.optionGroups.length} grupo(s) de adicionais`}
                       {canEdit && <MarginChip product={p} rates={rates ?? DEFAULT_RATES} />}
                     </div>
@@ -177,8 +178,18 @@ function ProductEditor({
   });
   const [costItems, setCostItems] = useState(product.costItems ?? []);
   const [extraCostBps, setExtraCostBps] = useState(product.extraCostBps ?? 0);
+  const [pdvCode, setPdvCode] = useState(product.pdvCode ?? '');
+  const [prices, setPrices] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(product.channelPrices ?? {}).map(([k, v]) => [k, toMoney(v as number)])),
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const activeChannels = (rates?.channels ?? []).filter((c) => c.active);
+  const channelPrices: ChannelPrices = Object.fromEntries(
+    Object.entries(prices)
+      .map(([k, v]) => [k, v.trim() ? parseBRL(v) : null])
+      .filter(([, v]) => v !== null),
+  );
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -195,6 +206,9 @@ function ProductEditor({
       active: form.active,
       costItems: costItems.filter((i) => i.name.trim()),
       extraCostBps,
+      pdvCode: pdvCode.trim(),
+      // Só os apps ativos; vazio = mesmo preço da loja.
+      ...(canEdit && rates ? { channelPrices } : {}),
     };
     try {
       const saved = isNew
@@ -249,6 +263,40 @@ function ProductEditor({
           </div>
         </div>
         <div>
+          <label className="label" htmlFor="pdv-code">Código PDV</label>
+          <input
+            id="pdv-code"
+            className="input"
+            disabled={!canEdit}
+            placeholder="Ex.: XB01"
+            maxLength={40}
+            value={pdvCode}
+            onChange={(e) => setPdvCode(e.target.value.replace(/\s/g, ''))}
+          />
+          <p className="mt-1 text-xs text-zinc-500">Use o mesmo código no iFood, 99Food e Keeta: assim o pedido do app cai no produto certo, com a receita separada por canal.</p>
+        </div>
+        {canEdit && activeChannels.length > 0 && (
+          <div>
+            <span className="label">Preço nos apps (R$)</span>
+            <div className="grid grid-cols-3 gap-2">
+              {activeChannels.map((c) => (
+                <div key={c.channel}>
+                  <label className="text-xs text-zinc-500" htmlFor={`price-${c.channel}`}>{CHANNEL_LABELS[c.channel]}</label>
+                  <input
+                    id={`price-${c.channel}`}
+                    className="input"
+                    inputMode="decimal"
+                    placeholder={form.price || '0,00'}
+                    value={prices[c.channel] ?? ''}
+                    onChange={(e) => setPrices({ ...prices, [c.channel]: e.target.value })}
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">Vazio = mesmo preço da loja própria.</p>
+          </div>
+        )}
+        <div>
           <label className="label">Foto (link da imagem)</label>
           <input className="input" disabled={!canEdit} placeholder="https://..." value={form.imageUrl} onChange={(e) => setForm({ ...form, imageUrl: e.target.value })} />
         </div>
@@ -262,6 +310,7 @@ function ProductEditor({
             items={costItems}
             extraCostBps={extraCostBps}
             rates={rates}
+            channelPrices={channelPrices}
             onChange={(items, extra) => {
               setCostItems(items);
               setExtraCostBps(extra);
@@ -306,7 +355,8 @@ function GroupsEditor({ productId, groups, canEdit, onChanged }: { productId: st
     const cost = window.prompt('Custo deste adicional em R$, para o CMV (ex.: bacon 1,50). 0 se não tem custo.', '0');
     const costCents = parseBRL(cost ?? '0');
     if (costCents === null) return setError('Custo inválido.');
-    void run(() => api(`/cardapio/groups/${groupId}/options`, { method: 'POST', body: { name, priceCents, costCents }, tenant: true }));
+    const pdvCode = window.prompt('Código PDV do adicional (o mesmo dos apps). Deixe vazio se não tiver.', '') ?? '';
+    void run(() => api(`/cardapio/groups/${groupId}/options`, { method: 'POST', body: { name, priceCents, costCents, pdvCode: pdvCode.trim() }, tenant: true }));
   }
 
   const rule = (g: Group) =>
@@ -347,6 +397,19 @@ function GroupsEditor({ productId, groups, canEdit, onChanged }: { productId: st
                       }}
                     >
                       custo {formatBRL(o.costCents ?? 0)}
+                    </button>
+                  )}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="ml-1 text-zinc-400 underline"
+                      title="Código PDV do adicional (o mesmo dos apps)"
+                      onClick={() => {
+                        const code = window.prompt(`Código PDV de "${o.name}" (vazio apaga):`, o.pdvCode ?? '');
+                        if (code !== null) void run(() => api(`/cardapio/options/${o.id}`, { method: 'PATCH', body: { pdvCode: code.trim() }, tenant: true }));
+                      }}
+                    >
+                      {o.pdvCode ? `PDV ${o.pdvCode}` : 'sem PDV'}
                     </button>
                   )}
                 </span>
