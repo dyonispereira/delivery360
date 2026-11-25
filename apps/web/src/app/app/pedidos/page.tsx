@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { formatBRL, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type OrderStatus } from '@delivery360/shared';
+import { DELIVERY_FAIL_LABELS, formatBRL, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type OrderStatus } from '@delivery360/shared';
 import { ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { useCurrentTenant } from '../tenant-context';
 import {
@@ -18,6 +18,7 @@ import {
   writePref,
   type BoardOrder,
 } from './board';
+import { OrderDetailModal, Stars } from './order-detail';
 
 const COLUMNS: { title: string; statuses: OrderStatus[]; tone: string }[] = [
   { title: 'Novos', statuses: ['PAID'], tone: 'border-t-red-500' },
@@ -32,6 +33,7 @@ export default function PainelPedidosPage() {
   const [now, setNow] = useState(() => Date.now());
   const [flash, setFlash] = useState<Set<string>>(new Set());
   const [showDone, setShowDone] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   useEffect(() => {
     setSound(readPref('sound', true));
@@ -117,6 +119,7 @@ export default function PainelPedidosPage() {
                     onSeen={() => setFlash((cur) => { const n = new Set(cur); n.delete(o.id); return n; })}
                     onMove={(to, note) => void move(o.id, to, note)}
                     onPrint={() => printOrder(o, tenant.name)}
+                    onDetails={() => setDetailId(o.id)}
                   />
                 ))}
               </div>
@@ -132,17 +135,35 @@ export default function PainelPedidosPage() {
         {showDone && (
           <ul className="mt-2 divide-y divide-zinc-200 rounded-xl border border-zinc-200 bg-white text-sm">
             {done.map((o) => (
-              <li key={o.id} className="flex flex-wrap items-center gap-3 px-4 py-2">
+              <li
+                key={o.id}
+                className="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-2 hover:bg-zinc-50"
+                onClick={() => setDetailId(o.id)}
+                title="Ver detalhes da entrega"
+              >
                 <b>#{o.number}</b>
                 <span className="flex-1">{o.customerName}</span>
+                {o.ratingStore && <Stars value={o.ratingStore} size="text-sm" />}
                 <span>{formatBRL(o.totalCents)}</span>
-                <span className={o.status === 'CANCELLED' ? 'text-red-600' : 'text-emerald-700'}>{ORDER_STATUS_LABELS[o.status]}</span>
-                <button className="text-zinc-500 underline" onClick={() => printOrder(o, tenant.name)}>Imprimir</button>
+                <span className={o.status === 'CANCELLED' ? 'text-red-600' : 'text-emerald-700'}>
+                  {o.type === 'PICKUP' && o.status === 'COMPLETED' ? 'Retirado' : ORDER_STATUS_LABELS[o.status]}
+                </span>
+                <span className="text-sky-700 underline">Detalhes</span>
+                <button
+                  className="text-zinc-500 underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    printOrder(o, tenant.name);
+                  }}
+                >
+                  Imprimir
+                </button>
               </li>
             ))}
           </ul>
         )}
       </section>
+      {detailId && <OrderDetailModal orderId={detailId} canEdit={canCancel} onClose={() => setDetailId(null)} />}
     </div>
   );
 }
@@ -156,6 +177,7 @@ function OrderCard({
   onSeen,
   onMove,
   onPrint,
+  onDetails,
 }: {
   order: BoardOrder;
   now: number;
@@ -165,6 +187,7 @@ function OrderCard({
   onSeen: () => void;
   onMove: (to: OrderStatus, note?: string) => void;
   onPrint: () => void;
+  onDetails: () => void;
 }) {
   const action = primaryAction(o, withCouriers);
   const awaitingCourier = withCouriers && o.type === 'DELIVERY' && o.status === 'READY';
@@ -188,6 +211,12 @@ function OrderCard({
           {o.status !== 'PAID' && o.status !== 'IN_PREPARATION' && <div className="mt-1 text-sky-700">{ORDER_STATUS_LABELS[o.status]}</div>}
         </div>
       </header>
+
+      {o.deliveryIssue && o.status === 'READY' && (
+        <div className="mt-2 rounded-lg bg-red-50 px-2 py-1.5 text-xs text-red-800">
+          <b>⚠ Não entregue: {DELIVERY_FAIL_LABELS[o.deliveryIssue]}.</b> O motoboy volta com o pedido. Reenvie em Entregas ou cancele.
+        </div>
+      )}
 
       <ul className="my-2 space-y-0.5 text-sm">
         {o.items.map((i) => (
@@ -215,13 +244,14 @@ function OrderCard({
           </button>
         )}
         {awaitingCourier && (
-          <Link href="/app/entregas" className="btn-primary flex-1 py-1.5">Despachar com motoboy</Link>
+          <Link href="/app/entregas" className="btn-primary flex-1 py-1.5">{o.deliveryIssue ? 'Reenviar com motoboy' : 'Despachar com motoboy'}</Link>
         )}
         {o.status === 'IN_PREPARATION' && o.type === 'DELIVERY' && !withCouriers && (
           <button className="btn-ghost py-1.5" onClick={() => onMove('READY')} title="Pronto, aguardando o motoboy">
             Pronto
           </button>
         )}
+        <button className="btn-ghost py-1.5" onClick={onDetails}>Detalhes</button>
         <button className="btn-ghost py-1.5" onClick={onPrint} title={o.printedAt ? 'Já impresso; imprimir de novo' : 'Imprimir comanda'}>
           {o.printedAt ? 'Reimprimir' : 'Imprimir'}
         </button>

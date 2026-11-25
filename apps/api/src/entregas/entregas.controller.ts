@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } fr
 import { Throttle } from '@nestjs/throttler';
 import { CurrentTenant, CurrentUser, Public, RequireModule, TenantRoles } from '../access/access.decorators';
 import type { AuthUser, TenantContext } from '../access/access.types';
-import { CourierDto, CreateBatchDto, DeliverDto, LocationDto, UpdateCourierDto } from './entregas.dto';
+import { CourierDto, CreateBatchDto, DeliverDto, FailDeliveryDto, FixAttemptDto, LocationDto, UpdateCourierDto } from './entregas.dto';
 import { EntregasService } from './entregas.service';
 
 const UUID = new ParseUUIDPipe();
@@ -59,6 +59,25 @@ export class EntregasManageController {
   unlock(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string) {
     return this.entregas.unlockCode(t.tenantId, u.id, id);
   }
+
+  @Get('tips')
+  tips(@CurrentTenant() t: TenantContext) {
+    return this.entregas.tips(t.tenantId);
+  }
+
+  @TenantRoles('OWNER', 'MANAGER')
+  @Post('couriers/:id/tips/pay-out')
+  @HttpCode(200)
+  payOut(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string) {
+    return this.entregas.payOutTips(t.tenantId, u.id, id);
+  }
+
+  /** Depois de entregue, só o restaurante (dono ou gerente) corrige o registro. */
+  @TenantRoles('OWNER', 'MANAGER')
+  @Patch('attempts/:id')
+  fixAttempt(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string, @Body() dto: FixAttemptDto) {
+    return this.entregas.fixAttempt(t.tenantId, u.id, id, dto);
+  }
 }
 
 /** Tela do entregador: sem login, pelo link secreto do motoboy. */
@@ -76,7 +95,19 @@ export class CourierPublicController {
   @Post(':token/orders/:id/deliver')
   @HttpCode(200)
   deliver(@Param('token') token: string, @Param('id', UUID) id: string, @Body() dto: DeliverDto) {
-    return this.entregas.deliver(token, id, dto.code);
+    return this.entregas.deliver(token, id, dto.code, dto.receiverName);
+  }
+
+  @Throttle({ default: { limit: process.env.NODE_ENV === 'test' ? 1000 : 20, ttl: 60_000 } })
+  @Post(':token/orders/:id/fail')
+  @HttpCode(200)
+  fail(@Param('token') token: string, @Param('id', UUID) id: string, @Body() dto: FailDeliveryDto) {
+    return this.entregas.fail(token, id, dto);
+  }
+
+  @Get(':token/history')
+  history(@Param('token') token: string) {
+    return this.entregas.courierHistory(token);
   }
 
   /** O celular manda a posição a cada ~10 s durante a entrega. */

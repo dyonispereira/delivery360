@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { formatBRL, parseBRL, PAYMENT_METHOD_LABELS, type OrderStatus, type PaymentMethod } from '@delivery360/shared';
+import { DELIVERY_FAIL_LABELS, formatBRL, parseBRL, PAYMENT_METHOD_LABELS, type DeliveryFailReason, type OrderStatus, type PaymentMethod } from '@delivery360/shared';
 import { Badge, ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useCurrentTenant } from '../tenant-context';
@@ -21,6 +21,7 @@ interface DeliveryOrder {
   changeForCents: number | null;
   deliveredAt: string | null;
   deliveryCodeFails: number;
+  deliveryIssue: DeliveryFailReason | null;
   createdAt: string;
 }
 interface Batch {
@@ -37,8 +38,18 @@ interface Courier {
   name: string;
   phone: string;
   feeCents: number;
+  plate: string | null;
   active: boolean;
   accessToken: string;
+}
+interface TipRow {
+  id: string;
+  amountCents: number;
+  paidAt: string;
+  paidOutAt: string | null;
+  courier: { id: string; name: string };
+  orderNumber: number;
+  ratingDelivery: number | null;
 }
 
 const courierLink = (token: string) => `${window.location.origin}/entregador/${token}`;
@@ -50,7 +61,7 @@ const formatPhone = (p: string) => {
 
 export default function EntregasPage() {
   const tenant = useCurrentTenant();
-  const [tab, setTab] = useState<'lotes' | 'motoboys'>('lotes');
+  const [tab, setTab] = useState<'lotes' | 'motoboys' | 'gorjetas'>('lotes');
   const [couriers, setCouriers] = useState<Courier[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const canManage = tenant.role === null || tenant.role === 'OWNER' || tenant.role === 'MANAGER';
@@ -74,15 +85,23 @@ export default function EntregasPage() {
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">Entregas</h1>
         <div className="flex gap-1 rounded-lg bg-zinc-100 p-1">
-          {(['lotes', 'motoboys'] as const).map((t) => (
+          {(['lotes', 'motoboys', 'gorjetas'] as const).map((t) => (
             <button key={t} onClick={() => setTab(t)} className={`rounded-md px-3 py-1.5 text-sm ${tab === t ? 'bg-white font-medium shadow-sm' : 'text-zinc-600'}`}>
-              {t === 'lotes' ? 'Lotes de entrega' : 'Motoboys'}
+              {t === 'lotes' ? 'Lotes de entrega' : t === 'motoboys' ? 'Motoboys' : 'Gorjetas'}
             </button>
           ))}
         </div>
       </div>
       <ErrorBox message={error} />
-      {!couriers ? <Spinner /> : tab === 'lotes' ? <Batches couriers={couriers} canManage={canManage} /> : <Couriers couriers={couriers} canManage={canManage} reload={loadCouriers} />}
+      {!couriers ? (
+        <Spinner />
+      ) : tab === 'lotes' ? (
+        <Batches couriers={couriers} canManage={canManage} />
+      ) : tab === 'motoboys' ? (
+        <Couriers couriers={couriers} canManage={canManage} reload={loadCouriers} />
+      ) : (
+        <Tips canManage={canManage} />
+      )}
     </div>
   );
 }
@@ -151,11 +170,28 @@ function Batches({ couriers, canManage }: { couriers: Courier[]; canManage: bool
                 <span className="min-w-0 flex-1">
                   <b>#{o.number}</b> {o.customerName}
                   <span className="block truncate text-zinc-500">{address(o)}</span>
+                  {o.deliveryIssue && (
+                    <span className="mt-1 block text-xs font-medium text-red-700">⚠ Voltou: {DELIVERY_FAIL_LABELS[o.deliveryIssue]}</span>
+                  )}
                 </span>
                 <span className="text-right">
-                  <Badge tone={o.status === 'READY' ? 'green' : 'amber'}>{o.status === 'READY' ? 'Pronto' : 'Em preparo'}</Badge>
+                  {o.deliveryIssue ? <Badge tone="red">Não entregue</Badge> : <Badge tone={o.status === 'READY' ? 'green' : 'amber'}>{o.status === 'READY' ? 'Pronto' : 'Em preparo'}</Badge>}
                 </span>
               </label>
+              {o.deliveryIssue && canManage && (
+                <div className="mb-2 ml-7 flex gap-3 text-xs">
+                  <span className="text-zinc-500">Marque acima para reenviar, ou</span>
+                  <button
+                    className="font-medium text-red-600 underline"
+                    onClick={() => {
+                      const note = window.prompt(`Cancelar o pedido #${o.number}? Informe o motivo:`, DELIVERY_FAIL_LABELS[o.deliveryIssue!]);
+                      if (note !== null) void act(() => api(`/cardapio/orders/${o.id}/status`, { method: 'PATCH', tenant: true, body: { status: 'CANCELLED', note: note || undefined } }));
+                    }}
+                  >
+                    cancelar o pedido
+                  </button>
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -251,7 +287,7 @@ function Batches({ couriers, canManage }: { couriers: Courier[]; canManage: bool
 }
 
 function Couriers({ couriers, canManage, reload }: { couriers: Courier[]; canManage: boolean; reload: () => Promise<unknown> }) {
-  const [form, setForm] = useState({ name: '', phone: '', fee: '' });
+  const [form, setForm] = useState({ name: '', phone: '', fee: '', plate: '' });
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -269,14 +305,14 @@ function Couriers({ couriers, canManage, reload }: { couriers: Courier[]; canMan
     <div className="space-y-4">
       {canManage && (
         <form
-          className="card grid gap-3 sm:grid-cols-[1fr_12rem_9rem_auto] sm:items-end"
+          className="card grid gap-3 sm:grid-cols-[1fr_12rem_8rem_9rem_auto] sm:items-end"
           onSubmit={(e) => {
             e.preventDefault();
             const feeCents = form.fee.trim() ? parseBRL(form.fee) : 0;
             if (feeCents === null) return setError('Valor por entrega inválido.');
             void act(async () => {
-              await api('/entregas/couriers', { method: 'POST', tenant: true, body: { name: form.name, phone: form.phone, feeCents } });
-              setForm({ name: '', phone: '', fee: '' });
+              await api('/entregas/couriers', { method: 'POST', tenant: true, body: { name: form.name, phone: form.phone, feeCents, plate: form.plate || undefined } });
+              setForm({ name: '', phone: '', fee: '', plate: '' });
             });
           }}
         >
@@ -287,6 +323,10 @@ function Couriers({ couriers, canManage, reload }: { couriers: Courier[]; canMan
           <div>
             <label className="label" htmlFor="m-phone">Celular (WhatsApp)</label>
             <input id="m-phone" className="input" required type="tel" placeholder="(11) 99999-9999" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          </div>
+          <div>
+            <label className="label" htmlFor="m-plate">Placa da moto</label>
+            <input id="m-plate" className="input uppercase" maxLength={8} placeholder="ABC1D23" value={form.plate} onChange={(e) => setForm({ ...form, plate: e.target.value })} />
           </div>
           <div>
             <label className="label" htmlFor="m-fee">Paga por entrega</label>
@@ -309,6 +349,20 @@ function Couriers({ couriers, canManage, reload }: { couriers: Courier[]; canMan
                   <div className="font-semibold">{c.name}</div>
                   <div className="text-sm text-zinc-500">
                     {formatPhone(c.phone)} · {c.feeCents ? `${formatBRL(c.feeCents)} por entrega` : 'valor por entrega não informado'}
+                  </div>
+                  <div className="text-sm text-zinc-500">
+                    Placa: <span className="font-mono text-zinc-800">{c.plate ?? 'não informada'}</span>
+                    {canManage && (
+                      <button
+                        className="ml-2 text-xs underline"
+                        onClick={() => {
+                          const plate = window.prompt(`Placa da moto de ${c.name}:`, c.plate ?? '');
+                          if (plate !== null) void act(() => api(`/entregas/couriers/${c.id}`, { method: 'PATCH', tenant: true, body: { plate } }));
+                        }}
+                      >
+                        {c.plate ? 'alterar' : 'informar'}
+                      </button>
+                    )}
                   </div>
                 </div>
                 {canManage && (
@@ -352,6 +406,72 @@ function Couriers({ couriers, canManage, reload }: { couriers: Courier[]; canMan
             </article>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/** Gorjetas que os clientes deram: o restaurante recebe e repassa ao motoboy como prêmio. */
+function Tips({ canManage }: { canManage: boolean }) {
+  const [tips, setTips] = useState<TipRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => api<TipRow[]>('/entregas/tips', { tenant: true }).then(setTips).catch((e) => setError(e.message)), []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  if (!tips) return error ? <ErrorBox message={error} /> : <Spinner />;
+
+  const byCourier = new Map<string, { name: string; pending: TipRow[]; paid: TipRow[] }>();
+  for (const t of tips) {
+    const g = byCourier.get(t.courier.id) ?? { name: t.courier.name, pending: [], paid: [] };
+    (t.paidOutAt ? g.paid : g.pending).push(t);
+    byCourier.set(t.courier.id, g);
+  }
+  const sum = (l: TipRow[]) => l.reduce((s, t) => s + t.amountCents, 0);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-zinc-600">
+        O cliente dá a gorjeta pelo PIX na página do pedido. O dinheiro entra no caixa do restaurante; aqui você marca quando repassou ao motoboy.
+        Gorjeta não é receita do restaurante: na Gestão ela entra como valor a repassar.
+      </p>
+      <ErrorBox message={error} />
+      {byCourier.size === 0 && <div className="card text-sm text-zinc-500">Nenhuma gorjeta nos últimos 30 dias.</div>}
+      <div className="grid gap-3 md:grid-cols-2">
+        {[...byCourier.entries()].map(([id, g]) => (
+          <article key={id} className="card space-y-2">
+            <header className="flex items-center justify-between gap-2">
+              <b>🛵 {g.name}</b>
+              <span className="text-sm text-zinc-500">{g.pending.length + g.paid.length} gorjeta(s)</span>
+            </header>
+            <p className="text-sm">
+              A repassar: <b className="text-lg text-emerald-700">{formatBRL(sum(g.pending))}</b>
+              {g.paid.length > 0 && <span className="text-zinc-500"> · já repassado: {formatBRL(sum(g.paid))}</span>}
+            </p>
+            <ul className="text-xs text-zinc-600">
+              {[...g.pending, ...g.paid].map((t) => (
+                <li key={t.id}>
+                  Pedido #{t.orderNumber} · {formatBRL(t.amountCents)} · {new Date(t.paidAt).toLocaleDateString('pt-BR')}
+                  {t.ratingDelivery ? ` · ${'★'.repeat(t.ratingDelivery)}` : ''}
+                  {t.paidOutAt ? ' · repassada' : ''}
+                </li>
+              ))}
+            </ul>
+            {canManage && g.pending.length > 0 && (
+              <button
+                className="btn-primary w-full"
+                onClick={() => {
+                  if (!window.confirm(`Confirmar que ${g.name} recebeu ${formatBRL(sum(g.pending))} em gorjetas?`)) return;
+                  api(`/entregas/couriers/${id}/tips/pay-out`, { method: 'POST', tenant: true })
+                    .then(load)
+                    .catch((e) => setError(e.message));
+                }}
+              >
+                Marcar {formatBRL(sum(g.pending))} como repassado
+              </button>
+            )}
+          </article>
+        ))}
       </div>
     </div>
   );

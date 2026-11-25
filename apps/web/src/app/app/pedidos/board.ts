@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { formatBRL, PAYMENT_METHOD_LABELS, type OrderStatus, type PaymentMethod } from '@delivery360/shared';
+import { formatBRL, PAYMENT_METHOD_LABELS, type DeliveryFailReason, type OrderStatus, type PaymentMethod } from '@delivery360/shared';
 import { api } from '@/lib/api';
 
 export interface BoardOrder {
@@ -25,6 +25,10 @@ export interface BoardOrder {
   changeForCents: number | null;
   printedAt: string | null;
   createdAt: string;
+  /** O motoboy não conseguiu entregar e o restaurante precisa decidir (reenviar ou cancelar). */
+  deliveryIssue: DeliveryFailReason | null;
+  ratingStore: number | null;
+  ratingDelivery: number | null;
   items: { id: string; name: string; quantity: number; totalCents: number; notes: string | null; options: { name: string }[] }[];
   statusHistory: { status: OrderStatus; createdAt: string }[];
 }

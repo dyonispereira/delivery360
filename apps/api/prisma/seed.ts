@@ -124,7 +124,7 @@ async function seedDemo() {
 async function seedDemoCourier(tenantId: string) {
   if (await prisma.courier.count({ where: { tenantId } })) return;
   await prisma.courier.create({
-    data: { tenantId, name: 'Carlos Demo', phone: '5511900000000', feeCents: 700, accessToken: randomBytes(18).toString('base64url') },
+    data: { tenantId, name: 'Carlos Demo', phone: '5511900000000', feeCents: 700, plate: 'ABC1D23', accessToken: randomBytes(18).toString('base64url') },
   });
 }
 

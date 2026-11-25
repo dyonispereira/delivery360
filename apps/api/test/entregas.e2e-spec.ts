@@ -82,7 +82,7 @@ describe('Entregas: motoboys, lotes e código de 4 dígitos (e2e)', () => {
   });
 
   it('dono cadastra motoboy; funcionário não cadastra, mas vê a lista', async () => {
-    const res = await owner().post('/entregas/couriers').send({ name: 'Carlos Moto', phone: '(11) 91111-2222', feeCents: 700 });
+    const res = await owner().post('/entregas/couriers').send({ name: 'Carlos Moto', phone: '(11) 91111-2222', feeCents: 700, plate: 'abc-1d23' });
     expect(res.status).toBe(201);
     expect(res.body.accessToken).toHaveLength(24);
     ids.courier = res.body.id;
@@ -132,10 +132,10 @@ describe('Entregas: motoboys, lotes e código de 4 dígitos (e2e)', () => {
   });
 
   it('código errado conta tentativa; certo finaliza o pedido e gera custo do motoboy', async () => {
-    const wrong = await http().post(`/public/courier/${ids.token}/orders/${ids.a}/deliver`).send({ code: '0000' });
+    const wrong = await http().post(`/public/courier/${ids.token}/orders/${ids.a}/deliver`).send({ code: '0000', receiverName: 'Maria Recebedora' });
     expect(wrong.status).toBe(400);
     expect(wrong.body.message).toContain('restam 4');
-    const ok = await http().post(`/public/courier/${ids.token}/orders/${ids.a}/deliver`).send({ code: '4321' });
+    const ok = await http().post(`/public/courier/${ids.token}/orders/${ids.a}/deliver`).send({ code: '4321', receiverName: 'Maria Recebedora' });
     expect(ok.status).toBe(200);
     const done = (await http().get(`/public/orders/${ids.aCode}`)).body;
     expect(done.status).toBe('COMPLETED');
@@ -146,16 +146,113 @@ describe('Entregas: motoboys, lotes e código de 4 dígitos (e2e)', () => {
   });
 
   it('5 erros bloqueiam o código até o restaurante liberar', async () => {
-    for (let i = 0; i < 5; i++) await http().post(`/public/courier/${ids.token}/orders/${ids.b}/deliver`).send({ code: '1111' });
-    expect((await http().post(`/public/courier/${ids.token}/orders/${ids.b}/deliver`).send({ code: '0099' })).status).toBe(423);
+    for (let i = 0; i < 5; i++) await http().post(`/public/courier/${ids.token}/orders/${ids.b}/deliver`).send({ code: '1111', receiverName: 'Maria Recebedora' });
+    expect((await http().post(`/public/courier/${ids.token}/orders/${ids.b}/deliver`).send({ code: '0099', receiverName: 'Maria Recebedora' })).status).toBe(423);
     expect((await staff().post(`/entregas/orders/${ids.b}/unlock-code`)).status).toBe(403);
     expect((await owner().post(`/entregas/orders/${ids.b}/unlock-code`)).status).toBe(200);
-    expect((await http().post(`/public/courier/${ids.token}/orders/${ids.b}/deliver`).send({ code: '0099' })).status).toBe(200);
+    expect((await http().post(`/public/courier/${ids.token}/orders/${ids.b}/deliver`).send({ code: '0099', receiverName: 'Maria Recebedora' })).status).toBe(200);
     const batch = await prisma.deliveryBatch.findUniqueOrThrow({ where: { id: ids.batch } });
     expect(batch.status).toBe('DONE');
     expect(batch.finishedAt).not.toBeNull();
     // sem entrega em andamento, a posição não é mais guardada
     expect((await http().post(`/public/courier/${ids.token}/location`).send({ lat: -23.1, lng: -46.1 })).body).toEqual({ tracking: false });
+  });
+
+  it('entrega exige nome de quem recebeu; painel mostra motoboy, placa, código e quem recebeu', async () => {
+    const detail = (await staff().get(`/cardapio/orders/${ids.a}/detail`)).body;
+    expect(detail.attempts).toHaveLength(1);
+    expect(detail.attempts[0]).toMatchObject({
+      outcome: 'DELIVERED',
+      receiverName: 'Maria Recebedora',
+      code: '4321',
+      courierName: 'Carlos Moto',
+      courierPlate: 'ABC-1D23',
+      batchNumber: 1,
+    });
+    expect(detail.deliveredAt).not.toBeNull();
+    const e = await readyOrder();
+    await staff().post('/entregas/batches').send({ courierId: ids.courier, orderIds: [e.id] });
+    const noName = await http().post(`/public/courier/${ids.token}/orders/${e.id}/deliver`).send({ code: '4321' });
+    expect(noName.status).toBe(400);
+    expect(noName.body.message.join(' ')).toContain('nome de quem recebeu');
+    ids.e = e.id;
+  });
+
+  it('só o restaurante (dono/gerente) corrige o registro depois de entregue', async () => {
+    const attemptId = (await owner().get(`/cardapio/orders/${ids.a}/detail`)).body.attempts[0].id;
+    expect((await staff().patch(`/entregas/attempts/${attemptId}`).send({ receiverName: 'Outra' })).status).toBe(403);
+    expect((await owner().patch(`/entregas/attempts/${attemptId}`).send({ receiverName: 'Maria da Silva' })).body.receiverName).toBe('Maria da Silva');
+    expect(await prisma.auditLog.count({ where: { tenantId, action: 'delivery_attempt.fix' } })).toBe(1);
+    // entregar de novo não muda nada
+    expect((await http().post(`/public/courier/${ids.token}/orders/${ids.a}/deliver`).send({ code: '4321', receiverName: 'Xu' })).body).toMatchObject({ already: true });
+  });
+
+  it('ocorrência: cliente não atende volta o pedido ao restaurante, que reenvia ou cancela', async () => {
+    const bad = await http().post(`/public/courier/${ids.token}/orders/${ids.e}/fail`).send({ reason: 'DORMINDO' });
+    expect(bad.status).toBe(400);
+    const fail = await http().post(`/public/courier/${ids.token}/orders/${ids.e}/fail`).send({ reason: 'CUSTOMER_ABSENT', note: 'Toquei 3 vezes' });
+    expect(fail.status).toBe(200);
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: ids.e } });
+    expect(order).toMatchObject({ status: 'READY', batchId: null, deliveryIssue: 'CUSTOMER_ABSENT' });
+    expect((await http().get(`/public/orders/${order.trackingCode}`)).body.deliveryIssue).toBe(true);
+    // o motoboy não mexe mais neste pedido
+    expect((await http().post(`/public/courier/${ids.token}/orders/${ids.e}/deliver`).send({ code: '4321', receiverName: 'Xu' })).status).toBe(404);
+    const queue = (await staff().get('/entregas/overview')).body.queue;
+    expect(queue.find((o: { id: string }) => o.id === ids.e)).toMatchObject({ deliveryIssue: 'CUSTOMER_ABSENT' });
+    expect(await prisma.domainEvent.count({ where: { tenantId, type: 'entrega.ocorrencia' } })).toBe(1);
+    // lote rodou (houve tentativa): conta como concluído, não cancelado
+    const attempts = await prisma.deliveryAttempt.findMany({ where: { orderId: ids.e } });
+    expect((await prisma.deliveryBatch.findUniqueOrThrow({ where: { id: attempts[0].batchId } })).status).toBe('DONE');
+
+    // reenviar: a ocorrência sai do pedido e fica só no histórico
+    await staff().post('/entregas/batches').send({ courierId: ids.courier, orderIds: [ids.e] });
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: ids.e } })).deliveryIssue).toBeNull();
+    await http().post(`/public/courier/${ids.token}/orders/${ids.e}/fail`).send({ reason: 'CUSTOMER_REFUSED' });
+    expect((await owner().patch(`/cardapio/orders/${ids.e}/status`).send({ status: 'CANCELLED', note: 'Cliente desistiu' })).status).toBe(200);
+    const detail = (await owner().get(`/cardapio/orders/${ids.e}/detail`)).body;
+    expect(detail.attempts.map((a: { failReason: string }) => a.failReason)).toEqual(['CUSTOMER_ABSENT', 'CUSTOMER_REFUSED']);
+  });
+
+  it('histórico do motoboy: entregas e ocorrências, só leitura', async () => {
+    const hist = (await http().get(`/public/courier/${ids.token}/history`)).body;
+    expect(hist.items.filter((i: { outcome: string }) => i.outcome === 'DELIVERED')).toHaveLength(2);
+    expect(hist.items.filter((i: { outcome: string }) => i.outcome === 'FAILED')).toHaveLength(2);
+    expect(hist.today).toMatchObject({ delivered: 2, failed: 2, feeCents: 1400 });
+    expect(JSON.stringify(hist)).not.toContain('4321');
+  });
+
+  it('cliente avalia com estrelas e dá gorjeta; restaurante repassa ao motoboy', async () => {
+    const track = (await http().get(`/public/orders/${ids.aCode}`)).body;
+    expect(track).toMatchObject({ canRate: true, canTip: true, tipCourierName: 'Carlos', rating: null, tip: null });
+    expect((await http().post(`/public/orders/${ids.aCode}/rating`).send({ store: 6, delivery: 5 })).status).toBe(400);
+    expect((await http().post(`/public/orders/${ids.aCode}/rating`).send({ store: 5 })).status).toBe(400);
+    const rated = await http().post(`/public/orders/${ids.aCode}/rating`).send({ store: 5, delivery: 4, comment: 'Chegou quentinho' });
+    expect(rated.body.rating).toMatchObject({ store: 5, delivery: 4, comment: 'Chegou quentinho' });
+    expect(rated.body.canRate).toBe(false);
+    expect((await http().post(`/public/orders/${ids.aCode}/rating`).send({ store: 1, delivery: 1 })).status).toBe(409);
+    // pedido ainda não entregue não pode ser avaliado
+    const f = await readyOrder();
+    expect((await http().post(`/public/orders/${f.code}/rating`).send({ store: 5, delivery: 5 })).status).toBe(409);
+    expect((await http().post(`/public/orders/${f.code}/tip`).send({ amountCents: 500 })).status).toBe(409);
+
+    expect((await http().post(`/public/orders/${ids.aCode}/tip`).send({ amountCents: 50 })).status).toBe(400);
+    const tip = (await http().post(`/public/orders/${ids.aCode}/tip`).send({ amountCents: 500 })).body.tip;
+    expect(tip).toMatchObject({ status: 'PENDING', amountCents: 500, canSimulate: true });
+    expect(tip.pixCopyPaste).toContain('5.00');
+    const paid = (await http().post(`/public/orders/${ids.aCode}/tip/simulate-payment`)).body;
+    expect(paid.tip.status).toBe('PAID');
+    expect(paid.canTip).toBe(false);
+    expect((await prisma.domainEvent.findFirst({ where: { tenantId, type: 'gorjeta.recebida' } })).payload).toMatchObject({ courierId: ids.courier, amountCents: 500 });
+
+    const tips = (await staff().get('/entregas/tips')).body;
+    expect(tips).toEqual([expect.objectContaining({ amountCents: 500, paidOutAt: null, ratingDelivery: 4 })]);
+    expect((await staff().post(`/entregas/couriers/${ids.courier}/tips/pay-out`)).status).toBe(403);
+    expect((await owner().post(`/entregas/couriers/${ids.courier}/tips/pay-out`)).body).toEqual({ count: 1, totalCents: 500 });
+    expect((await owner().post(`/entregas/couriers/${ids.courier}/tips/pay-out`)).status).toBe(409);
+    const hist = (await http().get(`/public/courier/${ids.token}/history`)).body;
+    expect(hist.tips).toEqual({ pendingCents: 0, paidOutCents: 500 });
+    const detail = (await owner().get(`/cardapio/orders/${ids.a}/detail`)).body;
+    expect(detail).toMatchObject({ ratingStore: 5, ratingDelivery: 4, tip: expect.objectContaining({ amountCents: 500 }) });
   });
 
   it('tirar pedido do lote volta para "pronto"; lote vazio é cancelado', async () => {
@@ -171,7 +268,7 @@ describe('Entregas: motoboys, lotes e código de 4 dígitos (e2e)', () => {
     await staff().post('/entregas/batches').send({ courierId: ids.courier, orderIds: [d.id] });
     const otherTenant = (await http().post('/admin/tenants').set('Authorization', `Bearer ${adminToken}`).send({ name: 'Outro Lugar' })).body.id;
     const stranger = await prisma.courier.create({ data: { tenantId: otherTenant, name: 'Estranho', phone: '11900000000', accessToken: 'token-estranho-123456789' } });
-    expect((await http().post(`/public/courier/${stranger.accessToken}/orders/${d.id}/deliver`).send({ code: '4321' })).status).toBe(404);
+    expect((await http().post(`/public/courier/${stranger.accessToken}/orders/${d.id}/deliver`).send({ code: '4321', receiverName: 'Maria Recebedora' })).status).toBe(404);
 
     const rotated = await owner().post(`/entregas/couriers/${ids.courier}/new-link`);
     expect((await http().get(`/public/courier/${ids.token}`)).status).toBe(404);

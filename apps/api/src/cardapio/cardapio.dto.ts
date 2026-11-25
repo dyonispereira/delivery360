@@ -144,3 +144,14 @@ export class UpdateOrderStatusDto {
   status: 'IN_PREPARATION' | 'READY' | 'OUT_FOR_DELIVERY' | 'COMPLETED' | 'CANCELLED';
   @IsOptional() @IsString() @MaxLength(200) note?: string;
 }
+
+export class RateOrderDto {
+  @IsInt() @Min(1, { message: 'Escolha de 1 a 5 estrelas.' }) @Max(5, { message: 'Escolha de 1 a 5 estrelas.' }) store: number;
+  @IsOptional() @IsInt() @Min(1, { message: 'Escolha de 1 a 5 estrelas.' }) @Max(5, { message: 'Escolha de 1 a 5 estrelas.' }) delivery?: number;
+  @IsOptional() @IsString() @MaxLength(500) comment?: string;
+}
+
+export class TipDto {
+  /** De R$ 1 a R$ 200. */
+  @IsInt() @Min(100, { message: 'A gorjeta mínima é R$ 1,00.' }) @Max(20_000, { message: 'A gorjeta máxima é R$ 200,00.' }) amountCents: number;
+}
