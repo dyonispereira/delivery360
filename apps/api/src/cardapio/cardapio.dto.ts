@@ -21,7 +21,7 @@ export const PAYMENT_METHODS = ['PIX', 'CREDIT_CARD', 'CASH_ON_DELIVERY', 'CARD_
 const MAX_CENTS = 10_000_000; // R$ 100 mil
 
 export class UpdateStoreDto {
-  @IsOptional() @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, { message: 'Endereço da loja: só letras minúsculas, números e hífen.' }) @MinLength(3) @MaxLength(60)
+  @IsOptional() @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, { message: 'Link da loja: use só letras minúsculas, números e hífen (ex.: pizzaria-do-ze).' }) @MinLength(3, { message: 'Link da loja: use pelo menos 3 caracteres.' }) @MaxLength(60, { message: 'Link da loja: use no máximo 60 caracteres.' })
   slug?: string;
   @IsOptional() @IsString() @MinLength(2) @MaxLength(80) displayName?: string;
   @IsOptional() @IsString() @MaxLength(500) description?: string;

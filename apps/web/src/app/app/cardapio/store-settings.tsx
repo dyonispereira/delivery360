@@ -70,11 +70,30 @@ export function StoreSettings({ canEdit }: { canEdit: boolean }) {
             <input className="input" disabled={!canEdit} value={form.displayName} onChange={(e) => set('displayName', e.target.value)} />
           </div>
           <div>
-            <label className="label">Endereço da loja</label>
+            <label className="label">Link da loja na internet</label>
             <div className="flex items-center gap-1 text-sm text-zinc-500">
               /loja/
-              <input className="input" disabled={!canEdit} value={form.slug} onChange={(e) => set('slug', e.target.value.toLowerCase())} />
+              <input
+                className="input"
+                disabled={!canEdit}
+                maxLength={60}
+                placeholder="pizzaria-do-ze"
+                value={form.slug}
+                // Só o que vale num link: minúsculas sem acento, números e hífen.
+                onChange={(e) =>
+                  set(
+                    'slug',
+                    e.target.value
+                      .normalize('NFD')
+                      .replace(/[\u0300-\u036f]/g, '')
+                      .toLowerCase()
+                      .replace(/[^a-z0-9-]+/g, '-')
+                      .replace(/-{2,}/g, '-'),
+                  )
+                }
+              />
             </div>
+            <p className="mt-1 text-xs text-zinc-500">Não é o endereço da rua: é o nome que aparece no link que você divulga.</p>
           </div>
           <div className="sm:col-span-2">
             <label className="label">Descrição</label>
