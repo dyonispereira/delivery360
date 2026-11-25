@@ -80,6 +80,17 @@ não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TES
   dar **gorjeta por PIX** ao motoboy. A gorjeta entra no caixa do restaurante (evento `gorjeta.recebida`,
   valor a repassar, não receita) e em **Entregas > Gorjetas** o dono marca o repasse (`gorjeta.repassada`).
 
+## Gestão (financeiro)
+
+- Em **Gestão**, só dono e gerente: resumo do mês, contas a pagar, contas a receber, DRE e plano de contas.
+- O plano de contas de restaurante (grupos 1 a 11) é criado sozinho para cada restaurante. Contas padrão
+  podem ser renomeadas; contas novas ganham o próximo código do grupo.
+- Lançamentos automáticos (fila `domain_events`, processada a cada 30 s e antes de cada consulta):
+  venda do pedido (1.2), recebimento na entrega, cancelamento ou devolução de PIX (2.5),
+  custo do motoboy por entrega (6.1) e gorjetas (11.1 entra, 11.2 repassa, fora da DRE).
+  Cada lançamento automático tem chave única, então reprocessar não duplica.
+- Contas manuais podem repetir todo mês (ex.: aluguel 12x). A DRE usa a competência; o caixa usa a data da baixa.
+
 ## Como funcionam os módulos
 
 - Códigos: `gestao`, `cardapio`, `entregas`, `trafego` (`packages/shared/src/modules.ts`).

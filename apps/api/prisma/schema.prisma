@@ -48,14 +48,16 @@ model Tenant {
   auditLogs       AuditLog[]
   events          DomainEvent[]
 
-  store           Store?
-  deliveryZones   DeliveryZone[]
-  menuCategories  MenuCategory[]
-  products        Product[]
-  customers       Customer[]
-  orders          Order[]
-  couriers        Courier[]
-  deliveryBatches DeliveryBatch[]
+  store            Store?
+  deliveryZones    DeliveryZone[]
+  menuCategories   MenuCategory[]
+  products         Product[]
+  customers        Customer[]
+  orders           Order[]
+  couriers         Courier[]
+  deliveryBatches  DeliveryBatch[]
+  accounts         Account[]
+  financialEntries FinancialEntry[]
 
   @@map("tenants")
 }
@@ -472,25 +474,25 @@ enum BatchStatus {
 
 /// Motoboy cadastrado pelo restaurante. Entra na tela do entregador por um link secreto.
 model Courier {
-  id             String          @id @default(uuid()) @db.Uuid
-  tenantId       String          @map("tenant_id") @db.Uuid
+  id             String            @id @default(uuid()) @db.Uuid
+  tenantId       String            @map("tenant_id") @db.Uuid
   name           String
   phone          String
   /// Quanto o restaurante paga por entrega (vai para a Gestão como custo).
-  feeCents       Int             @default(0) @map("fee_cents")
-  active         Boolean         @default(true)
+  feeCents       Int               @default(0) @map("fee_cents")
+  active         Boolean           @default(true)
   /// Token do link /entregador/<token>; trocar o token derruba o link antigo.
-  accessToken    String          @unique @map("access_token")
+  accessToken    String            @unique @map("access_token")
   /// Última posição enviada pelo celular do motoboy (só durante entregas).
-  lastLat        Float?          @map("last_lat")
-  lastLng        Float?          @map("last_lng")
-  lastAccuracy   Float?          @map("last_accuracy")
-  lastLocationAt DateTime?       @map("last_location_at")
+  lastLat        Float?            @map("last_lat")
+  lastLng        Float?            @map("last_lng")
+  lastAccuracy   Float?            @map("last_accuracy")
+  lastLocationAt DateTime?         @map("last_location_at")
   /// Placa da moto (aparece no registro de cada entrega).
   plate          String?
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
-  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  tenant         Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   batches        DeliveryBatch[]
   attempts       DeliveryAttempt[]
   tips           Tip[]
@@ -536,27 +538,27 @@ enum DeliveryFailReason {
 /// Registro de cada tentativa de entrega (entregue ou ocorrência). O motoboy não altera depois;
 /// só o restaurante corrige (com auditoria). Guarda cópia do nome e da placa do motoboy no momento.
 model DeliveryAttempt {
-  id            String              @id @default(uuid()) @db.Uuid
-  tenantId      String              @map("tenant_id") @db.Uuid
-  orderId       String              @map("order_id") @db.Uuid
-  courierId     String              @map("courier_id") @db.Uuid
-  batchId       String?             @map("batch_id") @db.Uuid
-  batchNumber   Int?                @map("batch_number")
-  outcome       DeliveryOutcome
-  failReason    DeliveryFailReason? @map("fail_reason")
-  note          String?
-  receiverName  String?             @map("receiver_name")
+  id           String              @id @default(uuid()) @db.Uuid
+  tenantId     String              @map("tenant_id") @db.Uuid
+  orderId      String              @map("order_id") @db.Uuid
+  courierId    String              @map("courier_id") @db.Uuid
+  batchId      String?             @map("batch_id") @db.Uuid
+  batchNumber  Int?                @map("batch_number")
+  outcome      DeliveryOutcome
+  failReason   DeliveryFailReason? @map("fail_reason")
+  note         String?
+  receiverName String?             @map("receiver_name")
   /// Código de 4 dígitos conferido na entrega.
-  code          String?
-  courierName   String              @map("courier_name")
-  courierPlate  String?             @map("courier_plate")
+  code         String?
+  courierName  String              @map("courier_name")
+  courierPlate String?             @map("courier_plate")
   /// Onde o celular do motoboy estava (se tinha sinal recente).
-  lat           Float?
-  lng           Float?
-  createdAt     DateTime            @default(now()) @map("created_at")
-  updatedAt     DateTime            @updatedAt @map("updated_at")
-  order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  courier       Courier             @relation(fields: [courierId], references: [id], onDelete: Cascade)
+  lat          Float?
+  lng          Float?
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  order        Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courier      Courier             @relation(fields: [courierId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@index([courierId, createdAt])
@@ -590,4 +592,80 @@ model Tip {
   @@index([tenantId, status, paidOutAt])
   @@index([courierId])
   @@map("tips")
+}
+
+// ---------- Módulo Gestão: financeiro ----------
+
+enum AccountKind {
+  /// Receita bruta (grupo 1)
+  REVENUE
+  /// Deduções da receita (grupo 2)
+  DEDUCTION
+  /// CMV e despesas operacionais (grupos 3 a 8)
+  EXPENSE
+  /// Resultado financeiro (grupo 9): juros, tarifas, rendimentos
+  FINANCIAL
+  /// Fora da DRE (grupos 10 e 11): investimentos, retiradas, valores de terceiros
+  OFF_DRE
+}
+
+/// Plano de contas do restaurante (vem pronto e pode ganhar contas novas).
+model Account {
+  id        String           @id @default(uuid()) @db.Uuid
+  tenantId  String           @map("tenant_id") @db.Uuid
+  /// "6.1"
+  code      String
+  group     Int
+  name      String
+  kind      AccountKind
+  /// Conta padrão do sistema (lançamentos automáticos usam). Pode ser renomeada, não excluída.
+  system    Boolean          @default(false)
+  active    Boolean          @default(true)
+  createdAt DateTime         @default(now()) @map("created_at")
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  entries   FinancialEntry[]
+
+  @@unique([tenantId, code])
+  @@map("accounts")
+}
+
+enum EntryType {
+  RECEIVABLE
+  PAYABLE
+}
+
+enum EntryStatus {
+  OPEN
+  PAID
+  CANCELLED
+}
+
+/// Conta a pagar ou a receber. A DRE usa a data de competência; o caixa usa a data do pagamento.
+model FinancialEntry {
+  id             String      @id @default(uuid()) @db.Uuid
+  tenantId       String      @map("tenant_id") @db.Uuid
+  type           EntryType
+  accountId      String      @map("account_id") @db.Uuid
+  description    String
+  counterparty   String?
+  amountCents    Int         @map("amount_cents")
+  competenceDate DateTime    @map("competence_date") @db.Date
+  dueDate        DateTime    @map("due_date") @db.Date
+  status         EntryStatus @default(OPEN)
+  paidAt         DateTime?   @map("paid_at") @db.Date
+  notes          String?
+  /// "manual" ou o módulo que gerou (cardapio, entregas...).
+  source         String      @default("manual")
+  /// Chave do lançamento automático (evita duplicar se o evento for processado de novo).
+  externalKey    String?     @map("external_key")
+  createdBy      String?     @map("created_by") @db.Uuid
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account        Account     @relation(fields: [accountId], references: [id])
+
+  @@unique([tenantId, externalKey])
+  @@index([tenantId, type, status, dueDate])
+  @@index([tenantId, competenceDate])
+  @@map("financial_entries")
 }

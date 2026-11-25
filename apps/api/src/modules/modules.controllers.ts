@@ -8,15 +8,6 @@ import type { TenantContext } from '../access/access.types';
  * as próximas sprints colocam as rotas reais aqui, já protegidas pela chave do módulo.
  */
 
-@RequireModule('gestao')
-@Controller('gestao')
-export class GestaoController {
-  @Get('status')
-  status(@CurrentTenant() t: TenantContext) {
-    return { module: MODULES.gestao.code, tenantId: t.tenantId, ok: true };
-  }
-}
-
 @RequireModule('cardapio')
 @Controller('cardapio')
 export class CardapioController {

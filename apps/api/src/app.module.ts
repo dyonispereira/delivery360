@@ -9,6 +9,7 @@ import { CoreModule } from './core/core.module';
 import { HealthController } from './health/health.controller';
 import { CardapioModule } from './cardapio/cardapio.module';
 import { EntregasModule } from './entregas/entregas.module';
+import { GestaoModule } from './gestao/gestao.module';
 import { PaymentsModule } from './payments/payments.module';
 import { BusinessModulesModule } from './modules/business-modules.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -27,6 +28,7 @@ import { TenantModule } from './tenant/tenant.module';
     PaymentsModule,
     CardapioModule,
     EntregasModule,
+    GestaoModule,
     // Limite geral generoso; rotas públicas sensíveis têm limite próprio (@Throttle).
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: process.env.NODE_ENV === 'test' ? 10_000 : 300 }]),
   ],
