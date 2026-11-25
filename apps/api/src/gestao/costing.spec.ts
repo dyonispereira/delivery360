@@ -1,4 +1,4 @@
-import { costSheet, DEFAULT_RATES, paymentFeeBps, unitCost, type CostItem } from '@delivery360/shared';
+import { channelSheets, costSheet, DEFAULT_RATES, paymentFeeBps, unitCost, type CostItem } from '@delivery360/shared';
 
 const burger: CostItem[] = [
   { name: 'Pão', kind: 'INGREDIENT', costCents: 300 },
@@ -44,5 +44,29 @@ describe('Ficha técnica (CMV)', () => {
     expect(unitCost(burger, [150, 100])).toBe(1180);
     expect(paymentFeeBps(rates, 'PIX')).toBe(99);
     expect(paymentFeeBps(rates, 'CASH_ON_DELIVERY')).toBe(0);
+  });
+});
+
+describe('channelSheets (resultado do produto por canal)', () => {
+  const items = [
+    { name: 'Pão', kind: 'INGREDIENT' as const, costCents: 300 },
+    { name: 'Carne', kind: 'INGREDIENT' as const, costCents: 600 },
+  ];
+  const rates = { salesTaxBps: 600, pixFeeBps: 99, creditFeeBps: 400, cardOnDeliveryFeeBps: 250, targetMarginBps: 2000 };
+  const ifood = { channel: 'IFOOD' as const, active: true, merchantId: null, commissionBps: 1200, paymentFeeBps: 320, payoutDays: 30 };
+  const keeta = { channel: 'KEETA' as const, active: false, merchantId: null, commissionBps: 900, paymentFeeBps: 300, payoutDays: 7 };
+
+  it('loja usa as taxas próprias; app usa preço, comissão e taxa do app; app desligado não aparece', () => {
+    const rows = channelSheets(3000, items, rates, 0, [ifood, keeta], { IFOOD: 3500 });
+    expect(rows.map((r) => r.channel)).toEqual(['LOJA', 'IFOOD']);
+    expect(rows[0].sheet.profitCents).toBe(3000 - 900 - Math.round(3000 * 0.1));
+    expect(rows[1].commissionCents).toBe(420);
+    // 6% imposto + 3,2% taxa do app + 12% comissão
+    expect(rows[1].sheet.variableCents).toBe(Math.round(3500 * 0.212));
+    expect(rows[1].sheet.profitCents).toBe(3500 - 900 - Math.round(3500 * 0.212));
+  });
+
+  it('sem preço do app usa o preço da loja', () => {
+    expect(channelSheets(3000, items, rates, 0, [ifood])[1].sheet.priceCents).toBe(3000);
   });
 });

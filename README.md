@@ -95,6 +95,15 @@ não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TES
   o CMV da ficha com as compras lançadas. Cada venda lança a taxa da forma de pagamento (2.3) e o imposto (2.1).
 - Contas manuais podem repetir todo mês (ex.: aluguel 12x). A DRE usa a competência; o caixa usa a data da baixa.
 
+## Canais de venda (iFood, 99Food, Keeta)
+
+- Cada produto (e adicional) tem um **código PDV**, o mesmo cadastrado no portal de cada app. O pedido do app é reconhecido pelo código, com o nome e a ficha técnica do nosso cardápio; item sem código entra pelo nome e aparece como "sem código".
+- Preço por app no produto (vazio = preço da loja) e "Resultado por canal" na ficha técnica.
+- Cardápio › **Canais de venda**: liga cada app e informa comissão, taxa do pagamento online, dias para o repasse e o código da loja no app. Botão "Simular pedido" (só com `PAYMENTS_FAKE_ENABLED=true`).
+- Entrada de pedidos: `POST /cardapio/canais/pedidos` no formato único (`ChannelOrderDto`); repetir o mesmo `externalId` não duplica. Os conectores de cada app (quando tivermos o acesso de parceiro) só convertem o pedido do app para este formato.
+- Financeiro: receita na conta do app (1.3 iFood, 1.6 99Food, 1.7 Keeta), comissão 2.2 e taxa 2.3; pago no app vence no dia do repasse, pago na entrega é recebido ao finalizar. Gestão › **Canais de venda** mostra vendas, comissão, taxas, CMV e sobra por canal, e registra o repasse recebido (baixa da venda, comissão e taxa juntas). Margem dos produtos filtra por canal.
+- Motoboy: pedido de app com código de entrega próprio pede ao cliente o código do app (em vez dos 4 últimos dígitos do telefone).
+
 ## Como funcionam os módulos
 
 - Códigos: `gestao`, `cardapio`, `entregas`, `trafego` (`packages/shared/src/modules.ts`).

@@ -6,6 +6,7 @@ import type { OrderStatus } from '@delivery360/shared';
 import { ErrorBox, Spinner } from '@/components/ui';
 import { useCurrentTenant } from '../tenant-context';
 import { minutesSince, playAlert, primaryAction, readPref, soundUnlocked, unlockSound, useBoard, type BoardOrder } from '../pedidos/board';
+import { ChannelTag } from '../pedidos/channel-tag';
 
 const KITCHEN: OrderStatus[] = ['PAID', 'IN_PREPARATION', 'READY'];
 
@@ -72,7 +73,9 @@ function KitchenCard({ order: o, now, withCouriers, onMove }: { order: BoardOrde
   return (
     <article className="flex flex-col overflow-hidden rounded-xl bg-zinc-800">
       <header className={`flex items-center justify-between px-4 py-2 ${header}`}>
-        <span className="text-2xl font-black">#{o.number}</span>
+        <span className="text-2xl font-black">
+          #{o.number} <ChannelTag channel={o.channel} code={o.externalCode} className="align-middle text-sm" />
+        </span>
         <span className="text-right text-sm font-bold">
           {label}
           <br />

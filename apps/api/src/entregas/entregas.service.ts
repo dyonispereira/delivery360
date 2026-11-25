@@ -46,6 +46,8 @@ const orderSummary = {
   deliveryCodeFails: true,
   deliveryIssue: true,
   deliveryIssueAt: true,
+  channel: true,
+  externalCode: true,
   createdAt: true,
 } satisfies Prisma.OrderSelect;
 
@@ -193,7 +195,7 @@ export class EntregasService {
       this.prisma.deliveryBatch.findMany({
         where: { courierId: courier.id, OR: [{ status: 'OUT' }, { status: 'DONE', finishedAt: { gte: since } }] },
         orderBy: { createdAt: 'desc' },
-        include: { orders: { select: { ...orderSummary, customerPhone: true }, orderBy: { number: 'asc' } } },
+        include: { orders: { select: { ...orderSummary, customerPhone: true, deliveryCode: true }, orderBy: { number: 'asc' } } },
       }),
     ]);
     return {
@@ -204,9 +206,11 @@ export class EntregasService {
         number: b.number,
         status: b.status,
         createdAt: b.createdAt,
-        orders: b.orders.map(({ customerPhone, deliveryCodeFails, ...o }) => ({
+        orders: b.orders.map(({ customerPhone, deliveryCodeFails, deliveryCode, ...o }) => ({
           ...o,
           phoneHint: maskPhone(customerPhone),
+          // Pedido de app com código próprio: o cliente informa o código que o app mostrou para ele.
+          appCode: !!deliveryCode,
           locked: deliveryCodeFails >= MAX_CODE_FAILS,
         })),
       })),
@@ -225,7 +229,7 @@ export class EntregasService {
       throw new HttpException('Código bloqueado depois de 5 tentativas. Peça ao restaurante para liberar.', HttpStatus.LOCKED);
     }
 
-    if (!checkDeliveryCode(order.customerPhone, code)) {
+    if (!checkDeliveryCode(order.deliveryCode ?? order.customerPhone, code)) {
       const updated = await this.prisma.order.update({
         where: { id: orderId },
         data: { deliveryCodeFails: { increment: 1 } },

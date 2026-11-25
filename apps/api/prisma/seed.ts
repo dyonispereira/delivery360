@@ -57,6 +57,7 @@ async function seedDemo() {
   if (existing) {
     await seedDemoCourier(existing.tenantId);
     await seedDemoCosts(existing.tenantId);
+    await seedDemoChannels(existing.tenantId);
     return seedDemoFinance(existing.tenantId);
   }
   const plan = await prisma.plan.findUniqueOrThrow({ where: { name: 'Gestão 360' }, include: { modules: true } });
@@ -123,6 +124,7 @@ async function seedDemo() {
   });
   await seedDemoCourier(tenant.id);
   await seedDemoCosts(tenant.id);
+  await seedDemoChannels(tenant.id);
   await seedDemoFinance(tenant.id);
   console.log(`Restaurante demo criado: /loja/${slug} (dono: ${email})`);
 }
@@ -203,4 +205,31 @@ async function seedDemoCosts(tenantId: string) {
   }
   await prisma.option.updateMany({ where: { tenantId, name: { in: ['Catupiry', 'Cheddar'] }, costCents: 0 }, data: { costCents: 300 } });
   await prisma.option.updateMany({ where: { tenantId, name: 'Bacon', costCents: 0 }, data: { costCents: 200 } });
+}
+
+/** Demo dos canais: código PDV nos produtos, preço maior no iFood e comissões típicas dos apps. */
+async function seedDemoChannels(tenantId: string) {
+  const codes: Record<string, string> = {
+    Calabresa: 'PZ-CAL',
+    Margherita: 'PZ-MAR',
+    'Frango com Catupiry': 'PZ-FRC',
+    'Refrigerante 2L': 'BB-REF2',
+    'Suco natural 500ml': 'BB-SUC5',
+  };
+  const products = await prisma.product.findMany({ where: { tenantId, pdvCode: null } });
+  for (const p of products) {
+    const code = codes[p.name];
+    if (!code) continue;
+    // No iFood o preço costuma ser uns 15% maior para cobrir a comissão.
+    const ifood = Math.ceil((p.priceCents * 1.15) / 100) * 100 - 10;
+    await prisma.product.update({ where: { id: p.id }, data: { pdvCode: code, channelPrices: { IFOOD: ifood } } });
+  }
+  const channels = [
+    { channel: 'IFOOD' as const, commissionBps: 1200, paymentFeeBps: 320, payoutDays: 30 },
+    { channel: 'FOOD99' as const, commissionBps: 1000, paymentFeeBps: 300, payoutDays: 14 },
+    { channel: 'KEETA' as const, commissionBps: 900, paymentFeeBps: 300, payoutDays: 7 },
+  ];
+  for (const c of channels) {
+    await prisma.channelSetting.upsert({ where: { tenantId_channel: { tenantId, channel: c.channel } }, create: { tenantId, active: true, ...c }, update: {} });
+  }
 }

@@ -4,7 +4,7 @@
  * Função pura (sem banco) para ser fácil de testar.
  */
 
-export type PaymentMethodCode = 'PIX' | 'CREDIT_CARD' | 'CASH_ON_DELIVERY' | 'CARD_ON_DELIVERY';
+export type PaymentMethodCode = 'PIX' | 'CREDIT_CARD' | 'CASH_ON_DELIVERY' | 'CARD_ON_DELIVERY' | 'APP_ONLINE';
 export type OrderTypeCode = 'DELIVERY' | 'PICKUP';
 
 export interface MenuOption {

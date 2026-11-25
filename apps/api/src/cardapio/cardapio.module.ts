@@ -3,10 +3,12 @@ import { PublicController } from '../public/public.controller';
 import { CardapioManageController } from './cardapio.controller';
 import { CatalogService } from './catalog.service';
 import { OrdersService } from './orders.service';
+import { ChannelsController } from './channels.controller';
+import { ChannelOrdersService } from './channel-orders.service';
 
 @Module({
-  controllers: [CardapioManageController, PublicController],
-  providers: [CatalogService, OrdersService],
+  controllers: [CardapioManageController, ChannelsController, PublicController],
+  providers: [CatalogService, OrdersService, ChannelOrdersService],
   exports: [OrdersService],
 })
 export class CardapioModule {}

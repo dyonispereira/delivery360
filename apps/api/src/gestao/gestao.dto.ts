@@ -62,3 +62,15 @@ export class FinanceSettingsDto {
   @IsOptional() @IsInt() @Min(0) @Max(8000) targetMarginBps?: number;
   @IsOptional() @IsInt() @Min(1) @Max(28) taxDueDay?: number;
 }
+
+export class MarginQuery extends PeriodQuery {
+  @IsOptional() @IsIn(['LOJA', 'IFOOD', 'FOOD99', 'KEETA']) channel?: 'LOJA' | 'IFOOD' | 'FOOD99' | 'KEETA';
+}
+
+/** Repasse recebido de um app: baixa das vendas pagas no app (e da comissão e taxa descontadas) até a data. */
+export class PayoutDto {
+  /** Vendas com repasse previsto até este dia. */
+  @IsOptional() @Matches(DATE, DATE_MSG) until?: string;
+  /** Dia em que o dinheiro caiu na conta. */
+  @IsOptional() @Matches(DATE, DATE_MSG) paidAt?: string;
+}

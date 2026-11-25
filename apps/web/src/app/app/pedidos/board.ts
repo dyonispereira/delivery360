@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { formatBRL, PAYMENT_METHOD_LABELS, type DeliveryFailReason, type OrderStatus, type PaymentMethod } from '@delivery360/shared';
+import { CHANNEL_LABELS, formatBRL, PAYMENT_METHOD_LABELS, type DeliveryFailReason, type OrderStatus, type PaymentMethod, type SalesChannel } from '@delivery360/shared';
 import { api } from '@/lib/api';
 
 export interface BoardOrder {
@@ -23,6 +23,9 @@ export interface BoardOrder {
   totalCents: number;
   paymentMethod: PaymentMethod;
   changeForCents: number | null;
+  /** De onde veio: loja própria ou app de delivery (com o número do pedido no app). */
+  channel: SalesChannel;
+  externalCode: string | null;
   printedAt: string | null;
   createdAt: string;
   /** O motoboy não conseguiu entregar e o restaurante precisa decidir (reenviar ou cancelar). */
@@ -166,7 +169,7 @@ export function printOrder(o: BoardOrder, storeName: string, markPrinted = true)
     o.type === 'DELIVERY'
       ? `<div><b>ENTREGA</b> - ${esc(o.deliveryZoneName ?? '')}</div><div>${esc(o.addressStreet ?? '')}, ${esc(o.addressNumber ?? '')}${o.addressComplement ? ` - ${esc(o.addressComplement)}` : ''}</div>${o.addressReference ? `<div>Ref.: ${esc(o.addressReference)}</div>` : ''}`
       : '<div><b>RETIRADA NO BALCÃO</b></div>';
-  const payment = `${PAYMENT_METHOD_LABELS[o.paymentMethod]}${o.paymentMethod === 'PIX' ? ' (PAGO)' : ''}${o.changeForCents ? ` - troco p/ ${formatBRL(o.changeForCents)}` : ''}`;
+  const payment = `${PAYMENT_METHOD_LABELS[o.paymentMethod]}${o.paymentMethod === 'PIX' || o.paymentMethod === 'APP_ONLINE' ? ' (PAGO)' : ''}${o.changeForCents ? ` - troco p/ ${formatBRL(o.changeForCents)}` : ''}`;
 
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Pedido ${o.number}</title><style>
     @page { size: 80mm auto; margin: 2mm; }
@@ -179,6 +182,7 @@ export function printOrder(o: BoardOrder, storeName: string, markPrinted = true)
   </style></head><body>
     <div class="c">${esc(storeName)}</div>
     <h1>PEDIDO #${o.number}</h1>
+    ${o.channel && o.channel !== 'LOJA' ? `<div class="c big">${CHANNEL_LABELS[o.channel]}${o.externalCode ? ` ${esc(o.externalCode)}` : ''}</div>` : ''}
     <div class="c">${when}</div><hr>
     <div class="big">${esc(o.customerName)}</div><div>Tel: ${esc(o.customerPhone)}</div>
     ${address}<hr>

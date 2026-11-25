@@ -5,7 +5,7 @@ import { AuditService } from '../core/audit.service';
 import { GROUPS, fromDbDate, localDate, toDbDate } from './chart';
 import { buildDre } from './dre';
 import { GestaoSyncService } from './gestao-sync.service';
-import { paymentFeeBps } from '@delivery360/shared';
+import { CHANNEL_LABELS, paymentFeeBps, SALES_CHANNELS, type SalesChannel } from '@delivery360/shared';
 import { AccountDto, EntryDto, FinanceSettingsDto, UpdateAccountDto, UpdateEntryDto } from './gestao.dto';
 
 const addMonths = (day: string, n: number) => {
@@ -203,18 +203,28 @@ export class GestaoService {
   // ---------- Margem por produto (ficha técnica x vendas) ----------
 
   /** Itens vendidos (pedidos entregues/retirados) no período, com o custo gravado na venda. */
-  private async soldItems(tenantId: string, from: string, to: string) {
+  private async soldItems(tenantId: string, from: string, to: string, channel?: SalesChannel) {
     const start = new Date(`${from}T03:00:00Z`);
     const end = new Date(new Date(`${to}T03:00:00Z`).getTime() + 86_400_000);
     return this.prisma.orderItem.findMany({
-      where: { order: { tenantId, status: 'COMPLETED', createdAt: { gte: start, lt: end } } },
-      select: { productId: true, name: true, quantity: true, totalCents: true, unitCostCents: true, order: { select: { paymentMethod: true } } },
+      where: { order: { tenantId, status: 'COMPLETED', createdAt: { gte: start, lt: end }, ...(channel ? { channel } : {}) } },
+      select: { productId: true, name: true, quantity: true, totalCents: true, unitCostCents: true, order: { select: { paymentMethod: true, channel: true } } },
     });
   }
 
-  async productsMargin(tenantId: string, from: string, to: string) {
+  /** Percentual que sai de cada venda: imposto + taxa do pagamento + comissão do app (se for de app). */
+  private async variableBps(tenantId: string) {
+    const [rates, channels] = await Promise.all([this.sync.rates(this.prisma, tenantId), this.prisma.channelSetting.findMany({ where: { tenantId } })]);
+    return (channel: SalesChannel, method: string) => {
+      const cfg = channels.find((c) => c.channel === channel);
+      const fee = method === 'APP_ONLINE' ? (cfg?.paymentFeeBps ?? 0) : paymentFeeBps(rates, method);
+      return rates.salesTaxBps + fee + (channel === 'LOJA' ? 0 : (cfg?.commissionBps ?? 0));
+    };
+  }
+
+  async productsMargin(tenantId: string, from: string, to: string, channel?: SalesChannel) {
     if (from > to) throw new BadRequestException('A data inicial é depois da final.');
-    const [items, rates] = await Promise.all([this.soldItems(tenantId, from, to), this.sync.rates(this.prisma, tenantId)]);
+    const [items, bpsOf] = await Promise.all([this.soldItems(tenantId, from, to, channel), this.variableBps(tenantId)]);
     const map = new Map<string, { productId: string | null; name: string; quantity: number; revenueCents: number; cmvCents: number; variableCents: number; withoutCost: number }>();
     for (const i of items) {
       const key = i.productId ?? i.name;
@@ -222,7 +232,7 @@ export class GestaoService {
       row.quantity += i.quantity;
       row.revenueCents += i.totalCents;
       row.cmvCents += i.unitCostCents * i.quantity;
-      row.variableCents += Math.round((i.totalCents * (rates.salesTaxBps + paymentFeeBps(rates, i.order.paymentMethod))) / 10_000);
+      row.variableCents += Math.round((i.totalCents * bpsOf(i.order.channel, i.order.paymentMethod)) / 10_000);
       if (i.unitCostCents === 0) row.withoutCost += i.quantity;
       map.set(key, row);
     }
@@ -253,6 +263,91 @@ export class GestaoService {
       // Produtos vendidos sem ficha técnica: o CMV deles aparece como zero.
       missingCost: rows.filter((r) => r.withoutCost > 0).map((r) => r.name),
     };
+  }
+
+  // ---------- Canais de venda ----------
+
+  /**
+   * Resultado de cada canal no período (por competência): receita, comissão, taxas, imposto, CMV e o que sobra.
+   * Mais o que cada app ainda tem para repassar (vendas pagas no app em aberto).
+   */
+  async channels(tenantId: string, from: string, to: string) {
+    if (from > to) throw new BadRequestException('A data inicial é depois da final.');
+    await this.fresh(tenantId);
+    const [entries, open, items, settings] = await Promise.all([
+      this.prisma.financialEntry.findMany({
+        where: { tenantId, channel: { not: null }, status: { not: 'CANCELLED' }, competenceDate: { gte: toDbDate(from), lte: toDbDate(to) }, source: 'cardapio' },
+        select: { channel: true, externalKey: true, amountCents: true },
+      }),
+      this.prisma.financialEntry.findMany({
+        where: { tenantId, channel: { not: null }, status: 'OPEN', paymentMethod: 'APP_ONLINE' },
+        select: { channel: true, externalKey: true, amountCents: true, dueDate: true },
+      }),
+      // CMV dos pedidos que geraram receita no período (todos menos cancelados e PIX não pago).
+      this.prisma.orderItem.findMany({
+        where: {
+          order: {
+            tenantId,
+            status: { notIn: ['CANCELLED', 'AWAITING_PAYMENT'] },
+            createdAt: { gte: new Date(`${from}T03:00:00Z`), lt: new Date(new Date(`${to}T03:00:00Z`).getTime() + 86_400_000) },
+          },
+        },
+        select: { quantity: true, unitCostCents: true, order: { select: { channel: true } } },
+      }),
+      this.prisma.channelSetting.findMany({ where: { tenantId } }),
+    ]);
+    const kind = (key: string | null) => key?.split(':')[2] ?? '';
+    const sumOf = (rows: { channel: SalesChannel | null; externalKey: string | null; amountCents: number }[], c: SalesChannel, k: string) =>
+      rows.filter((e) => e.channel === c && kind(e.externalKey) === k).reduce((t, e) => t + e.amountCents, 0);
+    const rows = SALES_CHANNELS.map((channel) => {
+      const sales = entries.filter((e) => e.channel === channel && kind(e.externalKey) === 'sale');
+      const revenueCents = sales.reduce((t, e) => t + e.amountCents, 0);
+      const commissionCents = sumOf(entries, channel, 'commission');
+      const feeCents = sumOf(entries, channel, 'fee');
+      const taxCents = sumOf(entries, channel, 'tax');
+      const refundCents = sumOf(entries, channel, 'refund');
+      const cmvCents = items.filter((i) => i.order.channel === channel).reduce((t, i) => t + i.unitCostCents * i.quantity, 0);
+      const netCents = revenueCents - refundCents - commissionCents - feeCents - taxCents;
+      const openSales = open.filter((e) => e.channel === channel && kind(e.externalKey) === 'sale');
+      const toReceiveCents = openSales.reduce((t, e) => t + e.amountCents, 0) - sumOf(open, channel, 'commission') - sumOf(open, channel, 'fee');
+      const nextPayout = openSales.map((e) => fromDbDate(e.dueDate)).sort()[0] ?? null;
+      const cfg = settings.find((x) => x.channel === channel);
+      return {
+        channel,
+        label: CHANNEL_LABELS[channel],
+        active: channel === 'LOJA' || !!cfg?.active,
+        orders: sales.length,
+        revenueCents,
+        commissionCents,
+        feeCents,
+        taxCents,
+        netCents,
+        cmvCents,
+        // Margem de contribuição do canal (antes das despesas fixas).
+        resultCents: netCents - cmvCents,
+        ticketCents: sales.length ? Math.round(revenueCents / sales.length) : 0,
+        toReceive: { count: openSales.length, netCents: toReceiveCents, nextPayout },
+      };
+    });
+    return { from, to, rows };
+  }
+
+  /** Repasse do app caiu na conta: baixa das vendas pagas no app com repasse até a data, e da comissão e taxa descontadas. */
+  async registerPayout(tenantId: string, userId: string, channel: SalesChannel, until?: string, paidAt?: string) {
+    if (channel === 'LOJA') throw new BadRequestException('A loja própria não tem repasse de app.');
+    await this.fresh(tenantId);
+    const limit = until ?? localDate(new Date());
+    const day = paidAt ?? localDate(new Date());
+    const rows = await this.prisma.financialEntry.findMany({
+      where: { tenantId, channel, status: 'OPEN', paymentMethod: 'APP_ONLINE', dueDate: { lte: toDbDate(limit) } },
+      select: { id: true, type: true, amountCents: true },
+    });
+    if (rows.length === 0) throw new ConflictException(`Nada a receber do ${CHANNEL_LABELS[channel]} até ${limit.split('-').reverse().join('/')}.`);
+    await this.prisma.financialEntry.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { status: 'PAID', paidAt: toDbDate(day) } });
+    const gross = rows.filter((r) => r.type === 'RECEIVABLE').reduce((t, r) => t + r.amountCents, 0);
+    const deductions = rows.filter((r) => r.type === 'PAYABLE').reduce((t, r) => t + r.amountCents, 0);
+    await this.audit.log({ tenantId, userId, action: 'channel.payout', entity: 'financial_entry', entityId: rows[0].id, after: { channel, until: limit, paidAt: day, gross, deductions } });
+    return { count: rows.length, grossCents: gross, deductionsCents: deductions, netCents: gross - deductions };
   }
 
   // ---------- DRE e resumo ----------

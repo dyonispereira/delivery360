@@ -603,13 +603,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return process.env.PAYMENTS_FAKE_ENABLED === 'true';
   }
 
-  private publishReceived(tx: Prisma.TransactionClient, orderId: string, tenantId: string, totalCents: number, method: PaymentMethod) {
+  publishReceived(tx: Prisma.TransactionClient, orderId: string, tenantId: string, totalCents: number, method: PaymentMethod) {
     // A Gestão vai consumir este evento para lançar a receita (conta 1.2) e a taxa (2.3).
     return this.events.publish(tenantId, 'pedido.recebido', { orderId, totalCents, paymentMethod: method }, tx);
   }
 
   /** Número sequencial por restaurante; tenta de novo se dois pedidos pegarem o mesmo número. */
-  private async withOrderNumber<T>(tenantId: string, fn: (tx: Prisma.TransactionClient, n: number) => Promise<T>): Promise<T> {
+  async withOrderNumber<T>(tenantId: string, fn: (tx: Prisma.TransactionClient, n: number) => Promise<T>): Promise<T> {
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         return await this.prisma.$transaction(async (tx) => {

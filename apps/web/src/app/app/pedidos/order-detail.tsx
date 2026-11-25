@@ -13,6 +13,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
 import type { BoardOrder } from './board';
+import { ChannelTag } from './channel-tag';
 
 interface OrderDetail extends BoardOrder {
   deliveredAt: string | null;
@@ -79,7 +80,9 @@ function Body({ order: o, canEdit, reload, onClose }: { order: OrderDetail; canE
     <div className="space-y-4 text-sm">
       <header className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold">Pedido #{o.number}</h2>
+          <h2 className="text-xl font-bold">
+            Pedido #{o.number} <ChannelTag channel={o.channel} code={o.externalCode} className="align-middle" />
+          </h2>
           <p className="text-zinc-600">{o.customerName} · {o.customerPhone}</p>
           <p className={o.status === 'CANCELLED' ? 'font-semibold text-red-600' : 'font-semibold text-emerald-700'}>
             {o.type === 'PICKUP' && o.status === 'COMPLETED' ? 'Retirado' : ORDER_STATUS_LABELS[o.status]}

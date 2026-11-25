@@ -7,11 +7,13 @@ import { useCurrentTenant } from '../tenant-context';
 import { MenuEditor } from './menu-editor';
 import { StoreSettings } from './store-settings';
 import { ZonesEditor } from './zones-editor';
+import { ChannelsEditor } from './channels';
 
 const TABS = [
   { id: 'menu', label: 'Cardápio' },
   { id: 'loja', label: 'Loja online' },
   { id: 'bairros', label: 'Bairros e taxas' },
+  { id: 'canais', label: 'Canais de venda' },
 ] as const;
 
 export default function CardapioPage() {
@@ -34,7 +36,7 @@ export default function CardapioPage() {
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">Cardápio e loja</h1>
         <div className="flex gap-1 overflow-x-auto rounded-lg bg-zinc-100 p-1">
-          {TABS.map((t) => (
+          {TABS.filter((t) => t.id !== 'canais' || canEdit).map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -48,6 +50,7 @@ export default function CardapioPage() {
       {tab === 'menu' && <MenuEditor canEdit={canEdit} />}
       {tab === 'loja' && <StoreSettings canEdit={canEdit} />}
       {tab === 'bairros' && <ZonesEditor canEdit={canEdit} />}
+      {tab === 'canais' && canEdit && <ChannelsEditor />}
     </div>
   );
 }
