@@ -56,6 +56,7 @@ async function seedDemo() {
   const existing = await prisma.store.findUnique({ where: { slug } });
   if (existing) {
     await seedDemoCourier(existing.tenantId);
+    await seedDemoCosts(existing.tenantId);
     return seedDemoFinance(existing.tenantId);
   }
   const plan = await prisma.plan.findUniqueOrThrow({ where: { name: 'Gestão 360' }, include: { modules: true } });
@@ -121,6 +122,7 @@ async function seedDemo() {
     ],
   });
   await seedDemoCourier(tenant.id);
+  await seedDemoCosts(tenant.id);
   await seedDemoFinance(tenant.id);
   console.log(`Restaurante demo criado: /loja/${slug} (dono: ${email})`);
 }
@@ -177,4 +179,28 @@ async function seedDemoFinance(tenantId: string) {
       paidAt: paid ? day(d) : null,
     })),
   });
+}
+
+/** Fichas técnicas de exemplo e impostos/taxas do restaurante demo (só preenche o que está vazio). */
+async function seedDemoCosts(tenantId: string) {
+  await prisma.financeSettings.upsert({
+    where: { tenantId },
+    create: { tenantId, salesTaxBps: 600, pixFeeBps: 99, creditFeeBps: 400, cardOnDeliveryFeeBps: 250, targetMarginBps: 2000 },
+    update: {},
+  });
+  const sheets: Record<string, [string, 'INGREDIENT' | 'PACKAGING' | 'OTHER', number][]> = {
+    Calabresa: [['Massa', 'INGREDIENT', 350], ['Molho de tomate', 'INGREDIENT', 150], ['Mussarela', 'INGREDIENT', 900], ['Calabresa', 'INGREDIENT', 600], ['Cebola e azeitona', 'INGREDIENT', 120], ['Caixa de pizza', 'PACKAGING', 250]],
+    Margherita: [['Massa', 'INGREDIENT', 350], ['Molho de tomate', 'INGREDIENT', 150], ['Mussarela', 'INGREDIENT', 900], ['Tomate e manjericão', 'INGREDIENT', 250], ['Caixa de pizza', 'PACKAGING', 250]],
+    'Frango com Catupiry': [['Massa', 'INGREDIENT', 350], ['Molho de tomate', 'INGREDIENT', 150], ['Frango desfiado', 'INGREDIENT', 700], ['Catupiry', 'INGREDIENT', 650], ['Caixa de pizza', 'PACKAGING', 250]],
+    'Refrigerante 2L': [['Refrigerante 2L', 'INGREDIENT', 700]],
+    'Suco natural 500ml': [['Frutas', 'INGREDIENT', 250], ['Copo e tampa', 'PACKAGING', 60]],
+  };
+  const products = await prisma.product.findMany({ where: { tenantId } });
+  for (const p of products) {
+    const sheet = sheets[p.name];
+    if (!sheet || (Array.isArray(p.costItems) && p.costItems.length > 0)) continue;
+    await prisma.product.update({ where: { id: p.id }, data: { costItems: sheet.map(([name, kind, costCents]) => ({ name, kind, costCents })) } });
+  }
+  await prisma.option.updateMany({ where: { tenantId, name: { in: ['Catupiry', 'Cheddar'] }, costCents: 0 }, data: { costCents: 300 } });
+  await prisma.option.updateMany({ where: { tenantId, name: 'Bacon', costCents: 0 }, data: { costCents: 200 } });
 }

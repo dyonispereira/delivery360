@@ -58,6 +58,7 @@ model Tenant {
   deliveryBatches  DeliveryBatch[]
   accounts         Account[]
   financialEntries FinancialEntry[]
+  financeSettings  FinanceSettings?
 
   @@map("tenants")
 }
@@ -285,6 +286,10 @@ model Product {
   active       Boolean       @default(true)
   /// Esgotado no momento: aparece, mas não pode ser pedido.
   available    Boolean       @default(true)
+  /// Ficha técnica: [{ name, kind: INGREDIENT|PACKAGING|OTHER, costCents }] por unidade.
+  costItems    Json          @default("[]") @map("cost_items")
+  /// Outras despesas variáveis só deste produto (pontos-base, 100 = 1%).
+  extraCostBps Int           @default(0) @map("extra_cost_bps")
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
   tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -316,6 +321,8 @@ model Option {
   groupId    String      @map("group_id") @db.Uuid
   name       String
   priceCents Int         @default(0) @map("price_cents")
+  /// Custo do adicional (ex.: bacon extra R$ 1,50), soma no CMV da venda.
+  costCents  Int         @default(0) @map("cost_cents")
   available  Boolean     @default(true)
   position   Int         @default(0)
   group      OptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -408,6 +415,8 @@ model OrderItem {
   quantity       Int
   notes          String?
   totalCents     Int               @map("total_cents")
+  /// Custo unitário pela ficha técnica no momento da venda (CMV teórico).
+  unitCostCents  Int               @default(0) @map("unit_cost_cents")
   order          Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
   options        OrderItemOption[]
 
@@ -654,6 +663,8 @@ model FinancialEntry {
   status         EntryStatus @default(OPEN)
   paidAt         DateTime?   @map("paid_at") @db.Date
   notes          String?
+  /// Forma de pagamento informada pelo cliente (vendas).
+  paymentMethod  String?     @map("payment_method")
   /// "manual" ou o módulo que gerou (cardapio, entregas...).
   source         String      @default("manual")
   /// Chave do lançamento automático (evita duplicar se o evento for processado de novo).
@@ -668,4 +679,20 @@ model FinancialEntry {
   @@index([tenantId, type, status, dueDate])
   @@index([tenantId, competenceDate])
   @@map("financial_entries")
+}
+
+/// Impostos e taxas do restaurante (pontos-base, 100 = 1%). Usados na ficha técnica e nos lançamentos das vendas.
+model FinanceSettings {
+  tenantId             String   @id @map("tenant_id") @db.Uuid
+  salesTaxBps          Int      @default(0) @map("sales_tax_bps")
+  pixFeeBps            Int      @default(0) @map("pix_fee_bps")
+  creditFeeBps         Int      @default(0) @map("credit_fee_bps")
+  cardOnDeliveryFeeBps Int      @default(0) @map("card_on_delivery_fee_bps")
+  targetMarginBps      Int      @default(2000) @map("target_margin_bps")
+  /// Dia do mês em que o imposto vence (mês seguinte à venda).
+  taxDueDay            Int      @default(20) @map("tax_due_day")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("finance_settings")
 }

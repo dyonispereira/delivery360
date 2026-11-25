@@ -5,7 +5,8 @@ import { AuditService } from '../core/audit.service';
 import { GROUPS, fromDbDate, localDate, toDbDate } from './chart';
 import { buildDre } from './dre';
 import { GestaoSyncService } from './gestao-sync.service';
-import { AccountDto, EntryDto, UpdateAccountDto, UpdateEntryDto } from './gestao.dto';
+import { paymentFeeBps } from '@delivery360/shared';
+import { AccountDto, EntryDto, FinanceSettingsDto, UpdateAccountDto, UpdateEntryDto } from './gestao.dto';
 
 const addMonths = (day: string, n: number) => {
   const [y, m, d] = day.split('-').map(Number);
@@ -186,6 +187,74 @@ export class GestaoService {
     return { ok: true };
   }
 
+  // ---------- Impostos e taxas ----------
+
+  settings(tenantId: string) {
+    return this.sync.rates(this.prisma, tenantId);
+  }
+
+  async updateSettings(tenantId: string, userId: string, dto: FinanceSettingsDto) {
+    const before = await this.sync.rates(this.prisma, tenantId);
+    const after = await this.prisma.financeSettings.upsert({ where: { tenantId }, create: { tenantId, ...dto }, update: dto });
+    await this.audit.log({ tenantId, userId, action: 'finance_settings.update', entity: 'finance_settings', entityId: tenantId, before, after });
+    return after;
+  }
+
+  // ---------- Margem por produto (ficha técnica x vendas) ----------
+
+  /** Itens vendidos (pedidos entregues/retirados) no período, com o custo gravado na venda. */
+  private async soldItems(tenantId: string, from: string, to: string) {
+    const start = new Date(`${from}T03:00:00Z`);
+    const end = new Date(new Date(`${to}T03:00:00Z`).getTime() + 86_400_000);
+    return this.prisma.orderItem.findMany({
+      where: { order: { tenantId, status: 'COMPLETED', createdAt: { gte: start, lt: end } } },
+      select: { productId: true, name: true, quantity: true, totalCents: true, unitCostCents: true, order: { select: { paymentMethod: true } } },
+    });
+  }
+
+  async productsMargin(tenantId: string, from: string, to: string) {
+    if (from > to) throw new BadRequestException('A data inicial é depois da final.');
+    const [items, rates] = await Promise.all([this.soldItems(tenantId, from, to), this.sync.rates(this.prisma, tenantId)]);
+    const map = new Map<string, { productId: string | null; name: string; quantity: number; revenueCents: number; cmvCents: number; variableCents: number; withoutCost: number }>();
+    for (const i of items) {
+      const key = i.productId ?? i.name;
+      const row = map.get(key) ?? { productId: i.productId, name: i.name, quantity: 0, revenueCents: 0, cmvCents: 0, variableCents: 0, withoutCost: 0 };
+      row.quantity += i.quantity;
+      row.revenueCents += i.totalCents;
+      row.cmvCents += i.unitCostCents * i.quantity;
+      row.variableCents += Math.round((i.totalCents * (rates.salesTaxBps + paymentFeeBps(rates, i.order.paymentMethod))) / 10_000);
+      if (i.unitCostCents === 0) row.withoutCost += i.quantity;
+      map.set(key, row);
+    }
+    const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
+    const rows = [...map.values()]
+      .map((r) => {
+        const profitCents = r.revenueCents - r.cmvCents - r.variableCents;
+        // Sem ficha em nenhuma venda: CMV desconhecido (não é 0%).
+        const unknown = r.withoutCost === r.quantity;
+        return { ...r, profitCents, cmvPct: unknown ? null : pct(r.cmvCents, r.revenueCents), resultPct: unknown ? null : pct(profitCents, r.revenueCents) };
+      })
+      .sort((a, b) => b.profitCents - a.profitCents);
+    const total = rows.reduce(
+      (t, r) => ({
+        quantity: t.quantity + r.quantity,
+        revenueCents: t.revenueCents + r.revenueCents,
+        cmvCents: t.cmvCents + r.cmvCents,
+        variableCents: t.variableCents + r.variableCents,
+        profitCents: t.profitCents + r.profitCents,
+      }),
+      { quantity: 0, revenueCents: 0, cmvCents: 0, variableCents: 0, profitCents: 0 },
+    );
+    return {
+      from,
+      to,
+      rows,
+      total: { ...total, cmvPct: pct(total.cmvCents, total.revenueCents), resultPct: pct(total.profitCents, total.revenueCents) },
+      // Produtos vendidos sem ficha técnica: o CMV deles aparece como zero.
+      missingCost: rows.filter((r) => r.withoutCost > 0).map((r) => r.name),
+    };
+  }
+
   // ---------- DRE e resumo ----------
 
   /** DRE por competência no período (não conta cancelados). */
@@ -210,11 +279,25 @@ export class GestaoService {
       _count: true,
       _sum: { totalCents: true },
     });
+    // CMV teórico (fichas técnicas das vendas) x CMV real (compras lançadas no grupo 3): a diferença
+    // aponta desperdício, porção maior que a ficha, roubo ou ficha desatualizada.
+    const sold = await this.soldItems(tenantId, from, to);
+    const salesCents = sold.reduce((s, i) => s + i.totalCents, 0);
+    const theoreticalCents = sold.reduce((s, i) => s + i.unitCostCents * i.quantity, 0);
+    const actualCents = -(lines.find((l) => l.key === 'g3')?.valueCents ?? 0);
     return {
       from,
       to,
       lines,
       orders: { count: orders._count, ticketCents: orders._count ? Math.round((orders._sum.totalCents ?? 0) / orders._count) : 0 },
+      cmv: {
+        salesCents,
+        theoreticalCents,
+        theoreticalPct: salesCents ? Math.round((theoreticalCents / salesCents) * 1000) / 10 : null,
+        actualCents,
+        actualPct: salesCents ? Math.round((actualCents / salesCents) * 1000) / 10 : null,
+        missingCostItems: sold.filter((i) => i.unitCostCents === 0).reduce((s, i) => s + i.quantity, 0),
+      },
     };
   }
 

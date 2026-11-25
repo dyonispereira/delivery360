@@ -52,3 +52,13 @@ export class PeriodQuery {
   @Matches(DATE, DATE_MSG) from: string;
   @Matches(DATE, DATE_MSG) to: string;
 }
+
+/** Percentuais em pontos-base (100 = 1%). */
+export class FinanceSettingsDto {
+  @IsOptional() @IsInt() @Min(0) @Max(5000) salesTaxBps?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(2000) pixFeeBps?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(2000) creditFeeBps?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(2000) cardOnDeliveryFeeBps?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(8000) targetMarginBps?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(28) taxDueDay?: number;
+}

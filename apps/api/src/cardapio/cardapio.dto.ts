@@ -58,6 +58,12 @@ export class UpdateCategoryDto {
   @IsOptional() @IsBoolean() active?: boolean;
 }
 
+export class CostItemDto {
+  @IsString() @MinLength(1, { message: 'Dê um nome a cada item da ficha técnica.' }) @MaxLength(80) name: string;
+  @IsIn(['INGREDIENT', 'PACKAGING', 'OTHER']) kind: 'INGREDIENT' | 'PACKAGING' | 'OTHER';
+  @IsInt() @Min(0) @Max(MAX_CENTS) costCents: number;
+}
+
 export class ProductDto {
   @IsUUID() categoryId: string;
   @IsString() @MinLength(1) @MaxLength(120) name: string;
@@ -67,6 +73,9 @@ export class ProductDto {
   @IsOptional() @IsInt() position?: number;
   @IsOptional() @IsBoolean() active?: boolean;
   @IsOptional() @IsBoolean() available?: boolean;
+  @IsOptional() @IsArray() @ArrayMaxSize(40) @ValidateNested({ each: true }) @Type(() => CostItemDto) costItems?: CostItemDto[];
+  /** Outras despesas variáveis do produto, em pontos-base (100 = 1%). */
+  @IsOptional() @IsInt() @Min(0) @Max(5000) extraCostBps?: number;
 }
 export class UpdateProductDto {
   @IsOptional() @IsUUID() categoryId?: string;
@@ -77,6 +86,8 @@ export class UpdateProductDto {
   @IsOptional() @IsInt() position?: number;
   @IsOptional() @IsBoolean() active?: boolean;
   @IsOptional() @IsBoolean() available?: boolean;
+  @IsOptional() @IsArray() @ArrayMaxSize(40) @ValidateNested({ each: true }) @Type(() => CostItemDto) costItems?: CostItemDto[];
+  @IsOptional() @IsInt() @Min(0) @Max(5000) extraCostBps?: number;
 }
 
 export class OptionGroupDto {
@@ -95,12 +106,14 @@ export class UpdateOptionGroupDto {
 export class OptionDto {
   @IsString() @MinLength(1) @MaxLength(80) name: string;
   @IsInt() @Min(0) @Max(MAX_CENTS) priceCents: number;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) costCents?: number;
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsInt() position?: number;
 }
 export class UpdateOptionDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
   @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) priceCents?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) costCents?: number;
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsInt() position?: number;
 }
