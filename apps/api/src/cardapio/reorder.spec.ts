@@ -11,7 +11,7 @@ const menu: Pick<PublicStore, 'categories'> = {
           name: 'Pizza Meio Metro',
           description: null,
           priceCents: 12000,
-          imageUrl: null,
+          imageUrl: null, listPriceCents: null, promoEndsAt: null,
           available: true,
           optionGroups: [
             {
@@ -27,8 +27,8 @@ const menu: Pick<PublicStore, 'categories'> = {
             },
           ],
         },
-        { id: 'coca', name: 'Coca-Cola 2L', description: null, priceCents: 2400, imageUrl: null, available: true, optionGroups: [] },
-        { id: 'guarana', name: 'Guaraná 2L', description: null, priceCents: 1400, imageUrl: null, available: false, optionGroups: [] },
+        { id: 'coca', name: 'Coca-Cola 2L', description: null, priceCents: 2400, imageUrl: null, listPriceCents: null, promoEndsAt: null, available: true, optionGroups: [] },
+        { id: 'guarana', name: 'Guaraná 2L', description: null, priceCents: 1400, imageUrl: null, listPriceCents: null, promoEndsAt: null, available: false, optionGroups: [] },
       ],
     },
   ],

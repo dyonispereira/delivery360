@@ -13,6 +13,8 @@ const { AppModule } = require('../src/app.module');
 const { setupApp } = require('../src/setup-app');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { PrismaService } = require('../src/prisma/prisma.service');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { GestaoSyncService } = require('../src/gestao/gestao-sync.service');
 
 describe('Cardápio, loja online e pedidos (e2e)', () => {
   let app: INestApplication;
@@ -242,6 +244,38 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     const track = (await http().get(`/public/orders/${created.body.trackingCode}`)).body;
     expect(track.items[0].productId).toBe(ids.pizza);
     expect(track.items[0].options.map((o: { optionId: string }) => o.optionId).sort()).toEqual([ids.catupiry, ids.bacon].sort());
+  });
+
+  it('preço de/por: loja mostra o riscado, pedido cobra a promoção e o DRE separa o desconto', async () => {
+    const bad = await owner().patch(`/cardapio/products/${ids.pizza}`).send({ promoPriceCents: 4500 });
+    expect(bad.status).toBe(400);
+    const ends = new Date(Date.now() + 86_400_000).toISOString();
+    expect((await owner().patch(`/cardapio/products/${ids.pizza}`).send({ promoPriceCents: 3990, promoEndsAt: ends })).status).toBe(200);
+
+    const menu = (await http().get(`/public/stores/${slug}`)).body;
+    const pizza = menu.categories[0].products.find((p: { id: string }) => p.id === ids.pizza);
+    expect(pizza).toMatchObject({ priceCents: 3990, listPriceCents: 4500 });
+    expect(pizza.promoPriceCents).toBeUndefined();
+
+    // 2 pizzas com catupiry e bacon: (39,90 + 8 + 5) × 2 = 105,80; economia (45,00 − 39,90) × 2 = 10,20.
+    const created = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY' }));
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ subtotalCents: 10580, promoDiscountCents: 1020 });
+    const order = await prisma.order.findUniqueOrThrow({ where: { trackingCode: created.body.trackingCode }, include: { items: true } });
+    expect(order.items[0]).toMatchObject({ unitPriceCents: 5290, listUnitPriceCents: 5800 });
+
+    await app.get(GestaoSyncService).processPending(tenantId);
+    const entries: { externalKey: string; amountCents: number; status: string; account: { code: string } }[] = await prisma.financialEntry.findMany({ where: { tenantId, externalKey: { startsWith: `order:${order.id}:` } }, include: { account: true } });
+    const by = (k: string) => entries.find((e: { externalKey: string }) => e.externalKey === `order:${order.id}:${k}`);
+    expect(by('sale')).toMatchObject({ amountCents: order.totalCents + 1020 });
+    expect(by('promo')).toMatchObject({ amountCents: 1020, status: 'OPEN' });
+    expect(by('promo')!.account.code).toBe('2.4');
+
+    // Promoção vencida: volta o preço normal.
+    await owner().patch(`/cardapio/products/${ids.pizza}`).send({ promoEndsAt: new Date(Date.now() - 1000).toISOString(), promoStartsAt: new Date(Date.now() - 86_400_000).toISOString() });
+    const again = (await http().get(`/public/stores/${slug}`)).body.categories[0].products.find((p: { id: string }) => p.id === ids.pizza);
+    expect(again).toMatchObject({ priceCents: 4500, listPriceCents: null });
+    expect((await owner().patch(`/cardapio/products/${ids.pizza}`).send({ promoPriceCents: null, promoStartsAt: null, promoEndsAt: null })).status).toBe(200);
   });
 
   it('cancelar: só dono ou gerente; pedido de outro restaurante dá 404', async () => {

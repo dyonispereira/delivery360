@@ -56,7 +56,12 @@ export interface PublicProduct {
   id: string;
   name: string;
   description: string | null;
+  /** Preço de hoje (já com a promoção). */
   priceCents: number;
+  /** Na promoção: o preço normal, para mostrar riscado. */
+  listPriceCents: number | null;
+  /** Na promoção: quando ela acaba (null = sem data). */
+  promoEndsAt: string | null;
   imageUrl: string | null;
   available: boolean;
   optionGroups: PublicOptionGroup[];
@@ -103,6 +108,8 @@ export interface OrderTracking {
     options: { optionId: string | null; groupName: string; name: string; priceCents: number }[];
   }[];
   subtotalCents: number;
+  /** Economia com preço de/por. */
+  promoDiscountCents: number;
   deliveryFeeCents: number;
   totalCents: number;
   paymentMethod: PaymentMethod;

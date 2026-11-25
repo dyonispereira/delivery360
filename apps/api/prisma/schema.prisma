@@ -309,6 +309,10 @@ model Product {
   costItems     Json          @default("[]") @map("cost_items")
   /// Outras despesas variáveis só deste produto (pontos-base, 100 = 1%).
   extraCostBps  Int           @default(0) @map("extra_cost_bps")
+  /// Preço de/por: preço promocional e período (vazio = sem promoção; sem datas = vale até tirar).
+  promoPriceCents Int?        @map("promo_price_cents")
+  promoStartsAt   DateTime?   @map("promo_starts_at")
+  promoEndsAt     DateTime?   @map("promo_ends_at")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
   tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -389,6 +393,8 @@ model Order {
   subtotalCents     Int                  @map("subtotal_cents")
   deliveryFeeCents  Int                  @map("delivery_fee_cents")
   discountCents     Int                  @default(0) @map("discount_cents")
+  /// Quanto o cliente economizou com preço de/por (já fora do subtotal). Vai para "Descontos e cupons" no DRE.
+  promoDiscountCents Int                 @default(0) @map("promo_discount_cents")
   totalCents        Int                  @map("total_cents")
   paymentMethod     PaymentMethod        @map("payment_method")
   /// De onde veio o pedido (loja própria ou app de delivery).
@@ -448,6 +454,8 @@ model OrderItem {
   totalCents     Int               @map("total_cents")
   /// Custo unitário pela ficha técnica no momento da venda (CMV teórico).
   unitCostCents  Int               @default(0) @map("unit_cost_cents")
+  /// Preço unitário sem a promoção (igual ao unitPriceCents quando não havia promoção).
+  listUnitPriceCents Int?          @map("list_unit_price_cents")
   order          Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
   options        OrderItemOption[]
 

@@ -17,6 +17,10 @@ export interface Product {
   /** Código PDV: o mesmo no iFood, 99Food, Keeta e na loja própria. */
   pdvCode?: string | null;
   channelPrices?: ChannelPrices;
+  /** Preço de/por. */
+  promoPriceCents?: number | null;
+  promoStartsAt?: string | null;
+  promoEndsAt?: string | null;
   optionGroups: Group[];
 }
 export interface Category { id: string; name: string; position: number; active: boolean; products: Product[] }

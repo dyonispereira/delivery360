@@ -16,7 +16,7 @@ import { EventsService } from '../core/events.service';
 import { activeModuleCodes } from '../access/access.rules';
 import { PAYMENT_GATEWAY, type PaymentGateway } from '../payments/payment-gateway';
 import { CreateOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
-import { unitCost, type CostItem } from '@delivery360/shared';
+import { activePromoPrice, effectivePrice, unitCost, type CostItem } from '@delivery360/shared';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
 import { ACTIVE_STATUSES, canTransition } from './order-status';
 import { AuditService } from '../core/audit.service';
@@ -98,6 +98,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
               name: true,
               description: true,
               priceCents: true,
+              promoPriceCents: true,
+              promoStartsAt: true,
+              promoEndsAt: true,
               imageUrl: true,
               available: true,
               optionGroups: {
@@ -130,6 +133,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         take: 12,
       }),
     ]);
+    const now = new Date();
     const visible = new Set(categories.flatMap((c) => c.products.filter((p) => p.available).map((p) => p.id)));
     return {
       store: {
@@ -147,9 +151,23 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         estimatedMinutes: store.estimatedMinutes,
         rating: ratings._count.ratingStore >= 3 ? { average: Math.round((ratings._avg.ratingStore ?? 0) * 10) / 10, count: ratings._count.ratingStore } : null,
       },
-      categories: categories.filter((c) => c.products.length > 0),
+      categories: categories
+        .filter((c) => c.products.length > 0)
+        .map((c) => ({ ...c, products: c.products.map((p) => this.publicProduct(p, now)) })),
       topProductIds: top.map((t) => t.productId!).filter((id) => visible.has(id)).slice(0, 8),
       zones,
+    };
+  }
+
+  /** Produto como a loja mostra: preço de hoje e, na promoção, o preço normal riscado e o fim. */
+  private publicProduct<T extends { priceCents: number; promoPriceCents: number | null; promoStartsAt: Date | null; promoEndsAt: Date | null }>(p: T, now: Date) {
+    const { promoPriceCents, promoStartsAt, promoEndsAt, ...rest } = p;
+    const promo = activePromoPrice(p, now);
+    return {
+      ...rest,
+      priceCents: promo ?? p.priceCents,
+      listPriceCents: promo != null ? p.priceCents : null,
+      promoEndsAt: promo != null ? promoEndsAt : null,
     };
   }
 
@@ -185,13 +203,15 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         optionIds.map((id) => options.find((o) => o.id === id)?.costCents ?? 0),
       );
     };
+    const now = new Date();
     const menu = new Map<string, MenuProduct>(
       products.map((p) => [
         p.id,
         {
           id: p.id,
           name: p.name,
-          priceCents: p.priceCents,
+          priceCents: effectivePrice(p, now),
+          listPriceCents: p.priceCents,
           active: p.active,
           available: p.available,
           categoryActive: p.category.active,
@@ -261,6 +281,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           deliveryZoneName: priced.zone?.name ?? null,
           notes: dto.notes?.trim() || null,
           subtotalCents: priced.subtotalCents,
+          promoDiscountCents: priced.promoDiscountCents,
           deliveryFeeCents: priced.deliveryFeeCents,
           totalCents: priced.totalCents,
           paymentMethod: dto.paymentMethod,
@@ -272,6 +293,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
               productId: i.productId,
               name: i.name,
               unitPriceCents: i.unitPriceCents,
+              listUnitPriceCents: i.listUnitPriceCents,
               // CMV teórico pela ficha técnica (produto + adicionais), congelado no momento da venda.
               unitCostCents: costOf(i.productId, i.options.map((o) => o.optionId)),
               quantity: i.quantity,
@@ -343,6 +365,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         options: i.options.map((o) => ({ optionId: o.optionId, groupName: o.groupName, name: o.name, priceCents: o.priceCents })),
       })),
       subtotalCents: order.subtotalCents,
+      promoDiscountCents: order.promoDiscountCents,
       deliveryFeeCents: order.deliveryFeeCents,
       totalCents: order.totalCents,
       paymentMethod: order.paymentMethod,
