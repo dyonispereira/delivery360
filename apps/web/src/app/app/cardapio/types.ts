@@ -20,6 +20,7 @@ export interface Store {
   description: string | null;
   logoUrl: string | null;
   whatsapp: string | null;
+  city: string | null;
   isOpen: boolean;
   acceptsDelivery: boolean;
   acceptsPickup: boolean;

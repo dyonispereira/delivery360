@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } fr
 import { Throttle } from '@nestjs/throttler';
 import { CurrentTenant, CurrentUser, Public, RequireModule, TenantRoles } from '../access/access.decorators';
 import type { AuthUser, TenantContext } from '../access/access.types';
-import { CourierDto, CreateBatchDto, DeliverDto, UpdateCourierDto } from './entregas.dto';
+import { CourierDto, CreateBatchDto, DeliverDto, LocationDto, UpdateCourierDto } from './entregas.dto';
 import { EntregasService } from './entregas.service';
 
 const UUID = new ParseUUIDPipe();
@@ -77,5 +77,13 @@ export class CourierPublicController {
   @HttpCode(200)
   deliver(@Param('token') token: string, @Param('id', UUID) id: string, @Body() dto: DeliverDto) {
     return this.entregas.deliver(token, id, dto.code);
+  }
+
+  /** O celular manda a posição a cada ~10 s durante a entrega. */
+  @Throttle({ default: { limit: process.env.NODE_ENV === 'test' ? 1000 : 30, ttl: 60_000 } })
+  @Post(':token/location')
+  @HttpCode(200)
+  location(@Param('token') token: string, @Body() dto: LocationDto) {
+    return this.entregas.updateLocation(token, dto);
   }
 }

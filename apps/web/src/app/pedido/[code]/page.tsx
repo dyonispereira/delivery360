@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatBRL, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type OrderStatus, type OrderTracking } from '@delivery360/shared';
 import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
+import { LiveMap } from '@/components/live-map';
 
 const DELIVERY_STEPS: OrderStatus[] = ['PAID', 'IN_PREPARATION', 'OUT_FOR_DELIVERY', 'COMPLETED'];
 const PICKUP_STEPS: OrderStatus[] = ['PAID', 'IN_PREPARATION', 'READY', 'COMPLETED'];
@@ -33,7 +34,9 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
   // Atualiza sozinho enquanto o pedido está em andamento (mais rápido enquanto espera o PIX).
   useEffect(() => {
     if (!order || FINAL.includes(order.status)) return;
-    const t = setInterval(load, order.status === 'AWAITING_PAYMENT' ? 4000 : 15000);
+    // Mais rápido enquanto espera o PIX e enquanto o motoboy está a caminho (mapa ao vivo).
+    const fast = order.status === 'AWAITING_PAYMENT' || order.status === 'OUT_FOR_DELIVERY';
+    const t = setInterval(load, fast ? 5000 : 15000);
     return () => clearInterval(t);
   }, [order, load]);
 
@@ -106,6 +109,22 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
           <p className="mt-4 text-sm text-zinc-500">Tempo estimado: cerca de {order.store.estimatedMinutes} minutos.</p>
         )}
       </section>
+
+      {order.status === 'OUT_FOR_DELIVERY' && (
+        <section className="card space-y-2">
+          <h2 className="font-semibold">Acompanhe no mapa</h2>
+          {order.courierLocation ? (
+            <>
+              <LiveMap courier={order.courierLocation} courierName={order.courierName} />
+              <p className="text-xs text-zinc-500">
+                Atualizado às {new Date(order.courierLocation.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-zinc-500">A localização do entregador aparece aqui assim que o celular dele enviar o sinal.</p>
+          )}
+        </section>
+      )}
 
       {pix && order.status === 'AWAITING_PAYMENT' && (
         <section className="card space-y-3">

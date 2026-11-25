@@ -228,6 +228,8 @@ model Store {
   description      String?
   logoUrl          String?         @map("logo_url")
   whatsapp         String?
+  /// Cidade e UF (ex.: "Campinas - SP"), usada na rota do motoboy.
+  city             String?
   isOpen           Boolean         @default(false) @map("is_open")
   acceptsDelivery  Boolean         @default(true) @map("accepts_delivery")
   acceptsPickup    Boolean         @default(true) @map("accepts_pickup")
@@ -460,19 +462,24 @@ enum BatchStatus {
 
 /// Motoboy cadastrado pelo restaurante. Entra na tela do entregador por um link secreto.
 model Courier {
-  id          String          @id @default(uuid()) @db.Uuid
-  tenantId    String          @map("tenant_id") @db.Uuid
-  name        String
-  phone       String
+  id             String          @id @default(uuid()) @db.Uuid
+  tenantId       String          @map("tenant_id") @db.Uuid
+  name           String
+  phone          String
   /// Quanto o restaurante paga por entrega (vai para a Gestão como custo).
-  feeCents    Int             @default(0) @map("fee_cents")
-  active      Boolean         @default(true)
+  feeCents       Int             @default(0) @map("fee_cents")
+  active         Boolean         @default(true)
   /// Token do link /entregador/<token>; trocar o token derruba o link antigo.
-  accessToken String          @unique @map("access_token")
-  createdAt   DateTime        @default(now()) @map("created_at")
-  updatedAt   DateTime        @updatedAt @map("updated_at")
-  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  batches     DeliveryBatch[]
+  accessToken    String          @unique @map("access_token")
+  /// Última posição enviada pelo celular do motoboy (só durante entregas).
+  lastLat        Float?          @map("last_lat")
+  lastLng        Float?          @map("last_lng")
+  lastAccuracy   Float?          @map("last_accuracy")
+  lastLocationAt DateTime?       @map("last_location_at")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  batches        DeliveryBatch[]
 
   @@index([tenantId])
   @@map("couriers")
