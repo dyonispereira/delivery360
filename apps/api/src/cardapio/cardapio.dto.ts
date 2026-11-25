@@ -137,3 +137,9 @@ export class CreateOrderDto {
   @IsOptional() @IsString() @MaxLength(100) utmSource?: string;
   @IsOptional() @IsString() @MaxLength(100) utmCampaign?: string;
 }
+
+export class UpdateOrderStatusDto {
+  @IsIn(['IN_PREPARATION', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'])
+  status: 'IN_PREPARATION' | 'READY' | 'OUT_FOR_DELIVERY' | 'COMPLETED' | 'CANCELLED';
+  @IsOptional() @IsString() @MaxLength(200) note?: string;
+}

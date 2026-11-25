@@ -62,7 +62,17 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
     );
   if (!tenant || !user) return <Spinner />;
 
-  const nav = [{ href: '/app', label: 'Início' }, ...tenant.activeModules.map((m) => ({ href: MODULES[m].path, label: MODULES[m].name }))];
+  const nav = [
+    { href: '/app', label: 'Início' },
+    // Operação do dia a dia primeiro: painel e cozinha fazem parte do módulo Cardápio.
+    ...(tenant.activeModules.includes('cardapio')
+      ? [
+          { href: '/app/pedidos', label: 'Painel de pedidos' },
+          { href: '/app/cozinha', label: 'Cozinha' },
+        ]
+      : []),
+    ...tenant.activeModules.map((m) => ({ href: MODULES[m].path, label: MODULES[m].name })),
+  ];
 
   return (
     <TenantCtx.Provider value={tenant}>

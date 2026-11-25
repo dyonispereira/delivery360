@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { ErrorBox } from '@/components/ui';
 import { useCurrentTenant } from '../tenant-context';
 import { MenuEditor } from './menu-editor';
-import { OrdersList } from './orders-list';
 import { StoreSettings } from './store-settings';
 import { ZonesEditor } from './zones-editor';
 
@@ -13,7 +12,6 @@ const TABS = [
   { id: 'menu', label: 'Cardápio' },
   { id: 'loja', label: 'Loja online' },
   { id: 'bairros', label: 'Bairros e taxas' },
-  { id: 'pedidos', label: 'Pedidos' },
 ] as const;
 
 export default function CardapioPage() {
@@ -34,7 +32,7 @@ export default function CardapioPage() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">Cardápio e pedidos</h1>
+        <h1 className="text-xl font-semibold">Cardápio e loja</h1>
         <div className="flex gap-1 overflow-x-auto rounded-lg bg-zinc-100 p-1">
           {TABS.map((t) => (
             <button
@@ -50,7 +48,6 @@ export default function CardapioPage() {
       {tab === 'menu' && <MenuEditor canEdit={canEdit} />}
       {tab === 'loja' && <StoreSettings canEdit={canEdit} />}
       {tab === 'bairros' && <ZonesEditor canEdit={canEdit} />}
-      {tab === 'pedidos' && <OrdersList />}
     </div>
   );
 }

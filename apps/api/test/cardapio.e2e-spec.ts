@@ -206,6 +206,53 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     expect((await http().get('/public/orders/naoexiste123')).status).toBe(404);
   });
 
+  it('painel: pedido segue o fluxo de status e o cliente acompanha', async () => {
+    const created = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY' }));
+    const code = created.body.trackingCode;
+    const board = await as(staffToken).get('/cardapio/orders/board');
+    expect(board.status).toBe(200);
+    const order = board.body.find((o: { trackingCode: string }) => o.trackingCode === code);
+    expect(order.status).toBe('PAID');
+    expect(order.items[0].options.length).toBe(2);
+    expect(board.body.some((o: { status: string }) => o.status === 'AWAITING_PAYMENT')).toBe(false);
+
+    const move = (to: string, who = staffToken) => as(who).patch(`/cardapio/orders/${order.id}/status`).send({ status: to });
+    expect((await move('COMPLETED')).status).toBe(409);
+    expect((await move('IN_PREPARATION')).status).toBe(200);
+    expect((await move('OUT_FOR_DELIVERY')).status).toBe(200);
+    expect((await http().get(`/public/orders/${code}`)).body.status).toBe('OUT_FOR_DELIVERY');
+    expect((await move('COMPLETED')).status).toBe(200);
+    expect((await move('IN_PREPARATION')).status).toBe(409);
+
+    const history = (await http().get(`/public/orders/${code}`)).body.history.map((h: { status: string }) => h.status);
+    expect(history).toEqual(['PAID', 'IN_PREPARATION', 'OUT_FOR_DELIVERY', 'COMPLETED']);
+    const events = await prisma.domainEvent.findMany({ where: { tenantId, type: 'pedido.status' } });
+    expect(events.length).toBe(3);
+  });
+
+  it('cancelar: só dono ou gerente; pedido de outro restaurante dá 404', async () => {
+    const created = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY' }));
+    const id = (await prisma.order.findUniqueOrThrow({ where: { trackingCode: created.body.trackingCode } })).id;
+    expect((await as(staffToken).patch(`/cardapio/orders/${id}/status`).send({ status: 'CANCELLED' })).status).toBe(403);
+    expect((await owner().patch(`/cardapio/orders/${id}/status`).send({ status: 'CANCELLED', note: 'Cliente desistiu' })).status).toBe(200);
+    expect((await http().get(`/public/orders/${created.body.trackingCode}`)).body.status).toBe('CANCELLED');
+
+    const other = await prisma.tenant.create({ data: { name: 'Outro' } });
+    const foreign = await http()
+      .patch(`/cardapio/orders/${id}/status`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .set('x-tenant-id', other.id)
+      .send({ status: 'IN_PREPARATION' });
+    expect([403, 404]).toContain(foreign.status);
+  });
+
+  it('impressão: só a primeira tela imprime automaticamente', async () => {
+    const created = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY' }));
+    const id = (await prisma.order.findUniqueOrThrow({ where: { trackingCode: created.body.trackingCode } })).id;
+    expect((await as(staffToken).post(`/cardapio/orders/${id}/printed`)).body).toEqual({ first: true });
+    expect((await owner().post(`/cardapio/orders/${id}/printed`)).body).toEqual({ first: false });
+  });
+
   it('desligar o módulo Cardápio tira a loja do ar', async () => {
     await http().put(`/admin/tenants/${tenantId}/modules/cardapio`).set('Authorization', `Bearer ${adminToken}`).send({ active: false });
     expect((await http().get(`/public/stores/${slug}`)).status).toBe(404);

@@ -360,6 +360,8 @@ model Order {
   changeForCents    Int?                 @map("change_for_cents")
   utmSource         String?              @map("utm_source")
   utmCampaign       String?              @map("utm_campaign")
+  /// Primeira impressão do pedido (evita imprimir de novo em outra tela).
+  printedAt         DateTime?            @map("printed_at")
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
   tenant            Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
