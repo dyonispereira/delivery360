@@ -30,3 +30,15 @@ describe('folha gerencial', () => {
     expect(pj).toMatchObject({ absenceCents: 0, chargesCents: 0, provisionCents: 0, netCents: 300_000 });
   });
 });
+
+describe('férias a vencer', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { vacationDue } = require('./pessoas.service') as typeof import('./pessoas.service');
+  it('aniversário de admissão nos próximos 60 dias', () => {
+    expect(vacationDue('2024-12-10', '2026-11-25')).toBe('2026-12-10');
+    expect(vacationDue('2026-01-10', '2026-11-25')).toBe('2027-01-10');
+    expect(vacationDue('2025-06-01', '2026-11-25')).toBeNull();
+    expect(vacationDue('2025-01-15', '2026-11-25')).toBe('2027-01-15');
+    expect(vacationDue('2026-12-01', '2026-11-25')).toBeNull();
+  });
+});

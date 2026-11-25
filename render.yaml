@@ -47,6 +47,11 @@ services:
         value: "true"
       - key: SEED_DEMO_PASSWORD
         generateValue: true
+      # Pizzaria Simulada: 30 dias de operação até a data do primeiro deploy (cria uma vez só).
+      - key: SEED_SIMULATION
+        value: "true"
+      - key: SEED_SIMULATION_PASSWORD
+        generateValue: true
       # Link de TESTE: PIX simulado. Desligar quando o gateway real entrar.
       - key: PAYMENTS_FAKE_ENABLED
         value: "true"

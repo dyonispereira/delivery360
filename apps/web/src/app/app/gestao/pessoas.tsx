@@ -26,6 +26,7 @@ interface Employee {
   terminationDate: string | null;
   active: boolean;
   notes: string | null;
+  vacation?: { until: string | null; nextStart: string | null; dueDate: string | null };
 }
 interface Absence {
   id: string;
@@ -118,6 +119,9 @@ function Team() {
             <h2 className="font-semibold">Funcionários</h2>
             <p className="text-xs text-zinc-500">
               {list.filter((e) => e.active).length} ativo(s) · salários fixos somam {formatBRL(monthly)} por mês
+              {list.some((e) => e.vacation?.until) && ` · ${list.filter((e) => e.vacation?.until).length} de férias`}
+              {list.some((e) => e.vacation?.dueDate && !e.vacation.nextStart && !e.vacation.until) &&
+                ` · ${list.filter((e) => e.vacation?.dueDate && !e.vacation.nextStart && !e.vacation.until).length} com férias vencendo`}
             </p>
           </div>
           <button className="btn-primary" onClick={() => setEditing({ type: 'CLT', admissionDate: todayStr() })}>+ Funcionário</button>
@@ -135,6 +139,13 @@ function Team() {
                       {e.role} · {TYPE_LABEL[e.type]}
                       {e.weeklyDayOff !== null && ` · folga ${WEEKDAYS[e.weeklyDayOff].toLowerCase()}`}
                       {e.terminationDate && ` · desligado em ${br(e.terminationDate)}`}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      {e.vacation?.until && <Badge tone="green">De férias até {br(e.vacation.until)}</Badge>}
+                      {e.vacation?.nextStart && <Badge tone="zinc">Férias marcadas a partir de {br(e.vacation.nextStart)}</Badge>}
+                      {e.vacation?.dueDate && !e.vacation.nextStart && !e.vacation.until && (
+                        <Badge tone="amber">Férias vencem em {br(e.vacation.dueDate)}</Badge>
+                      )}
                     </div>
                   </div>
                   <div className="text-right text-sm">

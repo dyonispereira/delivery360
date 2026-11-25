@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../core/audit.service';
-import { fromDbDate, toDbDate } from './chart';
+import { fromDbDate, localDate, toDbDate } from './chart';
 import { GestaoSyncService } from './gestao-sync.service';
 import { AbsenceDto, EmployeeDto, PayrollItemDto, UpdateEmployeeDto } from './gestao.dto';
 import { calcPayroll, monthDays } from './payroll';
@@ -36,8 +36,26 @@ export class PessoasService {
   // ---------- Funcionários ----------
 
   async employees(tenantId: string) {
-    const rows = await this.prisma.employee.findMany({ where: { tenantId }, orderBy: [{ active: 'desc' }, { name: 'asc' }] });
-    return rows.map(employeeView);
+    const today = localDate(new Date());
+    const [rows, vacations] = await Promise.all([
+      this.prisma.employee.findMany({ where: { tenantId }, orderBy: [{ active: 'desc' }, { name: 'asc' }] }),
+      this.prisma.absence.findMany({ where: { tenantId, kind: 'FERIAS', endDate: { gte: toDbDate(today) } }, orderBy: { startDate: 'asc' } }),
+    ]);
+    return rows.map((e) => {
+      const mine = vacations.filter((v) => v.employeeId === e.id);
+      const now = mine.find((v) => fromDbDate(v.startDate) <= today);
+      const next = mine.find((v) => fromDbDate(v.startDate) > today);
+      return {
+        ...employeeView(e),
+        vacation: {
+          // De férias hoje (até quando) e próximas férias já marcadas.
+          until: now ? fromDbDate(now.endDate) : null,
+          nextStart: next ? fromDbDate(next.startDate) : null,
+          // Aniversário de admissão nos próximos 60 dias: completa mais um período de férias.
+          dueDate: e.active && (e.type === 'CLT' || e.type === 'ESTAGIO') ? vacationDue(fromDbDate(e.admissionDate), today) : null,
+        },
+      };
+    });
   }
 
   async createEmployee(tenantId: string, userId: string, dto: EmployeeDto) {
@@ -351,4 +369,19 @@ export class PessoasService {
 /** "2026-11" -> "11/2026" */
 function monthLabel(month: string) {
   return `${month.slice(5)}/${month.slice(0, 4)}`;
+}
+
+/** Próximo aniversário de admissão (a partir do 1º ano), se cair nos próximos 60 dias. */
+export function vacationDue(admission: string, today: string): string | null {
+  const [y0, m, d] = admission.split('-').map(Number);
+  const year = Number(today.slice(0, 4));
+  for (const y of [year, year + 1]) {
+    if (y <= y0) continue;
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const date = `${y}-${String(m).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+    if (date < today) continue;
+    const days = (Date.parse(date) - Date.parse(today)) / 86_400_000;
+    return days <= 60 ? date : null;
+  }
+  return null;
 }
