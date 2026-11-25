@@ -171,6 +171,11 @@ export class CardapioManageController {
     return this.orders.updateStatus(t.tenantId, user.id, id, dto.status, dto.note);
   }
 
+  @Get('orders/:id/detail')
+  detail(@CurrentTenant() t: TenantContext, @Param('id', UUID) id: string) {
+    return this.orders.orderDetail(t.tenantId, id);
+  }
+
   @Post('orders/:id/printed')
   @HttpCode(200)
   printed(@CurrentTenant() t: TenantContext, @Param('id', UUID) id: string) {

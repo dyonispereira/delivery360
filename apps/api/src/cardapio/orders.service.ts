@@ -15,7 +15,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EventsService } from '../core/events.service';
 import { activeModuleCodes } from '../access/access.rules';
 import { PAYMENT_GATEWAY, type PaymentGateway } from '../payments/payment-gateway';
-import { CreateOrderDto } from './cardapio.dto';
+import { CreateOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
 import { ACTIVE_STATUSES, canTransition } from './order-status';
 import { AuditService } from '../core/audit.service';
@@ -23,6 +23,9 @@ import { closeBatchIfDone } from '../entregas/batch-utils';
 
 /** Pagamentos que dependem de confirmação do gateway antes de o pedido entrar na operação. */
 const ONLINE_METHODS: PaymentMethod[] = ['PIX', 'CREDIT_CARD'];
+
+/** Até quantos dias depois de receber o cliente ainda pode avaliar e dar gorjeta. */
+const FEEDBACK_DAYS = 7;
 
 function trackingCode(): string {
   // 12 caracteres sem ambiguidade (sem 0/O/1/l): difícil de adivinhar, fácil de ditar.
@@ -278,10 +281,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         payments: { orderBy: { createdAt: 'desc' }, take: 1 },
         tenant: { select: { store: { select: { slug: true, displayName: true, whatsapp: true, estimatedMinutes: true } } } },
         batch: { select: { courier: { select: { name: true, lastLat: true, lastLng: true, lastLocationAt: true } } } },
+        tip: true,
+        deliveryAttempts: { where: { outcome: 'DELIVERED' }, orderBy: { createdAt: 'desc' }, take: 1, select: { courierName: true } },
       },
     });
     if (!order) throw new NotFoundException('Pedido não encontrado.');
     const payment = order.payments[0];
+    const delivered = order.deliveryAttempts[0];
+    const feedbackOpen = this.feedbackOpen(order);
+    const tip = order.tip;
+    const tipExpired = tip?.status === 'PENDING' && !!tip.expiresAt && tip.expiresAt < new Date();
     return {
       trackingCode: order.trackingCode,
       number: order.number,
@@ -319,7 +328,118 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       // Só o primeiro nome do motoboy, enquanto o pedido está com ele.
       courierName: order.status === 'OUT_FOR_DELIVERY' && order.batch ? order.batch.courier.name.split(' ')[0] : null,
       courierLocation: this.liveLocation(order.status, order.batch?.courier),
+      deliveryIssue: order.status === 'READY' && !!order.deliveryIssue,
+      rating: order.ratedAt
+        ? { store: order.ratingStore!, delivery: order.ratingDelivery, comment: order.ratingComment, at: order.ratedAt }
+        : null,
+      canRate: feedbackOpen && !order.ratedAt,
+      // Gorjeta só quando um motoboy da plataforma entregou (é para ele que o restaurante repassa).
+      tipCourierName: delivered ? delivered.courierName.split(' ')[0] : null,
+      canTip: feedbackOpen && !!delivered && tip?.status !== 'PAID',
+      tip:
+        tip && !tipExpired
+          ? {
+              status: tip.status,
+              amountCents: tip.amountCents,
+              pixCopyPaste: tip.status === 'PENDING' ? tip.pixCopyPaste : null,
+              expiresAt: tip.expiresAt,
+              canSimulate: tip.provider === 'fake' && tip.status === 'PENDING' && this.fakeEnabled(),
+            }
+          : null,
     };
+  }
+
+  // ---------- Avaliação e gorjeta (depois de receber) ----------
+
+  private feedbackOpen(order: { status: OrderStatus; deliveredAt: Date | null; updatedAt: Date }) {
+    if (order.status !== 'COMPLETED') return false;
+    const at = order.deliveredAt ?? order.updatedAt;
+    return Date.now() - at.getTime() < FEEDBACK_DAYS * 24 * 60 * 60 * 1000;
+  }
+
+  /** O cliente avalia uma vez: restaurante (sempre) e entrega (só pedidos de entrega), de 1 a 5 estrelas. */
+  async rate(code: string, dto: RateOrderDto) {
+    const order = await this.prisma.order.findUnique({ where: { trackingCode: code } });
+    if (!order) throw new NotFoundException('Pedido não encontrado.');
+    if (!this.feedbackOpen(order)) throw new ConflictException('A avaliação abre quando o pedido é entregue.');
+    if (order.type === 'DELIVERY' && !dto.delivery) throw new BadRequestException('Dê as estrelas da entrega também.');
+    const { count } = await this.prisma.order.updateMany({
+      where: { id: order.id, ratedAt: null },
+      data: {
+        ratingStore: dto.store,
+        ratingDelivery: order.type === 'DELIVERY' ? dto.delivery : null,
+        ratingComment: dto.comment?.trim() || null,
+        ratedAt: new Date(),
+      },
+    });
+    if (count === 0) throw new ConflictException('Este pedido já foi avaliado. Obrigado!');
+    await this.events.publish(order.tenantId, 'pedido.avaliado', {
+      orderId: order.id,
+      store: dto.store,
+      delivery: order.type === 'DELIVERY' ? dto.delivery : null,
+    });
+    return this.getTracking(code);
+  }
+
+  /** Gera o PIX da gorjeta. O dinheiro entra no caixa do restaurante, que repassa ao motoboy. */
+  async createTip(code: string, dto: TipDto) {
+    const order = await this.prisma.order.findUnique({
+      where: { trackingCode: code },
+      include: {
+        tip: true,
+        deliveryAttempts: { where: { outcome: 'DELIVERED' }, orderBy: { createdAt: 'desc' }, take: 1 },
+        tenant: { select: { store: { select: { displayName: true } } } },
+      },
+    });
+    if (!order) throw new NotFoundException('Pedido não encontrado.');
+    const delivered = order.deliveryAttempts[0];
+    if (!this.feedbackOpen(order) || !delivered) throw new ConflictException('A gorjeta abre quando o motoboy entrega o pedido.');
+    if (order.tip?.status === 'PAID') throw new ConflictException('A gorjeta deste pedido já foi paga. Obrigado!');
+
+    const charge = await this.gateway.createCharge({
+      paymentId: order.tip?.id ?? 'pending',
+      amountCents: dto.amountCents,
+      method: 'PIX',
+      description: `Gorjeta para o entregador · ${order.tenant.store?.displayName ?? ''}`.trim(),
+      customer: { name: order.customerName, phone: order.customerPhone },
+    });
+    const data = {
+      courierId: delivered.courierId,
+      amountCents: dto.amountCents,
+      provider: this.gateway.name,
+      status: 'PENDING' as const,
+      externalId: charge.externalId,
+      pixCopyPaste: charge.pixCopyPaste ?? null,
+      expiresAt: charge.expiresAt ?? null,
+    };
+    // Um registro por pedido: trocar o valor ou gerar de novo depois de vencer reaproveita o mesmo.
+    await this.prisma.tip.upsert({
+      where: { orderId: order.id },
+      create: { tenantId: order.tenantId, orderId: order.id, ...data },
+      update: data,
+    });
+    return this.getTracking(code);
+  }
+
+  /** Confirmação do PIX da gorjeta (webhook do gateway). Idempotente. */
+  async markTipPaid(provider: string, externalId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const tip = await tx.tip.findUnique({ where: { provider_externalId: { provider, externalId } } });
+      if (!tip) throw new NotFoundException('Gorjeta não encontrada.');
+      const { count } = await tx.tip.updateMany({ where: { id: tip.id, status: 'PENDING' }, data: { status: 'PAID', paidAt: new Date() } });
+      if (count === 0) return;
+      // Na Gestão entra como valor a repassar ao motoboy (não é receita do restaurante).
+      await this.events.publish(tip.tenantId, 'gorjeta.recebida', { tipId: tip.id, orderId: tip.orderId, courierId: tip.courierId, amountCents: tip.amountCents }, tx);
+    });
+  }
+
+  async simulateTip(code: string) {
+    if (!this.fakeEnabled()) throw new ForbiddenException('Simulação de pagamento desligada.');
+    const order = await this.prisma.order.findUnique({ where: { trackingCode: code }, include: { tip: true } });
+    const tip = order?.tip;
+    if (!tip || tip.provider !== 'fake' || tip.status !== 'PENDING' || !tip.externalId) throw new NotFoundException('Nenhuma gorjeta pendente para simular.');
+    await this.markTipPaid('fake', tip.externalId);
+    return this.getTracking(code);
   }
 
   /** Posição do motoboy só enquanto o pedido está com ele e se foi enviada nos últimos 3 minutos. */
@@ -435,6 +555,26 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       await closeBatchIfDone(tx, order.batchId);
       return tx.order.findUniqueOrThrow({ where: { id: orderId } });
     });
+  }
+
+  /** Ficha completa do pedido para o painel: histórico, entregas (motoboy, placa, quem recebeu), avaliação e gorjeta. */
+  async orderDetail(tenantId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId },
+      include: {
+        items: { include: { options: true } },
+        statusHistory: { orderBy: { createdAt: 'asc' }, select: { status: true, createdAt: true, note: true } },
+        deliveryAttempts: { orderBy: { createdAt: 'asc' } },
+        tip: { select: { status: true, amountCents: true, paidAt: true, paidOutAt: true } },
+      },
+    });
+    if (!order) throw new NotFoundException('Pedido não encontrado.');
+    const { deliveryAttempts, tip, ...rest } = order;
+    return {
+      ...rest,
+      attempts: deliveryAttempts,
+      tip: tip && tip.status === 'PAID' ? tip : null,
+    };
   }
 
   /** Marca a primeira impressão; devolve se esta tela foi a primeira (para a impressão automática não duplicar). */

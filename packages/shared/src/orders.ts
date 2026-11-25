@@ -104,4 +104,50 @@ export interface OrderTracking {
   courierName: string | null;
   /** Posição ao vivo do motoboy (null fora da entrega ou sem sinal recente). */
   courierLocation: { lat: number; lng: number; at: string } | null;
+  /** O motoboy não conseguiu entregar e o restaurante ainda vai decidir (reenviar ou cancelar). */
+  deliveryIssue: boolean;
+  /** Avaliação já feita (null = ainda pode avaliar, se o pedido foi concluído). */
+  rating: OrderRating | null;
+  canRate: boolean;
+  /** Primeiro nome do motoboy que entregou (para a gorjeta). */
+  tipCourierName: string | null;
+  canTip: boolean;
+  tip: { status: PaymentStatus; amountCents: number; pixCopyPaste: string | null; expiresAt: string | null; canSimulate: boolean } | null;
 }
+
+// ---------- Entregas: ocorrências e avaliação ----------
+
+export type DeliveryFailReason = 'ADDRESS_NOT_FOUND' | 'CUSTOMER_ABSENT' | 'CUSTOMER_REFUSED' | 'OTHER';
+
+export const DELIVERY_FAIL_LABELS: Record<DeliveryFailReason, string> = {
+  ADDRESS_NOT_FOUND: 'Endereço não localizado',
+  CUSTOMER_ABSENT: 'Cliente não atende / ninguém no local',
+  CUSTOMER_REFUSED: 'Cliente recusou / não quer mais o pedido',
+  OTHER: 'Outro motivo',
+};
+
+/** Uma tentativa de entrega registrada pelo motoboy (não pode ser alterada por ele depois). */
+export interface DeliveryAttemptInfo {
+  id: string;
+  outcome: 'DELIVERED' | 'FAILED';
+  failReason: DeliveryFailReason | null;
+  note: string | null;
+  receiverName: string | null;
+  code: string | null;
+  courierName: string;
+  courierPlate: string | null;
+  batchNumber: number | null;
+  lat: number | null;
+  lng: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrderRating {
+  store: number;
+  delivery: number | null;
+  comment: string | null;
+  at: string;
+}
+
+export const RATING_LABELS = ['', 'Péssimo', 'Ruim', 'Regular', 'Bom', 'Excelente'] as const;

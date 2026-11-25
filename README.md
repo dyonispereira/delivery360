@@ -68,6 +68,17 @@ não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TES
   digita os **4 últimos dígitos do telefone do cliente**. O motoboy não vê esses dígitos. Depois de
   5 erros o código trava até o dono ou gerente liberar.
 - Cada entrega confirmada gera o evento `entrega.concluida` com o valor pago ao motoboy, para a Gestão.
+- Ao confirmar, o motoboy informa **o nome de quem recebeu**. Cada tentativa fica registrada
+  (motoboy, placa, data e hora, código conferido, quem recebeu, posição do celular). O motoboy não
+  altera depois; só o dono ou gerente corrige, com auditoria. No painel, clique no pedido para ver a ficha.
+- **Não consegui entregar**: endereço não localizado, cliente não atende (ex.: dormindo), cliente recusou,
+  ou outro motivo. O pedido volta para "Pronto" marcado com a ocorrência, e o restaurante reenvia
+  (novo lote) ou cancela. Evento `entrega.ocorrencia`.
+- A tela do motoboy avisa com som e vibração quando chega pedido para ele e tem a aba **Histórico**
+  (30 dias, só leitura).
+- Depois de entregue, o cliente **avalia** restaurante e entrega (1 a 5 estrelas, com comentário) e pode
+  dar **gorjeta por PIX** ao motoboy. A gorjeta entra no caixa do restaurante (evento `gorjeta.recebida`,
+  valor a repassar, não receita) e em **Entregas > Gorjetas** o dono marca o repasse (`gorjeta.repassada`).
 
 ## Como funcionam os módulos
 

@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { formatBRL, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type OrderStatus, type OrderTracking } from '@delivery360/shared';
+import { formatBRL, ORDER_STATUS_LABELS, parseBRL, PAYMENT_METHOD_LABELS, RATING_LABELS, type OrderStatus, type OrderTracking } from '@delivery360/shared';
 import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
 import { LiveMap } from '@/components/live-map';
@@ -33,9 +33,11 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
 
   // Atualiza sozinho enquanto o pedido está em andamento (mais rápido enquanto espera o PIX).
   useEffect(() => {
-    if (!order || FINAL.includes(order.status)) return;
+    // Concluído com PIX de gorjeta aberto: continua atualizando até confirmar.
+    const waitingTip = order?.tip?.status === 'PENDING';
+    if (!order || (FINAL.includes(order.status) && !waitingTip)) return;
     // Mais rápido enquanto espera o PIX e enquanto o motoboy está a caminho (mapa ao vivo).
-    const fast = order.status === 'AWAITING_PAYMENT' || order.status === 'OUT_FOR_DELIVERY';
+    const fast = order.status === 'AWAITING_PAYMENT' || order.status === 'OUT_FOR_DELIVERY' || waitingTip;
     const t = setInterval(load, fast ? 5000 : 15000);
     return () => clearInterval(t);
   }, [order, load]);
@@ -102,6 +104,11 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
             ))}
           </ol>
         )}
+        {order.deliveryIssue && (
+          <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            O entregador não conseguiu concluir a entrega. O restaurante vai falar com você para combinar.
+          </p>
+        )}
         {order.status === 'OUT_FOR_DELIVERY' && order.courierName && (
           <p className="mt-4 text-sm font-medium">🛵 {order.courierName} está levando seu pedido.</p>
         )}
@@ -125,6 +132,9 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
           )}
         </section>
       )}
+
+      {order.status === 'COMPLETED' && (order.canRate || order.rating) && <RatingCard order={order} code={code} onSaved={setOrder} />}
+      {(order.canTip || order.tip?.status === 'PAID') && order.tipCourierName && <TipCard order={order} code={code} onSaved={setOrder} />}
 
       {pix && order.status === 'AWAITING_PAYMENT' && (
         <section className="card space-y-3">
@@ -215,5 +225,209 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
         </a>
       )}
     </main>
+  );
+}
+
+function StarPicker({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <div>
+      <p className="text-sm font-medium">{label}</p>
+      <div className="flex items-center gap-1" role="radiogroup" aria-label={label}>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            role="radio"
+            aria-checked={value === n}
+            aria-label={`${n} estrela${n > 1 ? 's' : ''}`}
+            className={`text-4xl leading-none transition-transform active:scale-90 ${n <= value ? 'text-amber-400' : 'text-zinc-300'}`}
+            onClick={() => onChange(n)}
+          >
+            ★
+          </button>
+        ))}
+        <span className="ml-2 text-sm text-zinc-500">{value ? RATING_LABELS[value] : ''}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Depois de receber: o cliente avalia restaurante e entrega (5 estrelas = excelente) e conta o que mais gostou. */
+function RatingCard({ order, code, onSaved }: { order: OrderTracking; code: string; onSaved: (o: OrderTracking) => void }) {
+  const [store, setStore] = useState(0);
+  const [delivery, setDelivery] = useState(0);
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isDelivery = order.type === 'DELIVERY';
+
+  if (order.rating) {
+    const r = order.rating;
+    return (
+      <section className="card space-y-1 text-center">
+        <p className="font-semibold">Obrigado pela avaliação! 💛</p>
+        <p className="text-sm text-zinc-600">
+          Restaurante: <span className="text-amber-400">{'★'.repeat(r.store)}</span>
+          <span className="text-zinc-300">{'★'.repeat(5 - r.store)}</span>
+          {r.delivery && (
+            <>
+              {' · '}Entrega: <span className="text-amber-400">{'★'.repeat(r.delivery)}</span>
+              <span className="text-zinc-300">{'★'.repeat(5 - r.delivery)}</span>
+            </>
+          )}
+        </p>
+        {r.comment && <p className="text-sm italic text-zinc-500">“{r.comment}”</p>}
+      </section>
+    );
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      onSaved(
+        await api<OrderTracking>(`/public/orders/${encodeURIComponent(code)}/rating`, {
+          method: 'POST',
+          body: { store, delivery: isDelivery ? delivery : undefined, comment: comment.trim() || undefined },
+        }),
+      );
+    } catch (err) {
+      setError((err as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="card space-y-4" onSubmit={submit}>
+      <div>
+        <h2 className="font-semibold">Como foi o seu pedido?</h2>
+        <p className="text-sm text-zinc-500">Toque nas estrelas: 5 é excelente.</p>
+      </div>
+      <StarPicker label={`Restaurante${order.store ? ` (${order.store.displayName})` : ''}`} value={store} onChange={setStore} />
+      {isDelivery && <StarPicker label="Entrega" value={delivery} onChange={setDelivery} />}
+      <div>
+        <label className="label" htmlFor="rating-comment">O que você mais gostou? (opcional)</label>
+        <textarea
+          id="rating-comment"
+          className="input"
+          rows={3}
+          maxLength={500}
+          placeholder="Ex.: chegou quentinho, entregador muito educado..."
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+        />
+      </div>
+      <ErrorBox message={error} />
+      <button className="btn-primary w-full" disabled={busy || !store || (isDelivery && !delivery)}>
+        {busy ? 'Enviando...' : 'Enviar avaliação'}
+      </button>
+    </form>
+  );
+}
+
+const TIP_PRESETS = [300, 500, 1000];
+
+/** Gorjeta para o motoboy por PIX. O restaurante recebe e repassa ao entregador. */
+function TipCard({ order, code, onSaved }: { order: OrderTracking; code: string; onSaved: (o: OrderTracking) => void }) {
+  const [amount, setAmount] = useState<number | null>(null);
+  const [custom, setCustom] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const tip = order.tip;
+  const name = order.tipCourierName;
+
+  async function call(path: string, body?: unknown) {
+    setBusy(true);
+    setError(null);
+    try {
+      onSaved(await api<OrderTracking>(`/public/orders/${encodeURIComponent(code)}${path}`, { method: 'POST', body }));
+    } catch (err) {
+      setError((err as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (tip?.status === 'PAID') {
+    return (
+      <section className="card text-center">
+        <p className="font-semibold">💚 Gorjeta de {formatBRL(tip.amountCents)} enviada!</p>
+        <p className="text-sm text-zinc-500">O restaurante repassa para {name}. Obrigado pelo carinho!</p>
+      </section>
+    );
+  }
+
+  if (tip?.status === 'PENDING') {
+    return (
+      <section className="card space-y-3">
+        <h2 className="font-semibold">Gorjeta de {formatBRL(tip.amountCents)} para {name}</h2>
+        <p className="text-sm text-zinc-600">Copie o código e pague no app do banco, em “PIX copia e cola”.</p>
+        <textarea readOnly className="input font-mono text-xs" rows={3} value={tip.pixCopyPaste ?? ''} />
+        <button
+          className="btn-primary w-full"
+          onClick={() =>
+            void navigator.clipboard.writeText(tip.pixCopyPaste ?? '').then(
+              () => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2500);
+              },
+              () => undefined,
+            )
+          }
+        >
+          {copied ? 'Copiado!' : 'Copiar código PIX'}
+        </button>
+        {tip.canSimulate && (
+          <button className="btn-ghost w-full" disabled={busy} onClick={() => void call('/tip/simulate-payment')}>
+            Simular pagamento da gorjeta (ambiente de teste)
+          </button>
+        )}
+        <ErrorBox message={error} />
+      </section>
+    );
+  }
+
+  const customCents = custom ? parseBRL(custom) : null;
+  const chosen = amount ?? customCents;
+  return (
+    <section className="card space-y-3">
+      <div>
+        <h2 className="font-semibold">Gostou da entrega? Dê uma gorjeta para {name} 🛵</h2>
+        <p className="text-sm text-zinc-500">É opcional. O valor vai inteiro para o entregador, pelo restaurante.</p>
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        {TIP_PRESETS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            className={`rounded-lg border py-2 text-sm font-semibold ${amount === c ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-zinc-300'}`}
+            onClick={() => {
+              setAmount(c);
+              setCustom('');
+            }}
+          >
+            {formatBRL(c)}
+          </button>
+        ))}
+        <input
+          aria-label="Outro valor"
+          className="input px-2 text-sm"
+          inputMode="decimal"
+          placeholder="Outro"
+          value={custom}
+          onChange={(e) => {
+            setCustom(e.target.value);
+            setAmount(null);
+          }}
+        />
+      </div>
+      <ErrorBox message={error} />
+      <button className="btn-primary w-full" disabled={busy || !chosen} onClick={() => void call('/tip', { amountCents: chosen })}>
+        {busy ? 'Gerando PIX...' : chosen ? `Dar ${formatBRL(chosen)} de gorjeta` : 'Escolha um valor'}
+      </button>
+    </section>
   );
 }

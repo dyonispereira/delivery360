@@ -372,6 +372,14 @@ model Order {
   deliveredAt       DateTime?            @map("delivered_at")
   /// Tentativas erradas do código de 4 dígitos (trava em 5).
   deliveryCodeFails Int                  @default(0) @map("delivery_code_fails")
+  /// Última ocorrência ainda não resolvida (o motoboy não conseguiu entregar). Some quando o pedido sai de novo.
+  deliveryIssue     DeliveryFailReason?  @map("delivery_issue")
+  deliveryIssueAt   DateTime?            @map("delivery_issue_at")
+  /// Avaliação do cliente depois de receber (1 a 5 estrelas; 5 = excelente). Uma vez só.
+  ratingStore       Int?                 @map("rating_store")
+  ratingDelivery    Int?                 @map("rating_delivery")
+  ratingComment     String?              @map("rating_comment")
+  ratedAt           DateTime?            @map("rated_at")
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
   tenant            Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -379,6 +387,8 @@ model Order {
   items             OrderItem[]
   statusHistory     OrderStatusHistory[]
   payments          Payment[]
+  deliveryAttempts  DeliveryAttempt[]
+  tip               Tip?
 
   @@unique([tenantId, number])
   @@index([tenantId, status, createdAt])
@@ -476,10 +486,14 @@ model Courier {
   lastLng        Float?          @map("last_lng")
   lastAccuracy   Float?          @map("last_accuracy")
   lastLocationAt DateTime?       @map("last_location_at")
+  /// Placa da moto (aparece no registro de cada entrega).
+  plate          String?
   createdAt      DateTime        @default(now()) @map("created_at")
   updatedAt      DateTime        @updatedAt @map("updated_at")
   tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   batches        DeliveryBatch[]
+  attempts       DeliveryAttempt[]
+  tips           Tip[]
 
   @@index([tenantId])
   @@map("couriers")
@@ -502,4 +516,78 @@ model DeliveryBatch {
   @@unique([tenantId, number])
   @@index([courierId, status])
   @@map("delivery_batches")
+}
+
+enum DeliveryOutcome {
+  DELIVERED
+  FAILED
+}
+
+enum DeliveryFailReason {
+  /// Endereço não localizado.
+  ADDRESS_NOT_FOUND
+  /// Cliente não atende / ninguém no local (ex.: dormindo).
+  CUSTOMER_ABSENT
+  /// Cliente recusou ou não quer mais o pedido.
+  CUSTOMER_REFUSED
+  OTHER
+}
+
+/// Registro de cada tentativa de entrega (entregue ou ocorrência). O motoboy não altera depois;
+/// só o restaurante corrige (com auditoria). Guarda cópia do nome e da placa do motoboy no momento.
+model DeliveryAttempt {
+  id            String              @id @default(uuid()) @db.Uuid
+  tenantId      String              @map("tenant_id") @db.Uuid
+  orderId       String              @map("order_id") @db.Uuid
+  courierId     String              @map("courier_id") @db.Uuid
+  batchId       String?             @map("batch_id") @db.Uuid
+  batchNumber   Int?                @map("batch_number")
+  outcome       DeliveryOutcome
+  failReason    DeliveryFailReason? @map("fail_reason")
+  note          String?
+  receiverName  String?             @map("receiver_name")
+  /// Código de 4 dígitos conferido na entrega.
+  code          String?
+  courierName   String              @map("courier_name")
+  courierPlate  String?             @map("courier_plate")
+  /// Onde o celular do motoboy estava (se tinha sinal recente).
+  lat           Float?
+  lng           Float?
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+  order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courier       Courier             @relation(fields: [courierId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([courierId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("delivery_attempts")
+}
+
+/// Gorjeta do cliente para o motoboy. Entra no caixa do restaurante, que repassa ao motoboy como prêmio.
+/// Não é receita do restaurante: na Gestão entra como valor a repassar.
+model Tip {
+  id           String        @id @default(uuid()) @db.Uuid
+  tenantId     String        @map("tenant_id") @db.Uuid
+  orderId      String        @unique @map("order_id") @db.Uuid
+  courierId    String        @map("courier_id") @db.Uuid
+  amountCents  Int           @map("amount_cents")
+  provider     String
+  status       PaymentStatus @default(PENDING)
+  externalId   String?       @map("external_id")
+  pixCopyPaste String?       @map("pix_copy_paste")
+  expiresAt    DateTime?     @map("expires_at")
+  paidAt       DateTime?     @map("paid_at")
+  /// Quando o restaurante entregou o dinheiro ao motoboy.
+  paidOutAt    DateTime?     @map("paid_out_at")
+  paidOutBy    String?       @map("paid_out_by") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courier      Courier       @relation(fields: [courierId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, externalId])
+  @@index([tenantId, status, paidOutAt])
+  @@index([courierId])
+  @@map("tips")
 }
