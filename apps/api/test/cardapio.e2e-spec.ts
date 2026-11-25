@@ -230,6 +230,20 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     expect(events.length).toBe(3);
   });
 
+  it('loja nova: capa, mais pedidos, nota média e dados para pedir de novo', async () => {
+    expect((await owner().put('/cardapio/store').send({ coverUrl: 'https://img.exemplo.com/capa.jpg' })).status).toBe(200);
+    const menu = (await http().get(`/public/stores/${slug}`)).body;
+    expect(menu.store.coverUrl).toBe('https://img.exemplo.com/capa.jpg');
+    // Pedidos feitos acima: a pizza é o item mais pedido; menos de 3 avaliações não mostram nota.
+    expect(menu.topProductIds[0]).toBe(ids.pizza);
+    expect(menu.store.rating).toBeNull();
+
+    const created = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY' }));
+    const track = (await http().get(`/public/orders/${created.body.trackingCode}`)).body;
+    expect(track.items[0].productId).toBe(ids.pizza);
+    expect(track.items[0].options.map((o: { optionId: string }) => o.optionId).sort()).toEqual([ids.catupiry, ids.bacon].sort());
+  });
+
   it('cancelar: só dono ou gerente; pedido de outro restaurante dá 404', async () => {
     const created = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY' }));
     const id = (await prisma.order.findUniqueOrThrow({ where: { trackingCode: created.body.trackingCode } })).id;

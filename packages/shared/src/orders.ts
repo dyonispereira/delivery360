@@ -67,6 +67,7 @@ export interface PublicStore {
     displayName: string;
     description: string | null;
     logoUrl: string | null;
+    coverUrl: string | null;
     whatsapp: string | null;
     isOpen: boolean;
     acceptsDelivery: boolean;
@@ -74,8 +75,12 @@ export interface PublicStore {
     minOrderCents: number;
     paymentMethods: PaymentMethod[];
     estimatedMinutes: number;
+    /** Nota média das avaliações (null com menos de 3 avaliações). */
+    rating: { average: number; count: number } | null;
   };
   categories: { id: string; name: string; products: PublicProduct[] }[];
+  /** Produtos mais pedidos nos últimos 30 dias, do mais para o menos pedido. */
+  topProductIds: string[];
   zones: { id: string; name: string; feeCents: number }[];
 }
 
@@ -88,12 +93,14 @@ export interface OrderTracking {
   customerName: string;
   address: { street: string; number: string; complement: string | null; zone: string } | null;
   items: {
+    /** Para o "Pedir de novo" (null se o produto foi apagado). */
+    productId: string | null;
     name: string;
     quantity: number;
     unitPriceCents: number;
     totalCents: number;
     notes: string | null;
-    options: { groupName: string; name: string; priceCents: number }[];
+    options: { optionId: string | null; groupName: string; name: string; priceCents: number }[];
   }[];
   subtotalCents: number;
   deliveryFeeCents: number;

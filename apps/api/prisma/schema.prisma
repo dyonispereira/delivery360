@@ -243,6 +243,8 @@ model Store {
   displayName      String          @map("display_name")
   description      String?
   logoUrl          String?         @map("logo_url")
+  /// Foto de capa no topo da loja online.
+  coverUrl         String?         @map("cover_url")
   whatsapp         String?
   /// Cidade e UF (ex.: "Campinas - SP"), usada na rota do motoboy.
   city             String?

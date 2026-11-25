@@ -18,6 +18,7 @@ const FIELD_LABELS: Record<string, string> = {
   slug: 'Link da loja',
   city: 'Cidade',
   logoUrl: 'Logo',
+  coverUrl: 'Foto de capa',
   imageUrl: 'Foto',
   legalName: 'Razão social',
   priceCents: 'Preço',

@@ -40,6 +40,7 @@ export function StoreSettings({ canEdit }: { canEdit: boolean }) {
         displayName: form.displayName,
         description: form.description || undefined,
         logoUrl: form.logoUrl || undefined,
+        coverUrl: form.coverUrl || undefined,
         whatsapp: form.whatsapp?.replace(/\D/g, '') || undefined,
         city: form.city?.trim() || undefined,
         acceptsDelivery: form.acceptsDelivery,
@@ -110,6 +111,10 @@ export function StoreSettings({ canEdit }: { canEdit: boolean }) {
           <div>
             <label className="label">Logo (link da imagem)</label>
             <input className="input" disabled={!canEdit} value={form.logoUrl ?? ''} onChange={(e) => set('logoUrl', e.target.value)} placeholder="https://..." />
+          </div>
+          <div>
+            <label className="label">Foto de capa (link da imagem)</label>
+            <input className="input" disabled={!canEdit} value={form.coverUrl ?? ''} onChange={(e) => set('coverUrl', e.target.value)} placeholder="https://... (horizontal, 1200 × 400)" />
           </div>
           <div>
             <label className="label">Pedido mínimo (R$)</label>
