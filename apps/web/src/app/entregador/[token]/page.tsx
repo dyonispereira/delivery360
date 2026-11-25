@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useEffect, useState } from 'react';
+import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { formatBRL, type OrderStatus, type PaymentMethod } from '@delivery360/shared';
 import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
@@ -25,7 +25,7 @@ interface CourierOrder {
 }
 interface CourierView {
   courier: { name: string };
-  store: { displayName: string; whatsapp: string | null } | null;
+  store: { displayName: string; whatsapp: string | null; city: string | null } | null;
   batches: { id: string; number: number; status: 'OUT' | 'DONE'; createdAt: string; orders: CourierOrder[] }[];
 }
 
@@ -37,11 +37,62 @@ function toCollect(o: CourierOrder): { text: string; tone: string } {
   return { text: `Receber ${formatBRL(o.totalCents)} em dinheiro${change}`, tone: 'bg-amber-100 text-amber-900' };
 }
 
+type GpsState = 'off' | 'asking' | 'on' | 'denied' | 'unsupported';
+
+/**
+ * Envia a posição do celular a cada ~10 s enquanto houver entrega em andamento.
+ * Funciona com a tela aberta; o app nativo vai mandar também em segundo plano.
+ */
+function useShareLocation(token: string, active: boolean): GpsState {
+  const [state, setState] = useState<GpsState>('off');
+  const latest = useRef<GeolocationPosition | null>(null);
+
+  useEffect(() => {
+    if (!active) {
+      setState('off');
+      return;
+    }
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setState('unsupported');
+      return;
+    }
+    setState('asking');
+    const send = () => {
+      const pos = latest.current;
+      if (!pos) return;
+      void api(`/public/courier/${encodeURIComponent(token)}/location`, {
+        method: 'POST',
+        body: { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy) },
+      }).catch(() => undefined);
+    };
+    const watch = navigator.geolocation.watchPosition(
+      (pos) => {
+        const first = !latest.current;
+        latest.current = pos;
+        setState('on');
+        if (first) send();
+      },
+      (err) => setState(err.code === err.PERMISSION_DENIED ? 'denied' : 'asking'),
+      { enableHighAccuracy: true, maximumAge: 5_000, timeout: 20_000 },
+    );
+    // Envia a última posição a cada 10 s, mesmo parado (sinal de vida para o mapa do cliente).
+    const timer = setInterval(send, 10_000);
+    return () => {
+      navigator.geolocation.clearWatch(watch);
+      clearInterval(timer);
+    };
+  }, [active, token]);
+
+  return state;
+}
+
 export default function EntregadorPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
   const [data, setData] = useState<CourierView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<CourierOrder | null>(null);
+  const hasPending = !!data?.batches.some((b) => b.status === 'OUT' && b.orders.some((o) => o.status === 'OUT_FOR_DELIVERY'));
+  const gps = useShareLocation(token, hasPending);
 
   const load = useCallback(() => {
     api<CourierView>(`/public/courier/${encodeURIComponent(token)}`)
@@ -79,6 +130,19 @@ export default function EntregadorPage({ params }: { params: Promise<{ token: st
       </header>
       <ErrorBox message={error} />
 
+      {pending.length > 0 && (
+        <div
+          className={`rounded-lg px-3 py-2 text-sm ${
+            gps === 'on' ? 'bg-emerald-50 text-emerald-800' : gps === 'denied' || gps === 'unsupported' ? 'bg-red-50 text-red-700' : 'bg-zinc-100 text-zinc-600'
+          }`}
+        >
+          {gps === 'on' && '📡 Localização ativa: o cliente acompanha você no mapa. Deixe esta tela aberta.'}
+          {gps === 'asking' && '📡 Ativando a localização... Toque em "Permitir" se o celular perguntar.'}
+          {gps === 'denied' && '📡 Localização bloqueada. Libere nas configurações do navegador para o cliente acompanhar a entrega.'}
+          {gps === 'unsupported' && '📡 Este celular não informa a localização.'}
+        </div>
+      )}
+
       {pending.length === 0 ? (
         <div className="card py-10 text-center text-zinc-500">
           Nenhuma entrega com você agora.
@@ -91,7 +155,10 @@ export default function EntregadorPage({ params }: { params: Promise<{ token: st
 
       {pending.map((o) => {
         const addr = `${o.addressStreet}, ${o.addressNumber}${o.addressComplement ? ` - ${o.addressComplement}` : ''}`;
-        const maps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${o.addressStreet}, ${o.addressNumber}, ${o.deliveryZoneName ?? ''}`)}`;
+        const dest = encodeURIComponent([`${o.addressStreet}, ${o.addressNumber}`, o.deliveryZoneName, data.store?.city].filter(Boolean).join(', '));
+        // Rota a partir de onde o motoboy está até o cliente (o app de mapas usa a posição atual como origem).
+        const maps = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
+        const waze = `https://waze.com/ul?q=${dest}&navigate=yes`;
         const collect = toCollect(o);
         return (
           <article key={o.id} className="card space-y-3 p-4">
@@ -109,7 +176,10 @@ export default function EntregadorPage({ params }: { params: Promise<{ token: st
             </div>
             <div className={`rounded-lg px-3 py-2 text-sm font-semibold ${collect.tone}`}>{collect.text}</div>
             <div className="grid grid-cols-2 gap-2">
-              <a href={maps} target="_blank" rel="noreferrer" className="btn-ghost py-3">📍 Abrir no mapa</a>
+              <a href={maps} target="_blank" rel="noreferrer" className="btn-ghost py-3">🧭 Rota (Google Maps)</a>
+              <a href={waze} target="_blank" rel="noreferrer" className="btn-ghost py-3">🚗 Rota (Waze)</a>
+            </div>
+            <div className="grid grid-cols-1">
               <button className="btn-primary py-3" disabled={o.locked} onClick={() => setConfirming(o)}>
                 {o.locked ? 'Código bloqueado' : '✓ Entreguei'}
               </button>

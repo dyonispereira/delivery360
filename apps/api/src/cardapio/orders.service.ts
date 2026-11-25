@@ -277,7 +277,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         statusHistory: { orderBy: { createdAt: 'asc' }, select: { status: true, createdAt: true } },
         payments: { orderBy: { createdAt: 'desc' }, take: 1 },
         tenant: { select: { store: { select: { slug: true, displayName: true, whatsapp: true, estimatedMinutes: true } } } },
-        batch: { select: { courier: { select: { name: true } } } },
+        batch: { select: { courier: { select: { name: true, lastLat: true, lastLng: true, lastLocationAt: true } } } },
       },
     });
     if (!order) throw new NotFoundException('Pedido não encontrado.');
@@ -318,7 +318,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       store: order.tenant.store,
       // Só o primeiro nome do motoboy, enquanto o pedido está com ele.
       courierName: order.status === 'OUT_FOR_DELIVERY' && order.batch ? order.batch.courier.name.split(' ')[0] : null,
+      courierLocation: this.liveLocation(order.status, order.batch?.courier),
     };
+  }
+
+  /** Posição do motoboy só enquanto o pedido está com ele e se foi enviada nos últimos 3 minutos. */
+  private liveLocation(
+    status: OrderStatus,
+    courier?: { lastLat: number | null; lastLng: number | null; lastLocationAt: Date | null },
+  ) {
+    if (status !== 'OUT_FOR_DELIVERY' || !courier?.lastLocationAt || courier.lastLat === null || courier.lastLng === null) return null;
+    if (Date.now() - courier.lastLocationAt.getTime() > 3 * 60 * 1000) return null;
+    return { lat: courier.lastLat, lng: courier.lastLng, at: courier.lastLocationAt };
   }
 
   // ---------- Pagamentos ----------

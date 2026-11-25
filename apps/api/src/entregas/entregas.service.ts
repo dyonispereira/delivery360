@@ -8,7 +8,7 @@ import { normalizePhone } from '../cardapio/order-pricing';
 import { isModuleActive } from '../access/access.rules';
 import { closeBatchIfDone } from './batch-utils';
 import { MAX_CODE_FAILS, checkDeliveryCode, maskPhone } from './delivery-code';
-import { CourierDto, CreateBatchDto, UpdateCourierDto } from './entregas.dto';
+import { CourierDto, CreateBatchDto, LocationDto, UpdateCourierDto } from './entregas.dto';
 
 /** Pedidos que podem sair em lote: entrega, já em preparo ou prontos, ainda sem motoboy. */
 const DISPATCHABLE: OrderStatus[] = ['IN_PREPARATION', 'READY'];
@@ -168,7 +168,7 @@ export class EntregasService {
     const courier = await this.courierByToken(accessToken);
     const since = new Date(Date.now() - 12 * 60 * 60 * 1000);
     const [store, batches] = await Promise.all([
-      this.prisma.store.findUnique({ where: { tenantId: courier.tenantId }, select: { displayName: true, whatsapp: true } }),
+      this.prisma.store.findUnique({ where: { tenantId: courier.tenantId }, select: { displayName: true, whatsapp: true, city: true } }),
       this.prisma.deliveryBatch.findMany({
         where: { courierId: courier.id, OR: [{ status: 'OUT' }, { status: 'DONE', finishedAt: { gte: since } }] },
         orderBy: { createdAt: 'desc' },
@@ -234,6 +234,23 @@ export class EntregasService {
       await closeBatchIfDone(tx, order.batchId);
     });
     return { ok: true };
+  }
+
+  /**
+   * Posição do celular do motoboy. Só é guardada enquanto ele tem entrega em andamento:
+   * fora disso não rastreamos ninguém.
+   */
+  async updateLocation(accessToken: string, dto: LocationDto) {
+    const courier = await this.courierByToken(accessToken);
+    const delivering = await this.prisma.order.count({
+      where: { tenantId: courier.tenantId, status: 'OUT_FOR_DELIVERY', batch: { courierId: courier.id, status: 'OUT' } },
+    });
+    if (!delivering) return { tracking: false };
+    await this.prisma.courier.update({
+      where: { id: courier.id },
+      data: { lastLat: dto.lat, lastLng: dto.lng, lastAccuracy: dto.accuracy ?? null, lastLocationAt: new Date() },
+    });
+    return { tracking: true };
   }
 
   // ---------- Auxiliares ----------

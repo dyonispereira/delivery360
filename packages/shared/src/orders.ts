@@ -102,4 +102,6 @@ export interface OrderTracking {
   history: { status: OrderStatus; createdAt: string }[];
   store: { slug: string; displayName: string; whatsapp: string | null; estimatedMinutes: number } | null;
   courierName: string | null;
+  /** Posição ao vivo do motoboy (null fora da entrega ou sem sinal recente). */
+  courierLocation: { lat: number; lng: number; at: string } | null;
 }

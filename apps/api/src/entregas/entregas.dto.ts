@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsLatitude, IsLongitude, IsNumber, ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class CourierDto {
   @IsString() @MinLength(2) @MaxLength(80) name: string;
@@ -20,4 +20,10 @@ export class CreateBatchDto {
 
 export class DeliverDto {
   @IsString() @Matches(/^\D*(\d\D*){4}$/, { message: 'Digite os 4 números.' }) code: string;
+}
+
+export class LocationDto {
+  @IsLatitude() lat: number;
+  @IsLongitude() lng: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(100_000) accuracy?: number;
 }

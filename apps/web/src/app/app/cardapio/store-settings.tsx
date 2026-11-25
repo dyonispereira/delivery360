@@ -41,6 +41,7 @@ export function StoreSettings({ canEdit }: { canEdit: boolean }) {
         description: form.description || undefined,
         logoUrl: form.logoUrl || undefined,
         whatsapp: form.whatsapp?.replace(/\D/g, '') || undefined,
+        city: form.city?.trim() || undefined,
         acceptsDelivery: form.acceptsDelivery,
         acceptsPickup: form.acceptsPickup,
         minOrderCents,
@@ -78,6 +79,10 @@ export function StoreSettings({ canEdit }: { canEdit: boolean }) {
           <div className="sm:col-span-2">
             <label className="label">Descrição</label>
             <input className="input" disabled={!canEdit} value={form.description ?? ''} onChange={(e) => set('description', e.target.value)} placeholder="Ex.: Pizzas artesanais no forno a lenha" />
+          </div>
+          <div>
+            <label className="label">Cidade (para a rota do motoboy)</label>
+            <input className="input" disabled={!canEdit} value={form.city ?? ''} onChange={(e) => set('city', e.target.value)} placeholder="Ex.: Campinas - SP" />
           </div>
           <div>
             <label className="label">WhatsApp da loja</label>

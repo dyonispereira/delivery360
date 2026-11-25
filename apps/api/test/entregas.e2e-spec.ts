@@ -122,13 +122,24 @@ describe('Entregas: motoboys, lotes e código de 4 dígitos (e2e)', () => {
     expect((await http().get('/public/courier/link-invalido')).status).toBe(404);
   });
 
+  it('localização ao vivo: cliente vê o motoboy só enquanto o pedido está com ele', async () => {
+    expect((await http().get(`/public/orders/${ids.aCode}`)).body.courierLocation).toBeNull();
+    const sent = await http().post(`/public/courier/${ids.token}/location`).send({ lat: -23.5505, lng: -46.6333, accuracy: 12 });
+    expect(sent.body).toEqual({ tracking: true });
+    const live = (await http().get(`/public/orders/${ids.aCode}`)).body.courierLocation;
+    expect(live).toMatchObject({ lat: -23.5505, lng: -46.6333 });
+    expect((await http().post(`/public/courier/${ids.token}/location`).send({ lat: 200, lng: 0 })).status).toBe(400);
+  });
+
   it('código errado conta tentativa; certo finaliza o pedido e gera custo do motoboy', async () => {
     const wrong = await http().post(`/public/courier/${ids.token}/orders/${ids.a}/deliver`).send({ code: '0000' });
     expect(wrong.status).toBe(400);
     expect(wrong.body.message).toContain('restam 4');
     const ok = await http().post(`/public/courier/${ids.token}/orders/${ids.a}/deliver`).send({ code: '4321' });
     expect(ok.status).toBe(200);
-    expect((await http().get(`/public/orders/${ids.aCode}`)).body.status).toBe('COMPLETED');
+    const done = (await http().get(`/public/orders/${ids.aCode}`)).body;
+    expect(done.status).toBe('COMPLETED');
+    expect(done.courierLocation).toBeNull();
     const ev = await prisma.domainEvent.findFirst({ where: { tenantId, type: 'entrega.concluida' } });
     expect(ev.payload).toMatchObject({ orderId: ids.a, courierId: ids.courier, courierFeeCents: 700 });
     expect((await prisma.deliveryBatch.findUniqueOrThrow({ where: { id: ids.batch } })).status).toBe('OUT');
@@ -143,6 +154,8 @@ describe('Entregas: motoboys, lotes e código de 4 dígitos (e2e)', () => {
     const batch = await prisma.deliveryBatch.findUniqueOrThrow({ where: { id: ids.batch } });
     expect(batch.status).toBe('DONE');
     expect(batch.finishedAt).not.toBeNull();
+    // sem entrega em andamento, a posição não é mais guardada
+    expect((await http().post(`/public/courier/${ids.token}/location`).send({ lat: -23.1, lng: -46.1 })).body).toEqual({ tracking: false });
   });
 
   it('tirar pedido do lote volta para "pronto"; lote vazio é cancelado', async () => {
