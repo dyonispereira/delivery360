@@ -1,0 +1,52 @@
+# Link de teste no Render (plano grátis): um serviço web com API + site e um banco Postgres.
+# Uso: Render > New > Blueprint > escolha este repositório. Detalhes em docs/deploy-teste.md.
+databases:
+  - name: delivery360-db
+    plan: free
+    databaseName: delivery360
+    user: delivery360
+
+services:
+  - type: web
+    name: delivery360
+    runtime: node
+    plan: free
+    branch: main
+    healthCheckPath: /api/health
+    buildCommand: >-
+      corepack enable &&
+      pnpm install --frozen-lockfile &&
+      pnpm --filter @delivery360/shared build &&
+      pnpm --filter @delivery360/api build &&
+      pnpm --filter @delivery360/web build
+    startCommand: bash scripts/render-start.sh
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: delivery360-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 12h
+      - key: NEXT_PUBLIC_API_URL
+        value: /api
+      - key: API_INTERNAL_URL
+        value: http://127.0.0.1:3333
+      - key: TRUST_PROXY
+        value: "true"
+      - key: CORS_ORIGIN
+        value: http://127.0.0.1:3333
+      - key: SEED_ADMIN_EMAIL
+        value: admin@delivery360.app
+      - key: SEED_ADMIN_PASSWORD
+        generateValue: true
+      - key: SEED_DEMO
+        value: "true"
+      - key: SEED_DEMO_PASSWORD
+        generateValue: true
+      # Link de TESTE: PIX simulado. Desligar quando o gateway real entrar.
+      - key: PAYMENTS_FAKE_ENABLED
+        value: "true"
