@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { DomainEvent, EntryStatus, EntryType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { paymentFeeBps, PAYMENT_METHOD_LABELS, type PaymentMethod } from '@delivery360/shared';
 import { DEFAULT_ACCOUNTS, GROUPS, localDate, toDbDate } from './chart';
 
 type Tx = Prisma.TransactionClient;
@@ -12,9 +13,10 @@ const ONLINE = ['PIX', 'CREDIT_CARD'];
  * Liga os módulos à Gestão: lê a fila de eventos (domain_events) e gera os lançamentos
  * do financeiro. Idempotente: cada lançamento automático tem uma chave única.
  *
- * - pedido.recebido   → a receber 1.2 (já pago se foi PIX/cartão online) + taxa 2.3 se houver
+ * - pedido.recebido   → a receber 1.2 com a forma de pagamento do cliente (PIX/cartão online já entra baixado),
+ *                       taxa da forma de pagamento 2.3 e imposto sobre a venda 2.1 (configurados em Gestão)
  * - pedido.status → COMPLETED → baixa do a receber (dinheiro/maquininha recebidos na entrega)
- * - pedido.cancelado  → cancela o a receber; se já estava pago, a pagar 2.5 (devolver ao cliente)
+ * - pedido.cancelado  → cancela o a receber e o imposto; se já estava pago, a pagar 2.5 (devolver ao cliente)
  * - entrega.concluida → a pagar 6.1 ao motoboy (valor por entrega)
  * - gorjeta.recebida  → entrada 11.1 + a pagar 11.2 ao motoboy (fora da DRE)
  * - gorjeta.repassada → baixa do 11.2
@@ -91,6 +93,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         const order = await this.order(tx, String(p.orderId));
         if (!order) return;
         const online = ONLINE.includes(order.paymentMethod);
+        const method = order.paymentMethod as PaymentMethod;
         await this.upsert(tx, t, `order:${order.id}:sale`, {
           type: 'RECEIVABLE',
           code: '1.2',
@@ -100,16 +103,35 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           day,
           status: online ? 'PAID' : 'OPEN',
           source: 'cardapio',
+          paymentMethod: method,
         });
-        const fee = order.payments.reduce((s, x) => s + x.feeCents, 0);
+        const rates = await this.rates(tx, t);
+        // Taxa: a que o gateway informou; se não veio, a configurada para a forma de pagamento.
+        const gatewayFee = order.payments.reduce((s, x) => s + x.feeCents, 0);
+        const fee = gatewayFee || Math.round((order.totalCents * paymentFeeBps(rates, method)) / 10_000);
         if (fee > 0) {
           await this.upsert(tx, t, `order:${order.id}:fee`, {
             type: 'PAYABLE',
             code: '2.3',
-            description: `Taxa do pagamento · pedido #${order.number}`,
+            description: `Taxa ${PAYMENT_METHOD_LABELS[method]} · pedido #${order.number}`,
             amountCents: fee,
             day,
-            status: 'PAID',
+            // Descontada no repasse: já sai "paga" junto com o recebimento.
+            status: online ? 'PAID' : 'OPEN',
+            source: 'cardapio',
+            paymentMethod: method,
+          });
+        }
+        const tax = Math.round((order.totalCents * rates.salesTaxBps) / 10_000);
+        if (tax > 0) {
+          await this.upsert(tx, t, `order:${order.id}:tax`, {
+            type: 'PAYABLE',
+            code: '2.1',
+            description: `Imposto sobre a venda · pedido #${order.number}`,
+            amountCents: tax,
+            day,
+            dueDay: nextMonthDay(day, rates.taxDueDay),
+            status: 'OPEN',
             source: 'cardapio',
           });
         }
@@ -119,7 +141,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         if (p.to !== 'COMPLETED') return;
         // Dinheiro ou maquininha: recebido quando o pedido é entregue/retirado.
         await tx.financialEntry.updateMany({
-          where: { tenantId: t, externalKey: `order:${String(p.orderId)}:sale`, status: 'OPEN' },
+          where: { tenantId: t, externalKey: { in: [`order:${String(p.orderId)}:sale`, `order:${String(p.orderId)}:fee`] }, status: 'OPEN' },
           data: { status: 'PAID', paidAt: toDbDate(day) },
         });
         return;
@@ -128,6 +150,11 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         const key = `order:${String(p.orderId)}:sale`;
         const sale = await tx.financialEntry.findUnique({ where: { tenantId_externalKey: { tenantId: t, externalKey: key } } });
         if (!sale || sale.status === 'CANCELLED') return;
+        // Venda desfeita: o imposto não é devido; a taxa só some se ainda não foi descontada.
+        await tx.financialEntry.updateMany({
+          where: { tenantId: t, externalKey: { in: [`order:${String(p.orderId)}:tax`, `order:${String(p.orderId)}:fee`] }, status: 'OPEN' },
+          data: { status: 'CANCELLED', notes: 'Pedido cancelado' },
+        });
         if (sale.status === 'OPEN') {
           await tx.financialEntry.update({ where: { id: sale.id }, data: { status: 'CANCELLED', notes: 'Pedido cancelado' } });
           return;
@@ -202,6 +229,12 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Impostos e taxas do restaurante (zerados até o dono configurar). */
+  async rates(db: Tx | PrismaService, tenantId: string) {
+    const s = await db.financeSettings.findUnique({ where: { tenantId } });
+    return s ?? { salesTaxBps: 0, pixFeeBps: 0, creditFeeBps: 0, cardOnDeliveryFeeBps: 0, targetMarginBps: 2000, taxDueDay: 20 };
+  }
+
   private order(tx: Tx, id: string) {
     return tx.order.findUnique({
       where: { id },
@@ -213,7 +246,18 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
     tx: Tx,
     tenantId: string,
     externalKey: string,
-    e: { type: EntryType; code: string; description: string; counterparty?: string | null; amountCents: number; day: string; status: EntryStatus; source: string },
+    e: {
+      type: EntryType;
+      code: string;
+      description: string;
+      counterparty?: string | null;
+      amountCents: number;
+      day: string;
+      dueDay?: string;
+      status: EntryStatus;
+      source: string;
+      paymentMethod?: string;
+    },
   ) {
     await this.ensureChart(tenantId, tx);
     const account = await tx.account.findUniqueOrThrow({ where: { tenantId_code: { tenantId, code: e.code } } });
@@ -230,11 +274,18 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         counterparty: e.counterparty ?? null,
         amountCents: e.amountCents,
         competenceDate: date,
-        dueDate: date,
+        dueDate: e.dueDay ? toDbDate(e.dueDay) : date,
+        paymentMethod: e.paymentMethod ?? null,
         status: e.status,
         paidAt: e.status === 'PAID' ? date : null,
         source: e.source,
       },
     });
   }
+}
+
+/** Dia N do mês seguinte (ex.: imposto da venda de 25/11 vence 20/12). */
+function nextMonthDay(day: string, n: number) {
+  const [y, m] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m, n)).toISOString().slice(0, 10);
 }

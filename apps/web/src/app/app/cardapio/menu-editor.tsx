@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { formatBRL, parseBRL } from '@delivery360/shared';
+import { costSheet, DEFAULT_RATES, formatBRL, parseBRL, type FinanceRates } from '@delivery360/shared';
+import { CostSheetEditor, type RatesInfo } from './cost-sheet';
 import { Badge, ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { Category, Group, Product } from './types';
@@ -13,6 +14,12 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [newCategory, setNewCategory] = useState('');
   const [editing, setEditing] = useState<{ product: Partial<Product> & { categoryId: string } } | null>(null);
+  const [rates, setRates] = useState<RatesInfo | null>(null);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    api<RatesInfo>('/cardapio/cost-rates', { tenant: true }).then(setRates).catch(() => undefined);
+  }, [canEdit]);
 
   const load = useCallback(async () => {
     try {
@@ -104,6 +111,7 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
                     <div className="text-xs text-zinc-500">
                       {formatBRL(p.priceCents)}
                       {p.optionGroups.length > 0 && ` · ${p.optionGroups.length} grupo(s) de adicionais`}
+                      {canEdit && <MarginChip product={p} rates={rates ?? DEFAULT_RATES} />}
                     </div>
                   </button>
                   <label className="flex items-center gap-2 text-xs text-zinc-600">
@@ -128,6 +136,7 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
           product={editingProduct as Partial<Product> & { categoryId: string }}
           categories={menu}
           canEdit={canEdit}
+          rates={rates}
           onClose={() => setEditing(null)}
           onSaved={async (p) => {
             await load();
@@ -144,6 +153,7 @@ function ProductEditor({
   product,
   categories,
   canEdit,
+  rates,
   onClose,
   onSaved,
   onChanged,
@@ -151,6 +161,7 @@ function ProductEditor({
   product: Partial<Product> & { categoryId: string };
   categories: Category[];
   canEdit: boolean;
+  rates: RatesInfo | null;
   onClose: () => void;
   onSaved: (p: Product) => Promise<void>;
   onChanged: () => Promise<void>;
@@ -164,6 +175,8 @@ function ProductEditor({
     categoryId: product.categoryId,
     active: product.active ?? true,
   });
+  const [costItems, setCostItems] = useState(product.costItems ?? []);
+  const [extraCostBps, setExtraCostBps] = useState(product.extraCostBps ?? 0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -180,6 +193,8 @@ function ProductEditor({
       imageUrl: form.imageUrl || undefined,
       categoryId: form.categoryId,
       active: form.active,
+      costItems: costItems.filter((i) => i.name.trim()),
+      extraCostBps,
     };
     try {
       const saved = isNew
@@ -241,6 +256,18 @@ function ProductEditor({
           <input type="checkbox" disabled={!canEdit} checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
           Aparece no cardápio
         </label>
+        {canEdit && (
+          <CostSheetEditor
+            priceCents={parseBRL(form.price) ?? 0}
+            items={costItems}
+            extraCostBps={extraCostBps}
+            rates={rates}
+            onChange={(items, extra) => {
+              setCostItems(items);
+              setExtraCostBps(extra);
+            }}
+          />
+        )}
         <ErrorBox message={error} />
         {canEdit && (
           <div className="flex gap-2">
@@ -276,7 +303,10 @@ function GroupsEditor({ productId, groups, canEdit, onChanged }: { productId: st
     const price = window.prompt('Preço adicional em R$ (0 se não cobra)', '0');
     const priceCents = parseBRL(price ?? '0');
     if (priceCents === null) return setError('Preço inválido.');
-    void run(() => api(`/cardapio/groups/${groupId}/options`, { method: 'POST', body: { name, priceCents }, tenant: true }));
+    const cost = window.prompt('Custo deste adicional em R$, para o CMV (ex.: bacon 1,50). 0 se não tem custo.', '0');
+    const costCents = parseBRL(cost ?? '0');
+    if (costCents === null) return setError('Custo inválido.');
+    void run(() => api(`/cardapio/groups/${groupId}/options`, { method: 'POST', body: { name, priceCents, costCents }, tenant: true }));
   }
 
   const rule = (g: Group) =>
@@ -303,7 +333,23 @@ function GroupsEditor({ productId, groups, canEdit, onChanged }: { productId: st
             {g.options.map((o) => (
               <li key={o.id} className="flex items-center gap-2 text-sm">
                 <span className={`flex-1 ${o.available ? '' : 'text-zinc-400 line-through'}`}>{o.name}</span>
-                <span className="text-xs text-zinc-500">{o.priceCents ? `+ ${formatBRL(o.priceCents)}` : 'grátis'}</span>
+                <span className="text-xs text-zinc-500">
+                  {o.priceCents ? `+ ${formatBRL(o.priceCents)}` : 'grátis'}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="ml-1 text-zinc-400 underline"
+                      title="Custo do adicional (entra no CMV da venda)"
+                      onClick={() => {
+                        const cost = window.prompt(`Custo de "${o.name}" em R$ (para o CMV):`, ((o.costCents ?? 0) / 100).toFixed(2).replace('.', ','));
+                        const costCents = cost === null ? null : parseBRL(cost);
+                        if (costCents !== null) void run(() => api(`/cardapio/options/${o.id}`, { method: 'PATCH', body: { costCents }, tenant: true }));
+                      }}
+                    >
+                      custo {formatBRL(o.costCents ?? 0)}
+                    </button>
+                  )}
+                </span>
                 <Toggle checked={o.available} disabled={!canEdit} onChange={(v) => run(() => api(`/cardapio/options/${o.id}`, { method: 'PATCH', body: { available: v }, tenant: true }))} />
                 {canEdit && (
                   <button className="text-xs text-zinc-400 hover:text-red-600" aria-label={`Apagar ${o.name}`} onClick={() => run(() => api(`/cardapio/options/${o.id}`, { method: 'DELETE', tenant: true }))}>
@@ -351,5 +397,18 @@ function GroupsEditor({ productId, groups, canEdit, onChanged }: { productId: st
       )}
       <ErrorBox message={error} />
     </div>
+  );
+}
+
+/** Na lista de produtos: CMV % e lucro por unidade, para bater o olho. */
+function MarginChip({ product, rates }: { product: Product; rates: FinanceRates }) {
+  const items = product.costItems ?? [];
+  if (items.length === 0) return <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">sem ficha técnica</span>;
+  const s = costSheet(product.priceCents, items, rates, product.extraCostBps ?? 0);
+  const tone = s.cmvHealth === 'good' ? 'bg-emerald-50 text-emerald-700' : s.cmvHealth === 'attention' ? 'bg-amber-50 text-amber-800' : 'bg-red-50 text-red-700';
+  return (
+    <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-medium ${tone}`}>
+      CMV {s.cmvPct?.toLocaleString('pt-BR')}% · lucro {formatBRL(s.profitCents)} ({s.resultPct?.toLocaleString('pt-BR')}%)
+    </span>
   );
 }

@@ -19,6 +19,7 @@ interface DreResult {
   to: string;
   lines: DreLine[];
   orders: { count: number; ticketCents: number };
+  cmv: { salesCents: number; theoreticalCents: number; theoreticalPct: number | null; actualCents: number; actualPct: number | null; missingCostItems: number };
 }
 
 export function Dre() {
@@ -97,10 +98,41 @@ export function Dre() {
           </table>
         </div>
       )}
+      {data && <CmvCompare cmv={data.cmv} />}
       <p className="text-xs text-zinc-500">
         A DRE conta pela competência (o mês a que a receita ou despesa pertence), mesmo que ainda não tenha sido paga. Investimentos, retiradas de sócios e
         gorjetas dos motoboys ficam fora do resultado. Clique em um grupo para ver as contas.
       </p>
     </div>
+  );
+}
+
+/** CMV pela ficha técnica (o que deveria ter custado) x CMV das compras lançadas (o que custou). */
+function CmvCompare({ cmv }: { cmv: DreResult['cmv'] }) {
+  if (!cmv.salesCents) return null;
+  const diff = cmv.actualCents - cmv.theoreticalCents;
+  const pct = (n: number | null) => (n === null ? '—' : `${n.toLocaleString('pt-BR')}%`);
+  return (
+    <section className="card space-y-2">
+      <h3 className="font-semibold">CMV: ficha técnica x compras</h3>
+      <div className="grid gap-3 text-sm sm:grid-cols-3">
+        <div>
+          <p className="text-zinc-500">Pela ficha técnica das vendas</p>
+          <p className="text-lg font-semibold">{formatBRL(cmv.theoreticalCents)} <span className="text-sm font-normal text-zinc-500">({pct(cmv.theoreticalPct)})</span></p>
+        </div>
+        <div>
+          <p className="text-zinc-500">Compras lançadas (grupo 3)</p>
+          <p className="text-lg font-semibold">{formatBRL(cmv.actualCents)} <span className="text-sm font-normal text-zinc-500">({pct(cmv.actualPct)})</span></p>
+        </div>
+        <div>
+          <p className="text-zinc-500">Diferença</p>
+          <p className={`text-lg font-semibold ${diff > 0 ? 'text-red-600' : 'text-emerald-700'}`}>{formatBRL(diff)}</p>
+        </div>
+      </div>
+      <p className="text-xs text-zinc-500">
+        Compras acima da ficha indicam desperdício, porção maior que a ficha, estoque formado no mês ou ficha desatualizada.
+        {cmv.missingCostItems > 0 && <b className="text-amber-700"> {cmv.missingCostItems} item(ns) vendido(s) sem ficha técnica: o CMV pela ficha está subestimado.</b>}
+      </p>
+    </section>
   );
 }

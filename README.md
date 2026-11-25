@@ -89,6 +89,10 @@ não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TES
   venda do pedido (1.2), recebimento na entrega, cancelamento ou devolução de PIX (2.5),
   custo do motoboy por entrega (6.1) e gorjetas (11.1 entra, 11.2 repassa, fora da DRE).
   Cada lançamento automático tem chave única, então reprocessar não duplica.
+- **Ficha técnica (CMV)** no cadastro do produto: custo item por item (ingredientes, embalagem, outros),
+  custo dos adicionais, impostos e taxas (Gestão > Impostos e taxas), lucro em R$, % de resultado e preço sugerido.
+  O custo fica gravado em cada venda; Gestão > Margem dos produtos mostra o lucro por produto e a DRE compara
+  o CMV da ficha com as compras lançadas. Cada venda lança a taxa da forma de pagamento (2.3) e o imposto (2.1).
 - Contas manuais podem repetir todo mês (ex.: aluguel 12x). A DRE usa a competência; o caixa usa a data da baixa.
 
 ## Como funcionam os módulos

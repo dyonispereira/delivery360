@@ -1,9 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { EntryStatus, EntryType } from '@prisma/client';
 import { MODULES } from '@delivery360/shared';
 import { CurrentTenant, CurrentUser, RequireModule, TenantRoles } from '../access/access.decorators';
 import type { AuthUser, TenantContext } from '../access/access.types';
-import { AccountDto, EntryDto, PayDto, PayManyDto, PeriodQuery, UpdateAccountDto, UpdateEntryDto } from './gestao.dto';
+import { AccountDto, EntryDto, FinanceSettingsDto, PayDto, PayManyDto, PeriodQuery, UpdateAccountDto, UpdateEntryDto } from './gestao.dto';
 import { GestaoService } from './gestao.service';
 
 const UUID = new ParseUUIDPipe();
@@ -30,6 +30,21 @@ export class GestaoController {
   @Get('dre')
   dre(@CurrentTenant() t: TenantContext, @Query() q: PeriodQuery) {
     return this.gestao.dre(t.tenantId, q.from, q.to);
+  }
+
+  @Get('products-margin')
+  productsMargin(@CurrentTenant() t: TenantContext, @Query() q: PeriodQuery) {
+    return this.gestao.productsMargin(t.tenantId, q.from, q.to);
+  }
+
+  @Get('settings')
+  settings(@CurrentTenant() t: TenantContext) {
+    return this.gestao.settings(t.tenantId);
+  }
+
+  @Put('settings')
+  updateSettings(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Body() dto: FinanceSettingsDto) {
+    return this.gestao.updateSettings(t.tenantId, u.id, dto);
   }
 
   @Get('accounts')

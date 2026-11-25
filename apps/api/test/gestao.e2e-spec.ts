@@ -211,6 +211,78 @@ describe('Gestão: financeiro, lançamentos automáticos e DRE (e2e)', () => {
     expect(s.month.grossCents).toBe(6500);
   });
 
+  it('ficha técnica: custo item por item no produto e nos adicionais; equipe não vê custos', async () => {
+    const res = await owner().patch(`/cardapio/products/${ids.product}`).send({
+      costItems: [
+        { name: 'Pão', kind: 'INGREDIENT', costCents: 300 },
+        { name: 'Hambúrguer', kind: 'INGREDIENT', costCents: 500 },
+        { name: 'Fatia de queijo', kind: 'INGREDIENT', costCents: 100 },
+        { name: 'Embalagem', kind: 'PACKAGING', costCents: 30 },
+      ],
+      extraCostBps: 200,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.costItems).toHaveLength(4);
+    const group = (await owner().post(`/cardapio/products/${ids.product}/groups`).send({ name: 'Adicionais', minSelect: 0, maxSelect: 2 })).body;
+    ids.bacon = (await owner().post(`/cardapio/groups/${group.id}/options`).send({ name: 'Bacon', priceCents: 500, costCents: 150 })).body.id;
+    const bad = await owner().patch(`/cardapio/products/${ids.product}`).send({ costItems: [{ name: '', kind: 'INGREDIENT', costCents: 1 }] });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message.join(' ')).toContain('nome a cada item');
+
+    const staffMenu = JSON.stringify((await staff().get('/cardapio/menu')).body);
+    expect(staffMenu).not.toContain('costItems');
+    expect(staffMenu).not.toContain('Hambúrguer');
+    expect((await staff().get('/cardapio/cost-rates')).status).toBe(403);
+    // loja pública nunca mostra custo
+    expect(JSON.stringify((await http().get(`/public/stores/${slug}`)).body)).not.toContain('costCents');
+  });
+
+  it('impostos e taxas: venda gera imposto e taxa; PIX entra já recebido; custo fica gravado na venda', async () => {
+    await owner().put('/gestao/settings').send({ salesTaxBps: 600, pixFeeBps: 100, cardOnDeliveryFeeBps: 250, taxDueDay: 20 });
+    expect((await owner().get('/cardapio/cost-rates')).body).toMatchObject({ salesTaxBps: 600, configured: true });
+    const pix = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send({ type: 'PICKUP', customer: { name: 'Cliente Pix', phone: '11944443333' }, items: [{ productId: ids.product, quantity: 2, optionIds: [ids.bacon] }], paymentMethod: 'PIX' });
+    expect(pix.status).toBe(201);
+    await http().post(`/public/orders/${pix.body.trackingCode}/simulate-payment`);
+    const order = await prisma.order.findUniqueOrThrow({ where: { trackingCode: pix.body.trackingCode }, include: { items: true } });
+    expect(order.items[0].unitCostCents).toBe(930 + 150);
+
+    const entries = (await owner().get(`/gestao/entries?search=pedido #${order.number}`)).body.items;
+    const by = (code: string) => entries.find((e: { account: { code: string } }) => e.account.code === code);
+    const sale = (await owner().get(`/gestao/entries?type=RECEIVABLE&search=Cliente Pix`)).body.items[0];
+    expect(sale).toMatchObject({ amountCents: 7000, status: 'PAID', paymentMethod: 'PIX' });
+    expect(by('2.3')).toMatchObject({ amountCents: 70, status: 'PAID', paymentMethod: 'PIX' });
+    expect(by('2.1')).toMatchObject({ amountCents: 420, status: 'OPEN' });
+    expect(by('2.1').dueDate.slice(8)).toBe('20');
+
+    // retirada concluída entra na margem por produto
+    await owner().patch(`/cardapio/orders/${order.id}/status`).send({ status: 'IN_PREPARATION' });
+    await owner().patch(`/cardapio/orders/${order.id}/status`).send({ status: 'READY' });
+    await owner().patch(`/cardapio/orders/${order.id}/status`).send({ status: 'COMPLETED' });
+    const m = (await owner().get(`/gestao/products-margin?from=${month}-01&to=${today}`)).body;
+    const burger = m.rows.find((r: { name: string }) => r.name === 'X-Burger');
+    // pedido antigo (sem ficha, custo 0) + este (2 un. a R$ 10,80 de custo)
+    expect(burger.quantity).toBe(3);
+    expect(burger.cmvCents).toBe(2160);
+    expect(m.missingCost).toEqual(['X-Burger']);
+    const dre = (await owner().get(`/gestao/dre?from=${month}-01&to=${today}`)).body;
+    expect(dre.cmv).toMatchObject({ theoreticalCents: 2160, missingCostItems: 1 });
+  });
+
+  it('venda cancelada não paga imposto', async () => {
+    const o = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send({ type: 'PICKUP', customer: { name: 'Desistiu', phone: '11933332222' }, items: [{ productId: ids.product, quantity: 1 }], paymentMethod: 'CARD_ON_DELIVERY' });
+    const order = await prisma.order.findUniqueOrThrow({ where: { trackingCode: o.body.trackingCode } });
+    await owner().get('/gestao/summary');
+    await owner().patch(`/cardapio/orders/${order.id}/status`).send({ status: 'CANCELLED' });
+    const all = (await owner().get(`/gestao/entries?status=CANCELLED&search=pedido #${order.number}`)).body.items;
+    const mine = all.filter((e: { description: string }) => new RegExp(`#${order.number}( |$)`).test(e.description));
+    // venda, imposto e taxa da maquininha: tudo cancelado
+    expect(mine.map((e: { account: { code: string } }) => e.account.code).sort()).toEqual(['1.2', '2.1', '2.3']);
+  });
+
   it('sem o módulo Gestão contratado, as rotas ficam bloqueadas', async () => {
     await http().put(`/admin/tenants/${tenantId}/modules/gestao`).set('Authorization', `Bearer ${adminToken}`).send({ active: false });
     expect((await owner().get('/gestao/summary')).status).toBe(403);

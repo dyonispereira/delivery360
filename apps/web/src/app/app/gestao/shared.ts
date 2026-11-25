@@ -20,6 +20,7 @@ export interface AccountGroup {
 }
 export interface Entry {
   id: string;
+  paymentMethod: string | null;
   type: EntryType;
   description: string;
   counterparty: string | null;

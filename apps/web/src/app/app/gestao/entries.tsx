@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { formatBRL, parseBRL } from '@delivery360/shared';
+import { formatBRL, parseBRL, PAYMENT_METHOD_LABELS, type PaymentMethod } from '@delivery360/shared';
 import { Badge, ErrorBox, Spinner } from '@/components/ui';
 import { api } from '@/lib/api';
 import { br, monthEnd, monthLabel, monthStart, shiftMonth, SOURCE_LABEL, todayStr, type AccountGroup, type Entry, type EntryType } from './shared';
@@ -153,6 +153,7 @@ export function Entries({ type }: { type: EntryType }) {
                           <div className="text-xs text-zinc-500">
                             {e.counterparty && <>{e.counterparty} · </>}
                             {SOURCE_LABEL[e.source] ?? e.source}
+                            {e.paymentMethod && <> · {PAYMENT_METHOD_LABELS[e.paymentMethod as PaymentMethod] ?? e.paymentMethod}</>}
                             {e.notes && <> · {e.notes}</>}
                           </div>
                         </td>
