@@ -104,6 +104,13 @@ não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TES
 - Financeiro: receita na conta do app (1.3 iFood, 1.6 99Food, 1.7 Keeta), comissão 2.2 e taxa 2.3; pago no app vence no dia do repasse, pago na entrega é recebido ao finalizar. Gestão › **Canais de venda** mostra vendas, comissão, taxas, CMV e sobra por canal, e registra o repasse recebido (baixa da venda, comissão e taxa juntas). Margem dos produtos filtra por canal.
 - Motoboy: pedido de app com código de entrega próprio pede ao cliente o código do app (em vez dos 4 últimos dígitos do telefone).
 
+## Pessoas e folha (Gestão)
+
+- Funcionários (CLT, PJ, diarista, estágio) com salário ou diária, vale-transporte e alimentação, folga fixa, admissão e desligamento.
+- Escala do mês com folga fixa, folga extra, férias, atestado e falta (falta desconta 1/30 do salário de CLT e estágio).
+- Folha gerencial do mês: extras, prêmio e adiantamento digitados; encargos (FGTS e INSS patronal, em Impostos e taxas) e reserva de férias + 1/3 e 13º calculados. Não substitui o eSocial nem os descontos de INSS/IR do funcionário (contador).
+- Fechar a folha gera as contas a pagar: 4.1 salários (vence no dia do pagamento do mês seguinte), 4.2 extras e prêmios, 4.3 diárias, 4.4 encargos (dia 20), 4.5 benefícios, 4.6 reserva (20/12); adiantamento entra já pago. Folha fechada trava folgas e valores do mês; reabrir apaga os lançamentos se nada foi pago.
+
 ## Como funcionam os módulos
 
 - Códigos: `gestao`, `cardapio`, `entregas`, `trafego` (`packages/shared/src/modules.ts`).

@@ -248,7 +248,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
   /** Impostos e taxas do restaurante (zerados até o dono configurar). */
   async rates(db: Tx | PrismaService, tenantId: string) {
     const s = await db.financeSettings.findUnique({ where: { tenantId } });
-    return s ?? { salesTaxBps: 0, pixFeeBps: 0, creditFeeBps: 0, cardOnDeliveryFeeBps: 0, targetMarginBps: 2000, taxDueDay: 20 };
+    return s ?? { salesTaxBps: 0, pixFeeBps: 0, creditFeeBps: 0, cardOnDeliveryFeeBps: 0, targetMarginBps: 2000, taxDueDay: 20, fgtsBps: 800, employerInssBps: 0, payDay: 5 };
   }
 
   private order(tx: Tx, id: string) {
@@ -338,7 +338,8 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async upsert(
+  /** Cria o lançamento automático (uma vez só por chave). */
+  async upsert(
     tx: Tx,
     tenantId: string,
     externalKey: string,

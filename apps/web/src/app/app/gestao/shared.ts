@@ -52,4 +52,4 @@ export const monthLabel = (d: string) => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
-export const SOURCE_LABEL: Record<string, string> = { manual: 'Manual', cardapio: 'Pedidos', entregas: 'Entregas' };
+export const SOURCE_LABEL: Record<string, string> = { manual: 'Manual', cardapio: 'Pedidos', entregas: 'Entregas', pessoas: 'Folha' };

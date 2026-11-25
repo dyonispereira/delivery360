@@ -11,6 +11,9 @@ interface Rates {
   cardOnDeliveryFeeBps: number;
   targetMarginBps: number;
   taxDueDay: number;
+  fgtsBps: number;
+  employerInssBps: number;
+  payDay: number;
 }
 
 const FIELDS: { key: keyof Rates; label: string; hint: string; pct: boolean }[] = [
@@ -20,6 +23,9 @@ const FIELDS: { key: keyof Rates; label: string; hint: string; pct: boolean }[] 
   { key: 'cardOnDeliveryFeeBps', label: 'Taxa da maquininha (%)', hint: 'Cartão na entrega ou no balcão.', pct: true },
   { key: 'targetMarginBps', label: 'Meta de resultado por produto (%)', hint: 'Usada no preço sugerido da ficha técnica.', pct: true },
   { key: 'taxDueDay', label: 'Dia do vencimento do imposto', hint: 'No mês seguinte à venda (ex.: DAS no dia 20).', pct: false },
+  { key: 'fgtsBps', label: 'FGTS sobre a folha CLT (%)', hint: 'Normalmente 8%.', pct: true },
+  { key: 'employerInssBps', label: 'INSS patronal (%)', hint: 'No Simples Nacional (anexos I a III) é 0%. Fora do Simples, cerca de 20% + RAT/terceiros: confirme com o contador.', pct: true },
+  { key: 'payDay', label: 'Dia do pagamento do salário', hint: 'No mês seguinte (ex.: 5º dia).', pct: false },
 ];
 
 const toText = (v: number, pct: boolean) => (pct ? (v / 100).toString().replace('.', ',') : String(v));
@@ -63,7 +69,7 @@ export function Settings() {
       }}
     >
       <div>
-        <h2 className="font-semibold">Impostos e taxas</h2>
+        <h2 className="font-semibold">Impostos, taxas e encargos</h2>
         <p className="text-sm text-zinc-500">
           Usados na ficha técnica (lucro de cada produto) e lançados sozinhos a cada venda: a taxa conforme a forma de pagamento que o cliente escolheu e o imposto
           como conta a pagar no mês seguinte.
