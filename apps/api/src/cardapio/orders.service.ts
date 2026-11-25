@@ -17,6 +17,8 @@ import { activeModuleCodes } from '../access/access.rules';
 import { PAYMENT_GATEWAY, type PaymentGateway } from '../payments/payment-gateway';
 import { CreateOrderDto } from './cardapio.dto';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
+import { ACTIVE_STATUSES, canTransition } from './order-status';
+import { AuditService } from '../core/audit.service';
 
 /** Pagamentos que dependem de confirmação do gateway antes de o pedido entrar na operação. */
 const ONLINE_METHODS: PaymentMethod[] = ['PIX', 'CREDIT_CARD'];
@@ -36,6 +38,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
+    private readonly audit: AuditService,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
@@ -374,6 +377,55 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       take: 100,
       include: { items: { include: { options: true } } },
     });
+  }
+
+  // ---------- Painel e cozinha ----------
+
+  /** Pedidos em andamento + os finalizados/cancelados das últimas 12 horas, do mais antigo ao mais novo. */
+  listBoard(tenantId: string) {
+    const since = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    return this.prisma.order.findMany({
+      where: {
+        tenantId,
+        OR: [{ status: { in: ACTIVE_STATUSES } }, { status: { in: ['COMPLETED', 'CANCELLED'] }, updatedAt: { gte: since } }],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 300,
+      include: {
+        items: { include: { options: true } },
+        statusHistory: { orderBy: { createdAt: 'asc' }, select: { status: true, createdAt: true } },
+      },
+    });
+  }
+
+  /** Muda o status seguindo o fluxo permitido; grava histórico, auditoria e evento. */
+  async updateStatus(tenantId: string, userId: string, orderId: string, to: OrderStatus, note?: string) {
+    const order = await this.prisma.order.findFirst({ where: { id: orderId, tenantId } });
+    if (!order) throw new NotFoundException('Pedido não encontrado.');
+    if (order.status === to) return order;
+    if (!canTransition(order.type, order.status, to)) {
+      throw new ConflictException(`Não é possível passar o pedido #${order.number} para este status agora.`);
+    }
+    return this.prisma.$transaction(async (tx) => {
+      // Condicional no status atual: se outra tela mudou antes, ninguém sobrescreve.
+      const { count } = await tx.order.updateMany({ where: { id: orderId, status: order.status }, data: { status: to } });
+      if (count === 0) throw new ConflictException('O pedido acabou de ser atualizado em outra tela. Confira e tente de novo.');
+      await tx.orderStatusHistory.create({ data: { orderId, status: to, userId, note: note?.trim() || null } });
+      await this.audit.log(
+        { tenantId, userId, action: 'order.status', entity: 'order', entityId: orderId, before: { status: order.status }, after: { status: to, note } },
+        tx,
+      );
+      await this.events.publish(tenantId, to === 'CANCELLED' ? 'pedido.cancelado' : 'pedido.status', { orderId, from: order.status, to, totalCents: order.totalCents }, tx);
+      return tx.order.findUniqueOrThrow({ where: { id: orderId } });
+    });
+  }
+
+  /** Marca a primeira impressão; devolve se esta tela foi a primeira (para a impressão automática não duplicar). */
+  async markPrinted(tenantId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({ where: { id: orderId, tenantId }, select: { id: true } });
+    if (!order) throw new NotFoundException('Pedido não encontrado.');
+    const { count } = await this.prisma.order.updateMany({ where: { id: orderId, printedAt: null }, data: { printedAt: new Date() } });
+    return { first: count === 1 };
   }
 
   // ---------- Auxiliares ----------

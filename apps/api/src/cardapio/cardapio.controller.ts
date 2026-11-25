@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseEnumPipe, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, ParseEnumPipe, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { OrderStatus } from '@prisma/client';
 import { CurrentTenant, CurrentUser, RequireModule, TenantRoles } from '../access/access.decorators';
 import type { AuthUser, TenantContext } from '../access/access.types';
@@ -11,6 +11,7 @@ import {
   UpdateCategoryDto,
   UpdateOptionDto,
   UpdateOptionGroupDto,
+  UpdateOrderStatusDto,
   UpdateProductDto,
   UpdateStoreDto,
   UpdateZoneDto,
@@ -150,7 +151,32 @@ export class CardapioManageController {
     return this.catalog.deleteOption(t.tenantId, id);
   }
 
-  /** Lista simples de pedidos; o painel com status e impressão vem na Sprint 3. */
+  /** Painel e cozinha: pedidos em andamento e os finalizados recentes. */
+  @Get('orders/board')
+  board(@CurrentTenant() t: TenantContext) {
+    return this.orders.listBoard(t.tenantId);
+  }
+
+  /** Qualquer pessoa do restaurante muda o status (cozinha, balcão); cancelar só dono e gerente. */
+  @Patch('orders/:id/status')
+  updateOrderStatus(
+    @CurrentTenant() t: TenantContext,
+    @CurrentUser() user: AuthUser,
+    @Param('id', UUID) id: string,
+    @Body() dto: UpdateOrderStatusDto,
+  ) {
+    if (dto.status === 'CANCELLED' && t.role === 'STAFF') {
+      throw new ForbiddenException('Só o dono ou o gerente pode cancelar pedidos.');
+    }
+    return this.orders.updateStatus(t.tenantId, user.id, id, dto.status, dto.note);
+  }
+
+  @Post('orders/:id/printed')
+  @HttpCode(200)
+  printed(@CurrentTenant() t: TenantContext, @Param('id', UUID) id: string) {
+    return this.orders.markPrinted(t.tenantId, id);
+  }
+
   @Get('orders')
   listOrders(
     @CurrentTenant() t: TenantContext,
