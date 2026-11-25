@@ -1,0 +1,405 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
+import { OrderStatus, PaymentMethod, Prisma } from '@prisma/client';
+import { randomBytes } from 'node:crypto';
+import { PrismaService } from '../prisma/prisma.service';
+import { EventsService } from '../core/events.service';
+import { activeModuleCodes } from '../access/access.rules';
+import { PAYMENT_GATEWAY, type PaymentGateway } from '../payments/payment-gateway';
+import { CreateOrderDto } from './cardapio.dto';
+import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
+
+/** Pagamentos que dependem de confirmação do gateway antes de o pedido entrar na operação. */
+const ONLINE_METHODS: PaymentMethod[] = ['PIX', 'CREDIT_CARD'];
+
+function trackingCode(): string {
+  // 12 caracteres sem ambiguidade (sem 0/O/1/l): difícil de adivinhar, fácil de ditar.
+  const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
+  const bytes = randomBytes(12);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+}
+
+@Injectable()
+export class OrdersService implements OnModuleInit, OnModuleDestroy {
+  private readonly log = new Logger(OrdersService.name);
+  private timer?: NodeJS.Timeout;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly events: EventsService,
+    @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
+  ) {}
+
+  onModuleInit() {
+    if (process.env.NODE_ENV === 'test') return;
+    // Expira PIX não pagos a cada minuto.
+    this.timer = setInterval(() => void this.expireStale().catch((e) => this.log.error(e)), 60_000);
+  }
+
+  onModuleDestroy() {
+    if (this.timer) clearInterval(this.timer);
+  }
+
+  // ---------- Loja pública ----------
+
+  /** Loja só aparece se o restaurante está ativo e com o módulo Cardápio ligado. */
+  async findPublicStore(slug: string) {
+    const store = await this.prisma.store.findUnique({
+      where: { slug },
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            status: true,
+            modules: { select: { moduleCode: true, active: true, startsAt: true, endsAt: true } },
+          },
+        },
+      },
+    });
+    if (!store || store.tenant.status !== 'ACTIVE' || !activeModuleCodes(store.tenant.modules).includes('cardapio')) {
+      throw new NotFoundException('Loja não encontrada.');
+    }
+    return store;
+  }
+
+  async getPublicMenu(slug: string) {
+    const store = await this.findPublicStore(slug);
+    const tenantId = store.tenantId;
+    const [categories, zones] = await Promise.all([
+      this.prisma.menuCategory.findMany({
+        where: { tenantId, active: true },
+        orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          products: {
+            where: { active: true },
+            orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              priceCents: true,
+              imageUrl: true,
+              available: true,
+              optionGroups: {
+                orderBy: { position: 'asc' },
+                select: {
+                  id: true,
+                  name: true,
+                  minSelect: true,
+                  maxSelect: true,
+                  options: { orderBy: { position: 'asc' }, select: { id: true, name: true, priceCents: true, available: true } },
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.deliveryZone.findMany({ where: { tenantId, active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true, feeCents: true } }),
+    ]);
+    return {
+      store: {
+        slug: store.slug,
+        displayName: store.displayName,
+        description: store.description,
+        logoUrl: store.logoUrl,
+        whatsapp: store.whatsapp,
+        isOpen: store.isOpen,
+        acceptsDelivery: store.acceptsDelivery,
+        acceptsPickup: store.acceptsPickup,
+        minOrderCents: store.minOrderCents,
+        paymentMethods: store.paymentMethods.filter((m) => m !== 'CREDIT_CARD'),
+        estimatedMinutes: store.estimatedMinutes,
+      },
+      categories: categories.filter((c) => c.products.length > 0),
+      zones,
+    };
+  }
+
+  async createPublicOrder(slug: string, dto: CreateOrderDto) {
+    const store = await this.findPublicStore(slug);
+    const tenantId = store.tenantId;
+
+    // Cartão online depende do SDK do gateway no navegador (tokenização): entra junto com o gateway real.
+    if (dto.paymentMethod === 'CREDIT_CARD') {
+      throw new BadRequestException('Pagamento com cartão pela loja ainda não está disponível. Use PIX ou pague na entrega.');
+    }
+    const phone = normalizePhone(dto.customer.phone);
+    if (!phone) throw new BadRequestException('Informe um telefone com DDD.');
+    if (dto.type === 'DELIVERY' && !dto.address) throw new BadRequestException('Informe o endereço de entrega.');
+
+    const productIds = [...new Set(dto.items.map((i) => i.productId))];
+    const [products, zones] = await Promise.all([
+      this.prisma.product.findMany({
+        where: { tenantId, id: { in: productIds } },
+        include: {
+          category: { select: { active: true } },
+          optionGroups: { include: { options: true } },
+        },
+      }),
+      this.prisma.deliveryZone.findMany({ where: { tenantId } }),
+    ]);
+    const menu = new Map<string, MenuProduct>(
+      products.map((p) => [
+        p.id,
+        {
+          id: p.id,
+          name: p.name,
+          priceCents: p.priceCents,
+          active: p.active,
+          available: p.available,
+          categoryActive: p.category.active,
+          optionGroups: p.optionGroups.map((g) => ({
+            id: g.id,
+            name: g.name,
+            minSelect: g.minSelect,
+            maxSelect: g.maxSelect,
+            options: g.options.map((o) => ({ id: o.id, name: o.name, priceCents: o.priceCents, available: o.available })),
+          })),
+        },
+      ]),
+    );
+
+    let priced;
+    try {
+      priced = priceOrder(
+        {
+          type: dto.type,
+          zoneId: dto.address?.zoneId,
+          paymentMethod: dto.paymentMethod,
+          changeForCents: dto.changeForCents,
+          items: dto.items,
+        },
+        store,
+        menu,
+        zones,
+      );
+    } catch (err) {
+      if (err instanceof OrderValidationError) throw new BadRequestException(err.message);
+      throw err;
+    }
+
+    const online = ONLINE_METHODS.includes(dto.paymentMethod);
+    const charge = online
+      ? await this.gateway.createCharge({
+          paymentId: 'pending',
+          amountCents: priced.totalCents,
+          method: dto.paymentMethod as 'PIX',
+          description: `Pedido ${store.displayName}`,
+          customer: { name: dto.customer.name, phone },
+        })
+      : null;
+
+    const order = await this.withOrderNumber(tenantId, async (tx, number) => {
+      const customer = await tx.customer.upsert({
+        where: { tenantId_phone: { tenantId, phone } },
+        update: { name: dto.customer.name.trim() },
+        create: { tenantId, phone, name: dto.customer.name.trim() },
+      });
+      const status: OrderStatus = online ? 'AWAITING_PAYMENT' : 'PAID';
+      const created = await tx.order.create({
+        data: {
+          tenantId,
+          number,
+          trackingCode: trackingCode(),
+          customerId: customer.id,
+          type: dto.type,
+          status,
+          customerName: dto.customer.name.trim(),
+          customerPhone: phone,
+          addressStreet: dto.type === 'DELIVERY' ? dto.address!.street.trim() : null,
+          addressNumber: dto.type === 'DELIVERY' ? dto.address!.number.trim() : null,
+          addressComplement: dto.type === 'DELIVERY' ? dto.address!.complement?.trim() || null : null,
+          addressReference: dto.type === 'DELIVERY' ? dto.address!.reference?.trim() || null : null,
+          deliveryZoneId: priced.zone?.id ?? null,
+          deliveryZoneName: priced.zone?.name ?? null,
+          notes: dto.notes?.trim() || null,
+          subtotalCents: priced.subtotalCents,
+          deliveryFeeCents: priced.deliveryFeeCents,
+          totalCents: priced.totalCents,
+          paymentMethod: dto.paymentMethod,
+          changeForCents: dto.paymentMethod === 'CASH_ON_DELIVERY' ? (dto.changeForCents ?? null) : null,
+          utmSource: dto.utmSource || null,
+          utmCampaign: dto.utmCampaign || null,
+          items: {
+            create: priced.items.map((i) => ({
+              productId: i.productId,
+              name: i.name,
+              unitPriceCents: i.unitPriceCents,
+              quantity: i.quantity,
+              notes: i.notes,
+              totalCents: i.totalCents,
+              options: { create: i.options.map((o) => ({ optionId: o.optionId, groupName: o.groupName, name: o.name, priceCents: o.priceCents })) },
+            })),
+          },
+          statusHistory: { create: { status, note: online ? 'Aguardando pagamento' : 'Pagamento na entrega' } },
+          payments: {
+            create: {
+              tenantId,
+              provider: online ? this.gateway.name : 'offline',
+              method: dto.paymentMethod,
+              amountCents: priced.totalCents,
+              externalId: charge?.externalId ?? null,
+              pixCopyPaste: charge?.pixCopyPaste ?? null,
+              expiresAt: charge?.expiresAt ?? null,
+            },
+          },
+        },
+      });
+      if (!online) await this.publishReceived(tx, created.id, tenantId, priced.totalCents, dto.paymentMethod);
+      return created;
+    });
+
+    return this.getTracking(order.trackingCode);
+  }
+
+  /** Página de acompanhamento: só quem tem o código vê. Não expõe dados de outros pedidos. */
+  async getTracking(code: string) {
+    await this.expireStale();
+    const order = await this.prisma.order.findUnique({
+      where: { trackingCode: code },
+      include: {
+        items: { include: { options: true } },
+        statusHistory: { orderBy: { createdAt: 'asc' }, select: { status: true, createdAt: true } },
+        payments: { orderBy: { createdAt: 'desc' }, take: 1 },
+        tenant: { select: { store: { select: { slug: true, displayName: true, whatsapp: true, estimatedMinutes: true } } } },
+      },
+    });
+    if (!order) throw new NotFoundException('Pedido não encontrado.');
+    const payment = order.payments[0];
+    return {
+      trackingCode: order.trackingCode,
+      number: order.number,
+      status: order.status,
+      type: order.type,
+      createdAt: order.createdAt,
+      customerName: order.customerName,
+      address:
+        order.type === 'DELIVERY'
+          ? { street: order.addressStreet, number: order.addressNumber, complement: order.addressComplement, zone: order.deliveryZoneName }
+          : null,
+      items: order.items.map((i) => ({
+        name: i.name,
+        quantity: i.quantity,
+        unitPriceCents: i.unitPriceCents,
+        totalCents: i.totalCents,
+        notes: i.notes,
+        options: i.options.map((o) => ({ groupName: o.groupName, name: o.name, priceCents: o.priceCents })),
+      })),
+      subtotalCents: order.subtotalCents,
+      deliveryFeeCents: order.deliveryFeeCents,
+      totalCents: order.totalCents,
+      paymentMethod: order.paymentMethod,
+      changeForCents: order.changeForCents,
+      payment: payment
+        ? {
+            status: payment.status,
+            pixCopyPaste: payment.status === 'PENDING' ? payment.pixCopyPaste : null,
+            expiresAt: payment.expiresAt,
+            canSimulate: payment.provider === 'fake' && payment.status === 'PENDING' && this.fakeEnabled(),
+          }
+        : null,
+      history: order.statusHistory,
+      store: order.tenant.store,
+    };
+  }
+
+  // ---------- Pagamentos ----------
+
+  /**
+   * Confirma um pagamento vindo do gateway (webhook). Idempotente: chamar de novo não duplica nada.
+   * Só aqui o pedido PIX passa a "Pago" e entra na operação.
+   */
+  async markPaid(provider: string, externalId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.findUnique({ where: { provider_externalId: { provider, externalId } }, include: { order: true } });
+      if (!payment) throw new NotFoundException('Pagamento não encontrado.');
+      if (payment.status === 'PAID') return;
+      if (payment.status !== 'PENDING' || payment.order.status !== 'AWAITING_PAYMENT') {
+        throw new ConflictException('Este pagamento não pode mais ser confirmado.');
+      }
+      // Atualização condicional: se dois webhooks chegarem juntos, só um vence.
+      const updated = await tx.payment.updateMany({ where: { id: payment.id, status: 'PENDING' }, data: { status: 'PAID', paidAt: new Date() } });
+      if (updated.count === 0) return;
+      await tx.order.update({ where: { id: payment.orderId }, data: { status: 'PAID' } });
+      await tx.orderStatusHistory.create({ data: { orderId: payment.orderId, status: 'PAID', note: 'Pagamento confirmado' } });
+      await this.publishReceived(tx, payment.orderId, payment.tenantId, payment.amountCents, payment.method);
+    });
+  }
+
+  /** Só em desenvolvimento: simula o webhook do gateway de teste. */
+  async simulatePayment(code: string) {
+    if (!this.fakeEnabled()) throw new ForbiddenException('Simulação de pagamento desligada.');
+    const order = await this.prisma.order.findUnique({ where: { trackingCode: code }, include: { payments: true } });
+    const payment = order?.payments.find((p) => p.provider === 'fake' && p.status === 'PENDING');
+    if (!order || !payment?.externalId) throw new NotFoundException('Nenhum pagamento pendente para simular.');
+    await this.markPaid('fake', payment.externalId);
+    return this.getTracking(code);
+  }
+
+  /** PIX vencido: cancela o pedido que nunca foi pago. */
+  async expireStale(now = new Date()) {
+    const stale = await this.prisma.payment.findMany({
+      where: { status: 'PENDING', expiresAt: { lt: now }, order: { status: 'AWAITING_PAYMENT' } },
+      select: { id: true, orderId: true },
+      take: 200,
+    });
+    for (const p of stale) {
+      await this.prisma.$transaction(async (tx) => {
+        const res = await tx.payment.updateMany({ where: { id: p.id, status: 'PENDING' }, data: { status: 'EXPIRED' } });
+        if (res.count === 0) return;
+        await tx.order.updateMany({ where: { id: p.orderId, status: 'AWAITING_PAYMENT' }, data: { status: 'CANCELLED' } });
+        await tx.orderStatusHistory.create({ data: { orderId: p.orderId, status: 'CANCELLED', note: 'PIX não pago no prazo' } });
+      });
+    }
+    return stale.length;
+  }
+
+  // ---------- Restaurante ----------
+
+  listOrders(tenantId: string, status?: OrderStatus) {
+    return this.prisma.order.findMany({
+      where: { tenantId, ...(status ? { status } : { status: { not: 'AWAITING_PAYMENT' } }) },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: { items: { include: { options: true } } },
+    });
+  }
+
+  // ---------- Auxiliares ----------
+
+  private fakeEnabled() {
+    return process.env.PAYMENTS_FAKE_ENABLED === 'true';
+  }
+
+  private publishReceived(tx: Prisma.TransactionClient, orderId: string, tenantId: string, totalCents: number, method: PaymentMethod) {
+    // A Gestão vai consumir este evento para lançar a receita (conta 1.2) e a taxa (2.3).
+    return this.events.publish(tenantId, 'pedido.recebido', { orderId, totalCents, paymentMethod: method }, tx);
+  }
+
+  /** Número sequencial por restaurante; tenta de novo se dois pedidos pegarem o mesmo número. */
+  private async withOrderNumber<T>(tenantId: string, fn: (tx: Prisma.TransactionClient, n: number) => Promise<T>): Promise<T> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const last = await tx.order.aggregate({ where: { tenantId }, _max: { number: true } });
+          return fn(tx, (last._max.number ?? 0) + 1);
+        });
+      } catch (err) {
+        const retry = err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+        if (!retry || attempt === 4) throw err;
+      }
+    }
+    throw new ConflictException('Tente novamente.');
+  }
+}

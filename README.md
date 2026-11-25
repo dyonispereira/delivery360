@@ -45,6 +45,19 @@ pnpm --filter @delivery360/api test:e2e    # API completa contra o banco deliver
 Os testes e2e esvaziam o banco de teste a cada execução e se recusam a rodar se o nome do banco
 não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TEST_DATABASE_URL`).
 
+## Loja online (módulo Cardápio)
+
+- O restaurante monta o cardápio em **Cardápio e pedidos**: categorias, produtos, grupos de adicionais
+  (mínimo e máximo de escolhas), bairros com taxa de entrega, formas de pagamento e abre/fecha a loja.
+- A loja pública fica em `/loja/<endereço>` (ex.: `/loja/pizzaria-do-ze`). O cliente escolhe os
+  produtos e adicionais, monta o carrinho e paga. Parâmetros `utm_source` e `utm_campaign` no link
+  ficam gravados no pedido para o módulo de Tráfego medir de onde veio a venda.
+- O acompanhamento fica em `/pedido/<código>` e atualiza sozinho.
+- Os preços são sempre recalculados na API; o navegador só mostra.
+- **Pagamento:** PIX, dinheiro e cartão na entrega. Enquanto o gateway real não entra, o PIX usa um
+  gateway de teste, ligado por `PAYMENTS_FAKE_ENABLED="true"`, que mostra o botão "Simular pagamento".
+  **Nunca ligue isso em produção.** PIX não pago expira em 15 minutos.
+
 ## Como funcionam os módulos
 
 - Códigos: `gestao`, `cardapio`, `entregas`, `trafego` (`packages/shared/src/modules.ts`).
