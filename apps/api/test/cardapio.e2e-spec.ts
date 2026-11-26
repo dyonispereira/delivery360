@@ -392,6 +392,81 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     expect(off.body.message).toContain('não está mais valendo');
   });
 
+  it('campanhas da rede: banner da Delivery360 em todas as lojas, cupom com custo dividido e saída só do que custa', async () => {
+    const staff = as(adminToken);
+    const suffix = crypto.randomUUID().slice(0, 6).toUpperCase();
+    const code = `REDE${suffix}`;
+    const img = 'https://cdn.delivery360.test/banner.png';
+    expect((await owner().post('/admin/campaigns').send({ title: 'X', imageUrl: img })).status).toBe(403);
+
+    const network = await staff.post('/admin/campaigns').send({ title: 'Peça pela Delivery360', subtitle: 'Seu delivery favorito', imageUrl: img });
+    expect(network.status).toBe(201);
+    expect(network.body).toMatchObject({ couponCode: null, tenantIds: [], platformShareBps: 10000 });
+    // Código igual ao cupom próprio da loja participante é recusado.
+    expect((await staff.post('/admin/campaigns').send({ title: 'Choque', imageUrl: img, tenantIds: [tenantId], couponCode: 'PIZZA20', value: 1000 })).status).toBe(409);
+    const store = await staff.post('/admin/campaigns').send({
+      title: 'Semana da pizza',
+      imageUrl: img,
+      tenantIds: [tenantId],
+      couponCode: code.toLowerCase(),
+      type: 'PERCENT',
+      value: 2000,
+      maxDiscountCents: 3000,
+      platformShareBps: 5000,
+    });
+    expect(store.status).toBe(201);
+    expect(store.body).toMatchObject({ couponCode: code, platformShareBps: 5000 });
+    // O restaurante não cria cupom com o código da campanha.
+    expect((await owner().post('/cardapio/coupons').send({ code, type: 'FIXED', value: 500 })).status).toBe(409);
+
+    const banners = (await http().get(`/public/stores/${slug}`)).body.banners.filter((b: { id: string }) => [network.body.id, store.body.id].includes(b.id));
+    expect(banners).toEqual([
+      expect.objectContaining({ id: network.body.id, network: true, couponCode: null }),
+      expect.objectContaining({ id: store.body.id, network: false, couponCode: code, label: '20% off até R$ 30,00' }),
+    ]);
+
+    // 2 pizzas = 116,00; 20% = 23,20 (metade da Delivery360, metade do restaurante).
+    const q = (await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', zoneId: ids.centro, items: orderBody().items, couponCode: code })).body;
+    expect(q).toMatchObject({ discountCents: 2320, platformDiscountCents: 0, totalCents: 11600 + 600 - 2320, coupon: { code } });
+    const order = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY', couponCode: code, customer: { name: 'Caio', phone: '(11) 95555-6666' } }));
+    expect(order.status).toBe(201);
+    const row = await prisma.order.findUniqueOrThrow({ where: { trackingCode: order.body.trackingCode } });
+    expect(row).toMatchObject({ campaignId: store.body.id, couponId: null, couponFundedBy: 'MIXED', discountCents: 2320, couponPlatformCents: 1160 });
+
+    await app.get(GestaoSyncService).processPending(tenantId);
+    const entries: { externalKey: string; amountCents: number; counterparty: string | null; account: { code: string } }[] = await prisma.financialEntry.findMany({
+      where: { tenantId, externalKey: { startsWith: `order:${row.id}:` } },
+      include: { account: true },
+    });
+    const by = (k: string) => entries.find((e) => e.externalKey === `order:${row.id}:${k}`);
+    expect(by('sale')).toMatchObject({ amountCents: row.totalCents + 1160 });
+    expect(by('coupon')).toMatchObject({ amountCents: 1160, account: { code: '2.4' } });
+    expect(by('coupon360')).toMatchObject({ amountCents: 1160, counterparty: 'Delivery360', account: { code: '1.2' } });
+
+    // Painel do restaurante: vê as campanhas; só pode sair da que custa para ele.
+    const mine = (await owner().get('/cardapio/campaigns')).body;
+    expect(mine.find((c: { id: string }) => c.id === network.body.id)).toMatchObject({ participating: true, canOptOut: false });
+    expect(mine.find((c: { id: string }) => c.id === store.body.id)).toMatchObject({ participating: true, canOptOut: true, platformShareBps: 5000 });
+    expect((await owner().put(`/cardapio/campaigns/${network.body.id}/participation`).send({ participating: false })).status).toBe(403);
+    expect((await as(staffToken).put(`/cardapio/campaigns/${store.body.id}/participation`).send({ participating: false })).status).toBe(403);
+    expect((await owner().put(`/cardapio/campaigns/${store.body.id}/participation`).send({ participating: false })).body).toEqual({ participating: false });
+    const after = (await http().get(`/public/stores/${slug}`)).body.banners.map((b: { id: string }) => b.id);
+    expect(after).toContain(network.body.id);
+    expect(after).not.toContain(store.body.id);
+    expect((await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', items: orderBody().items, couponCode: code })).status).toBe(400);
+    expect((await owner().put(`/cardapio/campaigns/${store.body.id}/participation`).send({ participating: true })).status).toBe(200);
+
+    const list = (await staff.get('/admin/campaigns')).body;
+    expect(list.campaigns.find((c: { id: string }) => c.id === store.body.id)).toMatchObject({ uses: 1, discountGivenCents: 2320, platformCostCents: 1160 });
+    expect(list.tenants).toEqual(expect.arrayContaining([expect.objectContaining({ id: tenantId })]));
+
+    expect((await staff.delete(`/admin/campaigns/${store.body.id}`)).body).toEqual({ deleted: false, deactivated: true });
+    expect((await staff.delete(`/admin/campaigns/${network.body.id}`)).body).toEqual({ deleted: true, deactivated: false });
+    await prisma.campaign.deleteMany({ where: { id: store.body.id } });
+  });
+
   it('combos: cria com produtos do cardápio e item só do combo, loja mostra a economia, pedido e CMV', async () => {
     const combosCat = (await owner().post('/cardapio/categories').send({ name: 'Combos' })).body.id;
     const coca = (await owner().post('/cardapio/products').send({ categoryId: ids.cat, name: 'Coca 2L', priceCents: 1400, costItems: [{ name: 'Coca', kind: 'INGREDIENT', costCents: 700 }] })).body.id;

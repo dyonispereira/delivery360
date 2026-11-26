@@ -23,6 +23,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const isSuper = user.staffRole === 'SUPER_ADMIN';
   const links = [
     { href: '/admin', label: 'Restaurantes', show: true },
+    { href: '/admin/campanhas', label: 'Campanhas', show: true },
     { href: '/admin/equipe', label: 'Equipe', show: isSuper },
     { href: '/admin/auditoria', label: 'Auditoria', show: isSuper },
   ].filter((l) => l.show);

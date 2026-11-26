@@ -4,6 +4,7 @@ import { CurrentTenant, CurrentUser, RequireModule, TenantRoles } from '../acces
 import type { AuthUser, TenantContext } from '../access/access.types';
 import { CatalogService } from './catalog.service';
 import {
+  CampaignParticipationDto,
   CategoryDto,
   ComboDto,
   CouponDto,
@@ -23,6 +24,7 @@ import {
 import { OrdersService } from './orders.service';
 import { CouponsService } from './coupons.service';
 import { CombosService } from './combos.service';
+import { CampaignsService } from './campaigns.service';
 
 const UUID = new ParseUUIDPipe();
 
@@ -38,6 +40,7 @@ export class CardapioManageController {
     private readonly orders: OrdersService,
     private readonly coupons: CouponsService,
     private readonly combos: CombosService,
+    private readonly campaigns: CampaignsService,
   ) {}
 
   @Get('store')
@@ -229,6 +232,24 @@ export class CardapioManageController {
   @Delete('coupons/:id')
   removeCoupon(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string) {
     return this.coupons.remove(t.tenantId, u, id);
+  }
+
+  // ---------- Campanhas da rede ----------
+
+  @Get('campaigns')
+  listCampaigns(@CurrentTenant() t: TenantContext) {
+    return this.campaigns.forTenant(t.tenantId);
+  }
+
+  @TenantRoles('OWNER', 'MANAGER')
+  @Put('campaigns/:id/participation')
+  setCampaignParticipation(
+    @CurrentTenant() t: TenantContext,
+    @CurrentUser() u: AuthUser,
+    @Param('id', UUID) id: string,
+    @Body() dto: CampaignParticipationDto,
+  ) {
+    return this.campaigns.setParticipation(t.tenantId, u, id, dto.participating);
   }
 
   // ---------- Combos ----------

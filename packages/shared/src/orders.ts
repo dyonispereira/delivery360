@@ -99,6 +99,20 @@ export interface PublicStore {
   coupons: PublicCoupon[];
   /** Descontos especiais automáticos (impulso Delivery360): o cliente não faz nada, o carrinho já desconta. */
   offers: PublicOffer[];
+  /** Banners das campanhas: divulgação da rede intercalada com as ofertas da loja. */
+  banners: PublicBanner[];
+}
+
+export interface PublicBanner {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  imageUrl: string;
+  /** Cupom da campanha: tocar no banner já aplica no carrinho. */
+  couponCode: string | null;
+  label: string | null;
+  /** true = divulgação da Delivery360 em todas as lojas. */
+  network: boolean;
 }
 
 export interface PublicOffer {

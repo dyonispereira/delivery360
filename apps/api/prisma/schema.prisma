@@ -406,9 +406,14 @@ model Order {
   /// Cupom usado (loja própria). O desconto do cupom fica em discountCents.
   couponId          String?              @map("coupon_id") @db.Uuid
   couponCode        String?              @map("coupon_code")
-  /// Quem pagou o desconto do cupom (congelado no pedido). Cupom com código é sempre do restaurante.
+  /// Quem pagou o desconto do cupom (congelado no pedido). RESTAURANT no cupom da loja; na campanha da rede, conforme a divisão.
   couponFundedBy    CouponFunding?       @map("coupon_funded_by")
   coupon            Coupon?              @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  /// Cupom de campanha da rede (o código fica em couponCode e o desconto inteiro em discountCents).
+  campaignId        String?              @map("campaign_id") @db.Uuid
+  campaign          Campaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  /// Parte de discountCents bancada pela Delivery360 (campanha mista ou 100% nossa).
+  couponPlatformCents Int                @default(0) @map("coupon_platform_cents")
   /// Impulso Delivery360: desconto automático bancado pela Delivery360 (soma com o cupom do restaurante).
   platformDiscountCents Int              @default(0) @map("platform_discount_cents")
   platformCouponId  String?              @map("platform_coupon_id") @db.Uuid
@@ -461,6 +466,7 @@ model Order {
   @@index([batchId])
   @@index([couponId])
   @@index([platformCouponId])
+  @@index([campaignId])
   @@map("orders")
 }
 
@@ -911,6 +917,44 @@ model PayrollItem {
 enum CouponFunding {
   RESTAURANT
   PLATFORM
+  MIXED
+}
+
+/// Campanha da rede, criada pela equipe Delivery360: banner nas lojas participantes e, se tiver código,
+/// um cupom que o cliente usa em qualquer uma delas. O custo do desconto se divide entre a Delivery360 e o restaurante.
+model Campaign {
+  id                 String     @id @default(uuid()) @db.Uuid
+  title              String
+  subtitle           String?
+  imageUrl           String     @map("image_url")
+  /// Lojas da campanha. Vazio = todas.
+  tenantIds          String[]   @default([]) @map("tenant_ids")
+  /// Lojas que saíram (só pode sair quando o restaurante banca parte do cupom).
+  optedOutTenantIds  String[]   @default([]) @map("opted_out_tenant_ids")
+  startsAt           DateTime?  @map("starts_at")
+  endsAt             DateTime?  @map("ends_at")
+  active             Boolean    @default(true)
+  position           Int        @default(0)
+  /// Código do cupom da campanha. Sem código = só banner.
+  couponCode         String?    @unique @map("coupon_code")
+  type               CouponType @default(PERCENT)
+  /// PERCENT: pontos-base (1000 = 10%). FIXED: centavos. FREE_DELIVERY: 0.
+  value              Int        @default(0)
+  maxDiscountCents   Int?       @map("max_discount_cents")
+  minOrderCents      Int        @default(0) @map("min_order_cents")
+  weekdays           Int[]      @default([])
+  /// Limite de usos somando todas as lojas.
+  maxUses            Int?       @map("max_uses")
+  maxUsesPerCustomer Int?       @default(1) @map("max_uses_per_customer")
+  firstOrderOnly     Boolean    @default(false) @map("first_order_only")
+  combinesWithPromo  Boolean    @default(false) @map("combines_with_promo")
+  /// Parte do desconto bancada pela Delivery360, em pontos-base (10000 = 100% nossa; 0 = 100% do restaurante).
+  platformShareBps   Int        @default(10000) @map("platform_share_bps")
+  createdAt          DateTime   @default(now()) @map("created_at")
+  updatedAt          DateTime   @updatedAt @map("updated_at")
+  orders             Order[]
+
+  @@map("campaigns")
 }
 
 enum CouponType {
