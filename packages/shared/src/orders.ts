@@ -89,6 +89,20 @@ export interface PublicStore {
   zones: { id: string; name: string; feeCents: number }[];
   /** Cupons que a loja mostra para todos (os outros só com o código). */
   coupons: PublicCoupon[];
+  /** Descontos especiais automáticos (impulso Delivery360): o cliente não faz nada, o carrinho já desconta. */
+  offers: PublicOffer[];
+}
+
+export interface PublicOffer {
+  /** "R$ 8,00 off em Calabresa". */
+  label: string;
+  type: 'PERCENT' | 'FIXED' | 'FREE_DELIVERY';
+  /** Vazio = vale para o pedido inteiro. */
+  productIds: string[];
+  minOrderCents: number;
+  firstOrderOnly: boolean;
+  weekdays: number[];
+  endsAt: string | null;
 }
 
 export interface PublicCoupon {
@@ -114,6 +128,8 @@ export interface OrderQuote {
   discountCents: number;
   /** promoExcluded: o cupom não vale nos itens em promoção do carrinho. */
   coupon: { code: string; label: string; discountCents: number; promoExcluded: boolean } | null;
+  /** Desconto especial automático (impulso Delivery360), somado ao cupom. */
+  platformDiscountCents: number;
   totalCents: number;
   /** Entrega sem bairro escolhido: a taxa ainda não entrou. */
   zonePending: boolean;
@@ -143,6 +159,8 @@ export interface OrderTracking {
   /** Desconto do cupom. */
   discountCents: number;
   couponCode: string | null;
+  /** Desconto especial automático. */
+  platformDiscountCents: number;
   deliveryFeeCents: number;
   totalCents: number;
   paymentMethod: PaymentMethod;

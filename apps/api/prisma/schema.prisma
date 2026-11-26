@@ -397,9 +397,13 @@ model Order {
   /// Cupom usado (loja própria). O desconto do cupom fica em discountCents.
   couponId          String?              @map("coupon_id") @db.Uuid
   couponCode        String?              @map("coupon_code")
-  /// Quem pagou o desconto do cupom (congelado no pedido).
+  /// Quem pagou o desconto do cupom (congelado no pedido). Cupom com código é sempre do restaurante.
   couponFundedBy    CouponFunding?       @map("coupon_funded_by")
   coupon            Coupon?              @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  /// Impulso Delivery360: desconto automático bancado pela Delivery360 (soma com o cupom do restaurante).
+  platformDiscountCents Int              @default(0) @map("platform_discount_cents")
+  platformCouponId  String?              @map("platform_coupon_id") @db.Uuid
+  platformCoupon    Coupon?              @relation("PlatformBoost", fields: [platformCouponId], references: [id], onDelete: SetNull)
   /// Quanto o cliente economizou com preço de/por (já fora do subtotal). Vai para "Descontos e cupons" no DRE.
   promoDiscountCents Int                 @default(0) @map("promo_discount_cents")
   totalCents        Int                  @map("total_cents")
@@ -447,6 +451,7 @@ model Order {
   @@index([tenantId, status, createdAt])
   @@index([batchId])
   @@index([couponId])
+  @@index([platformCouponId])
   @@map("orders")
 }
 
@@ -932,8 +937,9 @@ model Coupon {
   combinesWithPromo  Boolean    @default(false) @map("combines_with_promo")
   /// Só vale para estes produtos ou combos (vazio = pedido inteiro).
   productIds         String[]   @default([]) @map("product_ids")
-  /// Quem paga o desconto. PLATFORM: criado pela equipe Delivery360 para impulsionar o restaurante;
-  /// o restaurante recebe o valor da Delivery360 e não pode alterar o cupom.
+  /// Quem paga o desconto. PLATFORM = impulso Delivery360: criado pela nossa equipe, entra sozinho
+  /// (sem código) nos pedidos que se encaixam e soma com o cupom do restaurante. O restaurante
+  /// recebe o valor da Delivery360 e não pode alterar o impulso.
   fundedBy           CouponFunding @default(RESTAURANT) @map("funded_by")
   /// Aparece na faixa de cupons da loja (falso = só quem tem o código).
   public             Boolean    @default(false)
@@ -941,6 +947,7 @@ model Coupon {
   createdAt          DateTime   @default(now()) @map("created_at")
   tenant             Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   orders             Order[]
+  boostedOrders      Order[]    @relation("PlatformBoost")
 
   @@unique([tenantId, code])
   @@map("coupons")
