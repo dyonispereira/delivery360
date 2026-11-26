@@ -13,6 +13,7 @@ const rule = (over: Partial<CouponRule> = {}): CouponRule => ({
   maxUsesPerCustomer: 1,
   firstOrderOnly: false,
   combinesWithPromo: false,
+  productIds: [],
   active: true,
   ...over,
 });
@@ -22,7 +23,7 @@ const NOW = new Date('2026-11-26T18:00:00Z');
 const ctx = (over: Partial<CouponContext> = {}): CouponContext => ({
   now: NOW,
   subtotalCents: 10_000,
-  promoItemsCents: 0,
+  items: [{ productId: 'pizza', totalCents: 10_000, promo: false }],
   deliveryFeeCents: 700,
   orderType: 'DELIVERY',
   usesTotal: 0,
@@ -43,7 +44,7 @@ const reason = (c: CouponRule, x: CouponContext) => {
 
 describe('couponDiscount', () => {
   it('percentual arredonda para baixo e respeita o teto', () => {
-    expect(couponDiscount(rule({ value: 1500 }), ctx({ subtotalCents: 3333 }))).toBe(499);
+    expect(couponDiscount(rule({ value: 1500 }), ctx({ subtotalCents: 3333, items: [{ productId: 'pizza', totalCents: 3333, promo: false }] }))).toBe(499);
     expect(couponDiscount(rule({ value: 5000, maxDiscountCents: 1500 }), ctx())).toBe(1500);
   });
 
@@ -57,10 +58,24 @@ describe('couponDiscount', () => {
     expect(reason(rule({ type: 'FREE_DELIVERY', value: 0 }), ctx({ orderType: 'PICKUP' }))).toContain('retirar');
   });
 
+  const mixed = [
+    { productId: 'pizza', totalCents: 6000, promo: false },
+    { productId: 'refri', totalCents: 1000, promo: true },
+    { productId: 'combo', totalCents: 3000, promo: false },
+  ];
+
   it('não soma com produto em promoção, a menos que o cupom permita', () => {
-    expect(couponDiscount(rule(), ctx({ promoItemsCents: 4000 }))).toBe(600);
-    expect(couponDiscount(rule({ combinesWithPromo: true }), ctx({ promoItemsCents: 4000 }))).toBe(1000);
-    expect(reason(rule(), ctx({ promoItemsCents: 10_000 }))).toContain('promoção');
+    expect(couponDiscount(rule(), ctx({ items: mixed }))).toBe(900);
+    expect(couponDiscount(rule({ combinesWithPromo: true }), ctx({ items: mixed }))).toBe(1000);
+    expect(reason(rule(), ctx({ items: [{ productId: 'refri', totalCents: 10_000, promo: true }] }))).toContain('promoção');
+  });
+
+  it('cupom de produto ou combo: desconto só sobre ele', () => {
+    expect(couponDiscount(rule({ productIds: ['combo'], value: 2000 }), ctx({ items: mixed }))).toBe(600);
+    expect(couponDiscount(rule({ productIds: ['combo'], type: 'FIXED', value: 5000 }), ctx({ items: mixed }))).toBe(3000);
+    expect(reason(rule({ productIds: ['outro'] }), ctx({ items: mixed, productNames: ['Combo Casal'] }))).toBe(
+      'Este cupom vale só para Combo Casal. Coloque no carrinho para usar.',
+    );
   });
 
   it('datas, dias da semana e pedido mínimo', () => {

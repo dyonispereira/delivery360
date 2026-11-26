@@ -397,6 +397,8 @@ model Order {
   /// Cupom usado (loja própria). O desconto do cupom fica em discountCents.
   couponId          String?              @map("coupon_id") @db.Uuid
   couponCode        String?              @map("coupon_code")
+  /// Quem pagou o desconto do cupom (congelado no pedido).
+  couponFundedBy    CouponFunding?       @map("coupon_funded_by")
   coupon            Coupon?              @relation(fields: [couponId], references: [id], onDelete: SetNull)
   /// Quanto o cliente economizou com preço de/por (já fora do subtotal). Vai para "Descontos e cupons" no DRE.
   promoDiscountCents Int                 @default(0) @map("promo_discount_cents")
@@ -892,6 +894,11 @@ model PayrollItem {
   @@map("payroll_items")
 }
 
+enum CouponFunding {
+  RESTAURANT
+  PLATFORM
+}
+
 enum CouponType {
   /// Percentual sobre os produtos.
   PERCENT
@@ -923,6 +930,11 @@ model Coupon {
   firstOrderOnly     Boolean    @default(false) @map("first_order_only")
   /// Vale também sobre produtos em preço de/por.
   combinesWithPromo  Boolean    @default(false) @map("combines_with_promo")
+  /// Só vale para estes produtos ou combos (vazio = pedido inteiro).
+  productIds         String[]   @default([]) @map("product_ids")
+  /// Quem paga o desconto. PLATFORM: criado pela equipe Delivery360 para impulsionar o restaurante;
+  /// o restaurante recebe o valor da Delivery360 e não pode alterar o cupom.
+  fundedBy           CouponFunding @default(RESTAURANT) @map("funded_by")
   /// Aparece na faixa de cupons da loja (falso = só quem tem o código).
   public             Boolean    @default(false)
   active             Boolean    @default(true)

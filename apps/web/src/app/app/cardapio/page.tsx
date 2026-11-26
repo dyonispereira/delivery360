@@ -51,7 +51,7 @@ export default function CardapioPage() {
       </div>
       {tab === 'menu' && <MenuEditor canEdit={canEdit} />}
       {tab === 'loja' && <StoreSettings canEdit={canEdit} />}
-      {tab === 'cupons' && <CouponsEditor canEdit={canEdit} />}
+      {tab === 'cupons' && <CouponsEditor canEdit={canEdit} platform={tenant.role === null} />}
       {tab === 'bairros' && <ZonesEditor canEdit={canEdit} />}
       {tab === 'canais' && canEdit && <ChannelsEditor />}
     </div>

@@ -213,18 +213,18 @@ export class CardapioManageController {
   @TenantRoles('OWNER', 'MANAGER')
   @Post('coupons')
   createCoupon(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Body() dto: CouponDto) {
-    return this.coupons.create(t.tenantId, u.id, dto);
+    return this.coupons.create(t.tenantId, u, dto);
   }
 
   @TenantRoles('OWNER', 'MANAGER')
   @Patch('coupons/:id')
   updateCoupon(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string, @Body() dto: UpdateCouponDto) {
-    return this.coupons.update(t.tenantId, u.id, id, dto);
+    return this.coupons.update(t.tenantId, u, id, dto);
   }
 
   @TenantRoles('OWNER', 'MANAGER')
   @Delete('coupons/:id')
   removeCoupon(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string) {
-    return this.coupons.remove(t.tenantId, u.id, id);
+    return this.coupons.remove(t.tenantId, u, id);
   }
 }

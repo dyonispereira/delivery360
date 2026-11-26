@@ -289,6 +289,7 @@ export class CouponDto {
   @IsOptional() @IsInt() @Min(1) @Max(1000) maxUsesPerCustomer?: number | null;
   @IsOptional() @IsBoolean() firstOrderOnly?: boolean;
   @IsOptional() @IsBoolean() combinesWithPromo?: boolean;
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) productIds?: string[];
   @IsOptional() @IsBoolean() public?: boolean;
   @IsOptional() @IsBoolean() active?: boolean;
 }
@@ -307,6 +308,7 @@ export class UpdateCouponDto {
   @IsOptional() @IsInt() @Min(1) @Max(1000) maxUsesPerCustomer?: number | null;
   @IsOptional() @IsBoolean() firstOrderOnly?: boolean;
   @IsOptional() @IsBoolean() combinesWithPromo?: boolean;
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) productIds?: string[];
   @IsOptional() @IsBoolean() public?: boolean;
   @IsOptional() @IsBoolean() active?: boolean;
 }

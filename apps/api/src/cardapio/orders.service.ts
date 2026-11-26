@@ -148,6 +148,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         include: { _count: { select: { orders: { where: { status: { not: 'CANCELLED' } } } } } },
       }),
     ]);
+    const names = new Map(categories.flatMap((c) => c.products.map((p) => [p.id, p.name] as const)));
     const visible = new Set(categories.flatMap((c) => c.products.filter((p) => p.available).map((p) => p.id)));
     return {
       store: {
@@ -172,7 +173,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         .filter((c) => c.maxUses == null || c._count.orders < c.maxUses)
         .map((c) => ({
           code: c.code,
-          label: couponLabel(c),
+          label: couponLabel(c, c.productIds.map((id) => names.get(id)).filter((n): n is string => !!n)),
+          productIds: c.productIds,
           description: c.description,
           type: c.type,
           minOrderCents: c.minOrderCents,
@@ -278,7 +280,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw err;
     }
 
-    let coupon: { id: string; code: string; discountCents: number; label: string; promoExcluded: boolean } | null = null;
+    let coupon: { id: string; code: string; discountCents: number; label: string; promoExcluded: boolean; fundedBy: 'RESTAURANT' | 'PLATFORM' } | null = null;
     const code = input.couponCode?.trim().toUpperCase();
     if (code) {
       const c = await this.prisma.coupon.findUnique({ where: { tenantId_code: { tenantId, code } } });
@@ -289,19 +291,29 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         phone ? this.prisma.order.count({ where: { ...used, customerPhone: phone } }) : null,
         phone && c.firstOrderOnly ? this.prisma.order.count({ where: { tenantId, customerPhone: phone, status: { not: 'CANCELLED' } } }) : null,
       ]);
-      const promoItemsCents = priced.items.filter((i) => i.listUnitPriceCents > i.unitPriceCents).reduce((s, i) => s + i.totalCents, 0);
+      const items = priced.items.map((i) => ({ productId: i.productId, totalCents: i.totalCents, promo: i.listUnitPriceCents > i.unitPriceCents }));
+      const productNames = await this.couponProductNames(tenantId, c.productIds);
+      const counted = c.productIds.length ? items.filter((i) => c.productIds.includes(i.productId)) : items;
       try {
         const discountCents = couponDiscount(c, {
           now,
           subtotalCents: priced.subtotalCents,
-          promoItemsCents,
+          items,
+          productNames,
           deliveryFeeCents: priced.deliveryFeeCents,
           orderType: input.type,
           usesTotal,
           usesByCustomer,
           customerHasOrders: customerOrders == null ? null : customerOrders > 0,
         });
-        coupon = { id: c.id, code: c.code, discountCents, label: couponLabel(c), promoExcluded: c.type !== 'FREE_DELIVERY' && !c.combinesWithPromo && promoItemsCents > 0 };
+        coupon = {
+          id: c.id,
+          code: c.code,
+          discountCents,
+          label: couponLabel(c, productNames),
+          fundedBy: c.fundedBy,
+          promoExcluded: c.type !== 'FREE_DELIVERY' && !c.combinesWithPromo && counted.some((i) => i.promo),
+        };
       } catch (err) {
         if (err instanceof CouponError) throw new BadRequestException(err.message);
         throw err;
@@ -313,6 +325,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException(`O troco precisa ser para um valor maior que o total (R$ ${(totalCents / 100).toFixed(2).replace('.', ',')}).`);
     }
     return { priced, costOf, coupon, totalCents };
+  }
+
+  /** Nomes dos produtos de um cupom de produto (para o rótulo e as mensagens). */
+  private async couponProductNames(tenantId: string, ids: string[]) {
+    if (!ids.length) return [];
+    const products = await this.prisma.product.findMany({ where: { tenantId, id: { in: ids } }, select: { name: true } });
+    return products.map((p) => p.name);
   }
 
   /** Conta do carrinho antes de fechar: subtotal, taxa, promoções e cupom, calculados pelo servidor. */
@@ -387,6 +406,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           discountCents: coupon?.discountCents ?? 0,
           couponId: coupon?.id ?? null,
           couponCode: coupon?.code ?? null,
+          couponFundedBy: coupon?.fundedBy ?? null,
           deliveryFeeCents: priced.deliveryFeeCents,
           totalCents: totalCents,
           paymentMethod: dto.paymentMethod,

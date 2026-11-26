@@ -22,6 +22,8 @@ interface Coupon {
   maxUsesPerCustomer: number | null;
   firstOrderOnly: boolean;
   combinesWithPromo: boolean;
+  productIds: string[];
+  fundedBy: 'RESTAURANT' | 'PLATFORM';
   public: boolean;
   active: boolean;
   label: string;
@@ -61,6 +63,7 @@ interface Form {
   perCustomer: string;
   firstOrderOnly: boolean;
   combinesWithPromo: boolean;
+  productIds: string[];
   public: boolean;
 }
 
@@ -78,6 +81,7 @@ const EMPTY: Form = {
   perCustomer: '1',
   firstOrderOnly: false,
   combinesWithPromo: false,
+  productIds: [],
   public: true,
 };
 
@@ -95,6 +99,7 @@ const fromCoupon = (c: Coupon): Form => ({
   perCustomer: c.maxUsesPerCustomer ? String(c.maxUsesPerCustomer) : '',
   firstOrderOnly: c.firstOrderOnly,
   combinesWithPromo: c.combinesWithPromo,
+  productIds: c.productIds,
   public: c.public,
 });
 
@@ -129,6 +134,7 @@ function toBody(f: Form): Record<string, unknown> | string {
     maxUsesPerCustomer: int(f.perCustomer),
     firstOrderOnly: f.firstOrderOnly,
     combinesWithPromo: f.combinesWithPromo,
+    productIds: f.type === 'FREE_DELIVERY' ? [] : f.productIds,
     public: f.public,
   };
 }
@@ -146,17 +152,29 @@ function rulesLine(c: Coupon) {
   return parts.join(' · ');
 }
 
-export function CouponsEditor({ canEdit }: { canEdit: boolean }) {
+type MenuCategory = { id: string; name: string; products: { id: string; name: string }[] };
+
+/**
+ * Cupons do restaurante. No painel do restaurante usa o restaurante atual;
+ * no admin da Delivery360 recebe o tenantId do cadastro aberto.
+ */
+export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit: boolean; tenantId?: string; platform?: boolean }) {
+  const tenant = tenantId ?? true;
   const [coupons, setCoupons] = useState<Coupon[] | null>(null);
+  const [menu, setMenu] = useState<MenuCategory[]>([]);
   const [form, setForm] = useState<Form | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = () => api<Coupon[]>('/cardapio/coupons', { tenant: true }).then(setCoupons).catch((e) => setError(e.message));
+  const load = () => api<Coupon[]>('/cardapio/coupons', { tenant }).then(setCoupons).catch((e) => setError(e.message));
   useEffect(() => {
     void load();
-  }, []);
+    api<MenuCategory[]>('/cardapio/menu', { tenant })
+      .then(setMenu)
+      .catch(() => setMenu([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   async function run(fn: () => Promise<unknown>) {
     setError(null);
@@ -177,7 +195,7 @@ export function CouponsEditor({ canEdit }: { canEdit: boolean }) {
     if (typeof body === 'string') return setError(body);
     setSaving(true);
     const ok = await run(() =>
-      editing ? api(`/cardapio/coupons/${editing}`, { method: 'PATCH', body, tenant: true }) : api('/cardapio/coupons', { method: 'POST', body, tenant: true }),
+      editing ? api(`/cardapio/coupons/${editing}`, { method: 'PATCH', body, tenant }) : api('/cardapio/coupons', { method: 'POST', body, tenant }),
     );
     setSaving(false);
     if (ok) {
@@ -188,7 +206,7 @@ export function CouponsEditor({ canEdit }: { canEdit: boolean }) {
 
   async function remove(c: Coupon) {
     const msg = c.uses ? `${c.code} já foi usado em ${c.uses} pedido(s). Ele será desativado e continua no histórico. Continuar?` : `Apagar o cupom ${c.code}?`;
-    if (window.confirm(msg)) await run(() => api(`/cardapio/coupons/${c.id}`, { method: 'DELETE', tenant: true }));
+    if (window.confirm(msg)) await run(() => api(`/cardapio/coupons/${c.id}`, { method: 'DELETE', tenant }));
   }
 
   if (!coupons) return error ? <ErrorBox message={error} /> : <Spinner />;
@@ -203,8 +221,8 @@ export function CouponsEditor({ canEdit }: { canEdit: boolean }) {
           <div className="flex-1">
             <h2 className="font-semibold">Cupons da loja</h2>
             <p className="text-sm text-zinc-500">
-              O cliente digita o código no carrinho. Os marcados como &quot;Na loja&quot; aparecem para todos no topo do cardápio. O desconto entra no
-              financeiro em 2.4 Descontos e cupons.
+              O cliente digita o código no carrinho. Os marcados como &quot;Na loja&quot; aparecem para todos no topo do cardápio. O desconto dos cupons
+              do restaurante entra no financeiro em 2.4 Descontos e cupons. Os bancados pela Delivery360 viram valor a receber da Delivery360.
             </p>
           </div>
           {canEdit && !form && (
@@ -231,6 +249,11 @@ export function CouponsEditor({ canEdit }: { canEdit: boolean }) {
       {form && (
         <form onSubmit={save} className="card space-y-4">
           <h3 className="font-semibold">{editing ? `Editar ${form.code}` : 'Novo cupom'}</h3>
+          {platform && !editing && (
+            <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+              Você está na equipe Delivery360: este cupom é bancado pela Delivery360. O restaurante recebe o valor do desconto de nós e não paga nada.
+            </p>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="label" htmlFor="c-code">Código</label>
@@ -265,6 +288,8 @@ export function CouponsEditor({ canEdit }: { canEdit: boolean }) {
               ))}
             </div>
           </div>
+
+          {form.type !== 'FREE_DELIVERY' && <ProductPicker menu={menu} value={form.productIds} onChange={(productIds) => setForm({ ...form, productIds })} />}
 
           <div className="grid gap-3 sm:grid-cols-3">
             {form.type !== 'FREE_DELIVERY' && (
@@ -373,6 +398,7 @@ export function CouponsEditor({ canEdit }: { canEdit: boolean }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{c.label}</span>
                   {c.public ? <Badge tone="green">Na loja</Badge> : <Badge>Só com código</Badge>}
+                  {c.fundedBy === 'PLATFORM' && <Badge tone="amber">Bancado pela Delivery360</Badge>}
                 </div>
                 <p className="text-xs text-zinc-500">{rulesLine(c)}</p>
               </div>
@@ -382,8 +408,8 @@ export function CouponsEditor({ canEdit }: { canEdit: boolean }) {
                 </div>
                 <div>{formatBRL(c.discountGivenCents)} de desconto</div>
               </div>
-              <Toggle checked={c.active} disabled={!canEdit} onChange={(v) => run(() => api(`/cardapio/coupons/${c.id}`, { method: 'PATCH', body: { active: v }, tenant: true }))} />
-              {canEdit && (
+              <Toggle checked={c.active} disabled={!canEdit || (c.fundedBy === 'PLATFORM' && !platform)} onChange={(v) => run(() => api(`/cardapio/coupons/${c.id}`, { method: 'PATCH', body: { active: v }, tenant }))} />
+              {canEdit && (c.fundedBy !== 'PLATFORM' || platform) && (
                 <div className="flex gap-3 text-xs">
                   <button
                     className="text-[var(--brand)] hover:underline"
@@ -428,5 +454,71 @@ function Check({ checked, onChange, label, hint }: { checked: boolean; onChange:
         <span className="block text-xs text-zinc-500">{hint}</span>
       </span>
     </label>
+  );
+}
+
+/** "Vale para": pedido inteiro ou só alguns produtos/combos do cardápio. */
+function ProductPicker({ menu, value, onChange }: { menu: MenuCategory[]; value: string[]; onChange: (ids: string[]) => void }) {
+  const [some, setSome] = useState(value.length > 0);
+  const [q, setQ] = useState('');
+  const term = q.trim().toLowerCase();
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div>
+      <span className="label">Vale para</span>
+      <div className="flex flex-wrap gap-1 rounded-lg bg-zinc-100 p-1">
+        {[
+          { on: false, label: 'O pedido inteiro' },
+          { on: true, label: 'Só alguns produtos ou combos' },
+        ].map((o) => (
+          <button
+            type="button"
+            key={o.label}
+            onClick={() => {
+              setSome(o.on);
+              if (!o.on) onChange([]);
+            }}
+            className={`flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-sm ${some === o.on ? 'bg-white font-medium shadow-sm' : 'text-zinc-600'}`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {some && (
+        <div className="mt-2 rounded-lg border border-zinc-200 p-3">
+          <input className="input mb-2" type="search" placeholder="Buscar produto" value={q} onChange={(e) => setQ(e.target.value)} />
+          <div className="max-h-56 space-y-3 overflow-y-auto">
+            {menu.map((c) => {
+              const products = c.products.filter((p) => !term || p.name.toLowerCase().includes(term));
+              if (!products.length) return null;
+              return (
+                <div key={c.id}>
+                  <p className="mb-1 text-xs font-semibold uppercase text-zinc-500">{c.name}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {products.map((p) => {
+                      const on = value.includes(p.id);
+                      return (
+                        <button
+                          type="button"
+                          key={p.id}
+                          onClick={() => toggle(p.id)}
+                          className={`rounded-full border px-3 py-1 text-sm ${on ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-zinc-300 text-zinc-700'}`}
+                        >
+                          {on ? '✓ ' : ''}
+                          {p.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            {value.length ? `${value.length} selecionado(s). O desconto é calculado só sobre esses itens.` : 'Escolha pelo menos um produto.'}
+          </p>
+        </div>
+      )}
+    </div>
   );
 }

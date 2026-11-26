@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import crypto from 'node:crypto';
 
 process.env.DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? 'postgresql://delivery:delivery@localhost:5432/delivery360_test?schema=public';
@@ -331,6 +332,42 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
 
     const list = (await owner().get('/cardapio/coupons')).body;
     expect(list.find((c: { code: string }) => c.code === 'BEMVINDO10')).toMatchObject({ uses: 1, discountGivenCents: 1000, salesCents: 11200 });
+
+    // Cupom de produto: desconto só sobre a pizza; sem ela no carrinho, explica.
+    const refri = (await owner().post('/cardapio/products').send({ categoryId: ids.cat, name: 'Refri lata', priceCents: 600 })).body.id;
+    expect((await owner().post('/cardapio/coupons').send({ code: 'PIZZA20', type: 'PERCENT', value: 2000, productIds: [crypto.randomUUID()] })).status).toBe(400);
+    const pz = await owner().post('/cardapio/coupons').send({ code: 'PIZZA20', type: 'PERCENT', value: 2000, productIds: [ids.pizza], public: true });
+    expect(pz.status).toBe(201);
+    expect((await http().get(`/public/stores/${slug}`)).body.coupons.find((c: { code: string }) => c.code === 'PIZZA20').label).toBe('20% off em Calabresa');
+    const mix = [
+      { productId: ids.pizza, quantity: 1, optionIds: [ids.tradicional] },
+      { productId: refri, quantity: 2 },
+    ];
+    const pq = (await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', zoneId: ids.centro, items: mix, couponCode: 'PIZZA20' })).body;
+    expect(pq).toMatchObject({ subtotalCents: 5700, discountCents: 900 });
+    const onlyRefri = await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', zoneId: ids.centro, items: [{ productId: refri, quantity: 5 }], couponCode: 'PIZZA20' });
+    expect(onlyRefri.body.message).toBe('Este cupom vale só para Calabresa. Coloque no carrinho para usar.');
+    await owner().delete(`/cardapio/products/${refri}`);
+
+    // Cupom da Delivery360 (criado pela equipe no cadastro do restaurante): o restaurante não mexe e não paga.
+    const staff = as(adminToken);
+    const d360 = await staff.post('/cardapio/coupons').send({ code: 'D360PIZZA', type: 'FIXED', value: 800, productIds: [ids.pizza], maxUsesPerCustomer: null });
+    expect(d360.body).toMatchObject({ fundedBy: 'PLATFORM' });
+    expect((await owner().patch(`/cardapio/coupons/${d360.body.id}`).send({ active: false })).status).toBe(403);
+    expect((await owner().delete(`/cardapio/coupons/${d360.body.id}`)).status).toBe(403);
+    const boosted = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY', couponCode: 'D360PIZZA', customer: { name: 'Bia', phone: '(11) 93333-4444' } }));
+    expect(boosted.body).toMatchObject({ discountCents: 800, totalCents: 11600 + 600 - 800 });
+    const bRow = await prisma.order.findUniqueOrThrow({ where: { trackingCode: boosted.body.trackingCode } });
+    await app.get(GestaoSyncService).processPending(tenantId);
+    const bEntries: { externalKey: string; amountCents: number; type: string; status: string; counterparty: string | null; account: { code: string } }[] =
+      await prisma.financialEntry.findMany({ where: { tenantId, externalKey: { startsWith: `order:${bRow.id}:` } }, include: { account: true } });
+    const bBy = (k: string) => bEntries.find((e) => e.externalKey === `order:${bRow.id}:${k}`);
+    expect(bBy('sale')).toMatchObject({ amountCents: bRow.totalCents });
+    expect(bBy('coupon')).toBeUndefined();
+    expect(bBy('coupon360')).toMatchObject({ type: 'RECEIVABLE', amountCents: 800, status: 'OPEN', counterparty: 'Delivery360', account: { code: '1.2' } });
+    expect((await staff.delete(`/cardapio/coupons/${d360.body.id}`)).body).toEqual({ deleted: false, deactivated: true });
 
     // Cupom já usado não é apagado, só desativado; o que nunca foi usado some.
     expect((await owner().delete(`/cardapio/coupons/${created.body.id}`)).body).toEqual({ deleted: false, deactivated: true });

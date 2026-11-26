@@ -97,6 +97,8 @@ export interface PublicCoupon {
   label: string;
   description: string | null;
   type: 'PERCENT' | 'FIXED' | 'FREE_DELIVERY';
+  /** Só vale para estes produtos ou combos (vazio = pedido inteiro). */
+  productIds: string[];
   minOrderCents: number;
   firstOrderOnly: boolean;
   /** Dias em que vale (0 = domingo). Vazio = todos. */
