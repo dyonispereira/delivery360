@@ -67,6 +67,7 @@ export class CouponsService {
     if (platform) dto = { ...dto, code: `IMPULSO-${randomBytes(4).toString('hex').toUpperCase()}`, public: false };
     if (!dto.code) throw new BadRequestException('Informe o código do cupom.');
     await this.checkProducts(tenantId, dto.productIds);
+    await this.checkCampaignCode(tenantId, dto.code);
     const data = this.check({ ...dto, code: dto.code.toUpperCase() });
     try {
       const c = await this.prisma.coupon.create({
@@ -99,6 +100,7 @@ export class CouponsService {
       endsAt: dto.endsAt === undefined ? before.endsAt?.toISOString() : dto.endsAt,
     });
     await this.checkProducts(tenantId, dto.productIds);
+    if (dto.code) await this.checkCampaignCode(tenantId, dto.code);
     const data = this.check({ ...dto, code: dto.code?.toUpperCase() });
     try {
       const after = await this.prisma.coupon.update({ where: { id }, data });
@@ -161,6 +163,14 @@ export class CouponsService {
     if (!ids?.length) return;
     const found = await this.prisma.product.count({ where: { tenantId, id: { in: [...new Set(ids)] } } });
     if (found !== new Set(ids).size) throw new BadRequestException('Um dos produtos do cupom não existe neste cardápio.');
+  }
+
+  /** O código não pode ser o de uma campanha da rede que passa nesta loja. */
+  private async checkCampaignCode(tenantId: string, code: string) {
+    const clash = await this.prisma.campaign.count({
+      where: { couponCode: code.toUpperCase(), OR: [{ tenantIds: { isEmpty: true } }, { tenantIds: { has: tenantId } }] },
+    });
+    if (clash) throw new ConflictException('Esse código já é de uma campanha da Delivery360. Escolha outro.');
   }
 
   private duplicate(e: unknown) {

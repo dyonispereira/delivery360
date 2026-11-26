@@ -101,9 +101,10 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           code: '1.2',
           description: `Pedido #${order.number}${order.type === 'PICKUP' ? ' (retirada)' : ''}`,
           counterparty: order.customerName,
-          // Receita pelo preço normal; preço de/por e cupom do restaurante entram logo abaixo como desconto (2.4).
-          // O impulso Delivery360 não é desconto do restaurante: vira um valor a receber da Delivery360 (abaixo).
-          amountCents: order.totalCents + order.promoDiscountCents + order.discountCents,
+          // Receita pelo preço normal; preço de/por e a parte do cupom que é do restaurante entram logo abaixo
+          // como desconto (2.4). O que a Delivery360 banca (impulso e sua parte no cupom de campanha) não é
+          // desconto do restaurante: vira um valor a receber da Delivery360 (abaixo).
+          amountCents: order.totalCents + order.promoDiscountCents + order.discountCents - order.couponPlatformCents,
           day,
           status: online ? 'PAID' : 'OPEN',
           source: 'cardapio',
@@ -125,13 +126,14 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
             channel: 'LOJA',
           });
         }
-        if (order.platformDiscountCents > 0) {
+        const from360 = order.platformDiscountCents + order.couponPlatformCents;
+        if (from360 > 0) {
           await this.upsert(tx, t, `order:${order.id}:coupon360`, {
             type: 'RECEIVABLE',
             code: '1.2',
-            description: `Desconto especial bancado pela Delivery360 · pedido #${order.number}`,
+            description: `Desconto bancado pela Delivery360 · pedido #${order.number}`,
             counterparty: 'Delivery360',
-            amountCents: order.platformDiscountCents,
+            amountCents: from360,
             day,
             // A Delivery360 repassa depois: fica em aberto até o repasse.
             status: 'OPEN',
@@ -139,13 +141,14 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
             channel: 'LOJA',
           });
         }
-        if (order.discountCents > 0) {
+        const restaurantCoupon = order.discountCents - order.couponPlatformCents;
+        if (restaurantCoupon > 0) {
           await this.upsert(tx, t, `order:${order.id}:coupon`, {
             type: 'PAYABLE',
             code: '2.4',
             description: `Cupom ${order.couponCode ?? ''} · pedido #${order.number}`.replace(/ +/g, ' '),
             counterparty: order.customerName,
-            amountCents: order.discountCents,
+            amountCents: restaurantCoupon,
             day,
             status: online ? 'PAID' : 'OPEN',
             source: 'cardapio',
@@ -314,6 +317,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         discountCents: true,
         couponCode: true,
         platformDiscountCents: true,
+        couponPlatformCents: true,
         paymentMethod: true,
         channel: true,
         externalCode: true,

@@ -346,3 +346,34 @@ export class ComboDto {
   @IsOptional() @IsBoolean() active?: boolean;
   @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => ComboStepDto) steps: ComboStepDto[];
 }
+
+// ---------- Campanhas da rede (equipe Delivery360) ----------
+
+export class CampaignDto {
+  @IsString() @MaxLength(60) title: string;
+  @IsOptional() @IsString() @MaxLength(120) subtitle?: string | null;
+  @IsUrl({ require_protocol: true, require_tld: false }, { message: 'Informe o link da imagem do banner (https://...).' }) imageUrl: string;
+  /** Lojas da campanha. Vazio = todas. */
+  @IsOptional() @IsArray() @ArrayMaxSize(500) @IsUUID('all', { each: true }) tenantIds?: string[];
+  @IsOptional() @IsISO8601() startsAt?: string | null;
+  @IsOptional() @IsISO8601() endsAt?: string | null;
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(1000) position?: number;
+  /** Sem código = só banner. */
+  @IsOptional() @IsString() @Matches(COUPON_CODE, { message: 'Código: de 3 a 20 letras ou números, sem espaços.' }) couponCode?: string | null;
+  @IsOptional() @IsIn(['PERCENT', 'FIXED', 'FREE_DELIVERY']) type?: 'PERCENT' | 'FIXED' | 'FREE_DELIVERY';
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) value?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(MAX_CENTS) maxDiscountCents?: number | null;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) minOrderCents?: number;
+  @IsOptional() @IsArray() @ArrayMaxSize(7) @IsInt({ each: true }) @Min(0, { each: true }) @Max(6, { each: true }) weekdays?: number[];
+  @IsOptional() @IsInt() @Min(1) @Max(1_000_000) maxUses?: number | null;
+  @IsOptional() @IsInt() @Min(1) @Max(1000) maxUsesPerCustomer?: number | null;
+  @IsOptional() @IsBoolean() firstOrderOnly?: boolean;
+  @IsOptional() @IsBoolean() combinesWithPromo?: boolean;
+  /** Parte do desconto bancada pela Delivery360 (10000 = 100%; 0 = tudo do restaurante). */
+  @IsOptional() @IsInt() @Min(0) @Max(10_000) platformShareBps?: number;
+}
+
+export class CampaignParticipationDto {
+  @IsBoolean() participating: boolean;
+}

@@ -12,6 +12,7 @@ import {
   type OrderQuote,
   type OrderTracking,
   type PaymentMethod,
+  type PublicBanner,
   type PublicCoupon,
   type PublicOffer,
   type PublicProduct,
@@ -228,6 +229,8 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
             <label className="sr-only" htmlFor="busca">Buscar no cardápio</label>
             <input id="busca" className="input py-3" type="search" placeholder="Buscar no cardápio" value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
+
+          {!q && data.banners.length > 0 && <BannerCarousel banners={data.banners} onPick={pickCoupon} />}
 
           {!q && storeWide.length > 0 && (
             <div className="mx-4 mt-4 rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-900" role="note">
@@ -1237,6 +1240,59 @@ function couponFinePrint(c: PublicCoupon) {
 }
 
 /** Faixa de cupons no topo da loja, com cara de ticket. */
+/** Banners das campanhas (criados pela Delivery360). Passa sozinho; o que tem cupom aplica ao tocar. */
+function BannerCarousel({ banners, onPick }: { banners: PublicBanner[]; onPick: (code: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    if (banners.length < 2) return;
+    const t = setInterval(() => {
+      const el = ref.current;
+      if (!el || el.matches(':hover')) return;
+      const next = (Math.round(el.scrollLeft / el.clientWidth) + 1) % banners.length;
+      el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' });
+    }, 5000);
+    return () => clearInterval(t);
+  }, [banners.length]);
+
+  return (
+    <section className="px-4 pt-4" aria-label="Campanhas">
+      <div
+        ref={ref}
+        className="flex snap-x snap-mandatory overflow-x-auto rounded-2xl [scrollbar-width:none]"
+        onScroll={(e) => setIndex(Math.round(e.currentTarget.scrollLeft / e.currentTarget.clientWidth))}
+      >
+        {banners.map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            className="relative aspect-[16/7] w-full shrink-0 snap-start overflow-hidden text-left"
+            onClick={() => b.couponCode && onPick(b.couponCode)}
+            aria-label={b.couponCode ? `${b.title}: usar cupom ${b.couponCode}` : b.title}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={b.imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            <span className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/30 to-transparent" />
+            <span className="relative flex h-full max-w-[70%] flex-col justify-end gap-1 p-4 text-white">
+              <span className="text-lg font-bold leading-tight">{b.title}</span>
+              {b.subtitle && <span className="text-sm text-white/90">{b.subtitle}</span>}
+              {b.couponCode && <span className="mt-1 w-fit rounded-full bg-white px-3 py-1 text-xs font-bold text-zinc-900">Usar cupom {b.couponCode}</span>}
+            </span>
+          </button>
+        ))}
+      </div>
+      {banners.length > 1 && (
+        <div className="mt-2 flex justify-center gap-1.5" aria-hidden>
+          {banners.map((b, i) => (
+            <span key={b.id} className={`h-1.5 rounded-full transition-all ${i === index ? 'w-5 bg-[var(--brand)]' : 'w-1.5 bg-zinc-300'}`} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function CouponStrip({ coupons, applied, onPick }: { coupons: PublicCoupon[]; applied: string | null; onPick: (code: string) => void }) {
   return (
     <section className="pt-5" aria-label="Cupons">

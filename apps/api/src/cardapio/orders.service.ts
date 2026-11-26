@@ -21,6 +21,7 @@ import { activePromoPrice, effectivePrice, unitCost, type CostItem } from '@deli
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
 import { ACTIVE_STATUSES, canTransition } from './order-status';
 import { AuditService } from '../core/audit.service';
+import { CampaignsService, campaignRule, fundedByShare, platformPart } from './campaigns.service';
 import { closeBatchIfDone } from '../entregas/batch-utils';
 
 /** Pagamentos que dependem de confirmação do gateway antes de o pedido entrar na operação. */
@@ -77,6 +78,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly events: EventsService,
     private readonly audit: AuditService,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
+    private readonly campaigns: CampaignsService,
   ) {}
 
   onModuleInit() {
@@ -115,7 +117,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const store = await this.findPublicStore(slug);
     const tenantId = store.tenantId;
     const now = new Date();
-    const [categories, zones, ratings, top, coupons] = await Promise.all([
+    const [categories, zones, ratings, top, coupons, banners] = await Promise.all([
       this.prisma.menuCategory.findMany({
         where: { tenantId, active: true },
         orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
@@ -195,6 +197,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           },
         },
       }),
+      // Banners das campanhas da rede (criados pela equipe Delivery360).
+      this.campaigns.banners(tenantId, now),
     ]);
     const names = new Map(categories.flatMap((c) => c.products.map((p) => [p.id, p.name] as const)));
     const visible = new Set(categories.flatMap((c) => c.products.filter((p) => p.available).map((p) => p.id)));
@@ -245,6 +249,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           endsAt: c.endsAt,
         })),
       topProductIds: top.map((t) => t.productId!).filter((id) => visible.has(id)).slice(0, 8),
+      banners,
       zones,
     };
   }
@@ -390,23 +395,52 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const items = priced.items.map((i) => ({ productId: i.productId, totalCents: i.totalCents, promo: i.listUnitPriceCents > i.unitPriceCents }));
     const base = { now, subtotalCents: priced.subtotalCents, items, deliveryFeeCents: priced.deliveryFeeCents, orderType: input.type };
 
-    // Cupom do restaurante: só pelo código que o cliente digitou.
-    let coupon: { id: string; code: string; discountCents: number; label: string; promoExcluded: boolean } | null = null;
+    // Cupom pelo código que o cliente digitou: o da loja ou o de uma campanha da rede de que a loja participa.
+    let coupon: {
+      id: string | null;
+      campaignId: string | null;
+      code: string;
+      discountCents: number;
+      /** Parte do desconto bancada pela Delivery360 (campanha). */
+      platformCents: number;
+      fundedBy: 'RESTAURANT' | 'PLATFORM' | 'MIXED';
+      label: string;
+      promoExcluded: boolean;
+    } | null = null;
     const code = input.couponCode?.trim().toUpperCase();
     if (code) {
       const c = await this.prisma.coupon.findUnique({ where: { tenantId_code: { tenantId, code } } });
-      if (!c || c.fundedBy !== 'RESTAURANT') throw new BadRequestException('Cupom não encontrado. Confira o código.');
-      const productNames = await this.couponProductNames(tenantId, c.productIds);
+      const campaign = !c ? await this.campaigns.findCoupon(tenantId, code) : null;
       try {
-        const discountCents = couponDiscount(c, { ...base, productNames, ...(await this.couponUses(tenantId, c, 'couponId', phone)) });
-        const counted = c.productIds.length ? items.filter((i) => c.productIds.includes(i.productId)) : items;
-        coupon = {
-          id: c.id,
-          code: c.code,
-          discountCents,
-          label: couponLabel(c, productNames),
-          promoExcluded: c.type !== 'FREE_DELIVERY' && !c.combinesWithPromo && counted.some((i) => i.promo),
-        };
+        if (c && c.fundedBy === 'RESTAURANT') {
+          const productNames = await this.couponProductNames(tenantId, c.productIds);
+          const discountCents = couponDiscount(c, { ...base, productNames, ...(await this.couponUses(tenantId, c, 'couponId', phone)) });
+          const counted = c.productIds.length ? items.filter((i) => c.productIds.includes(i.productId)) : items;
+          coupon = {
+            id: c.id,
+            campaignId: null,
+            code: c.code,
+            discountCents,
+            platformCents: 0,
+            fundedBy: 'RESTAURANT',
+            label: couponLabel(c, productNames),
+            promoExcluded: c.type !== 'FREE_DELIVERY' && !c.combinesWithPromo && counted.some((i) => i.promo),
+          };
+        } else if (campaign) {
+          const discountCents = couponDiscount(campaignRule(campaign), { ...base, ...(await this.campaigns.uses(tenantId, campaign, phone)) });
+          coupon = {
+            id: null,
+            campaignId: campaign.id,
+            code,
+            discountCents,
+            platformCents: platformPart(discountCents, campaign.platformShareBps),
+            fundedBy: fundedByShare(campaign.platformShareBps),
+            label: couponLabel(campaign),
+            promoExcluded: campaign.type !== 'FREE_DELIVERY' && !campaign.combinesWithPromo && items.some((i) => i.promo),
+          };
+        } else {
+          throw new BadRequestException('Cupom não encontrado. Confira o código.');
+        }
       } catch (err) {
         if (err instanceof CouponError) throw new BadRequestException(err.message);
         throw err;
@@ -529,7 +563,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           discountCents: coupon?.discountCents ?? 0,
           couponId: coupon?.id ?? null,
           couponCode: coupon?.code ?? null,
-          couponFundedBy: coupon ? 'RESTAURANT' : null,
+          couponFundedBy: coupon?.fundedBy ?? null,
+          campaignId: coupon?.campaignId ?? null,
+          couponPlatformCents: coupon?.platformCents ?? 0,
           platformDiscountCents: boost?.discountCents ?? 0,
           platformCouponId: boost?.id ?? null,
           deliveryFeeCents: priced.deliveryFeeCents,
