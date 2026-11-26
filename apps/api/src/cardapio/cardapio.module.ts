@@ -6,10 +6,11 @@ import { OrdersService } from './orders.service';
 import { ChannelsController } from './channels.controller';
 import { ChannelOrdersService } from './channel-orders.service';
 import { CouponsService } from './coupons.service';
+import { CombosService } from './combos.service';
 
 @Module({
   controllers: [CardapioManageController, ChannelsController, PublicController],
-  providers: [CatalogService, OrdersService, ChannelOrdersService, CouponsService],
+  providers: [CatalogService, OrdersService, ChannelOrdersService, CouponsService, CombosService],
   exports: [OrdersService],
 })
 export class CardapioModule {}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { activePromoPrice, CHANNEL_LABELS, costSheet, DEFAULT_RATES, discountPct, formatBRL, parseBRL, type ChannelPrices, type FinanceRates } from '@delivery360/shared';
 import { CostSheetEditor, type RatesInfo } from './cost-sheet';
+import { ComboEditor } from './combo-editor';
 import { Badge, ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { Category, Group, Product } from './types';
@@ -23,6 +24,8 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
   const [newCategory, setNewCategory] = useState('');
   const [editing, setEditing] = useState<{ product: Partial<Product> & { categoryId: string } } | null>(null);
   const [rates, setRates] = useState<RatesInfo | null>(null);
+  /** Combo aberto no editor de combos (null = criando um novo). */
+  const [combo, setCombo] = useState<{ product: Product | null } | null>(null);
 
   useEffect(() => {
     if (!canEdit) return;
@@ -72,6 +75,16 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
           >
             <input className="input" placeholder="Nova categoria (ex.: Pizzas, Bebidas)" required value={newCategory} onChange={(e) => setNewCategory(e.target.value)} />
             <button className="btn-ghost whitespace-nowrap">Criar categoria</button>
+            <button
+              type="button"
+              className="btn-primary whitespace-nowrap"
+              onClick={() => {
+                setEditing(null);
+                setCombo({ product: null });
+              }}
+            >
+              Criar combo
+            </button>
           </form>
         )}
         {menu.length === 0 && <div className="card text-sm text-zinc-500">Comece criando uma categoria e depois os produtos.</div>}
@@ -112,9 +125,20 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
                   ) : (
                     <div className="h-12 w-12 shrink-0 rounded-lg bg-zinc-100" />
                   )}
-                  <button className="min-w-0 flex-1 text-left" onClick={() => setEditing({ product: p })}>
+                  <button
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => {
+                      if (p.isCombo && canEdit) {
+                        setEditing(null);
+                        setCombo({ product: p });
+                      } else {
+                        setCombo(null);
+                        setEditing({ product: p });
+                      }
+                    }}
+                  >
                     <div className="font-medium">
-                      {p.name} {!p.active && <Badge tone="amber">Fora do cardápio</Badge>}
+                      {p.name} {p.isCombo && <Badge tone="green">Combo</Badge>} {!p.active && <Badge tone="amber">Fora do cardápio</Badge>}
                     </div>
                     <div className="text-xs text-zinc-500">
                       {formatBRL(p.priceCents)}
@@ -125,8 +149,10 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
                       )}
                       {p.promoPriceCents != null && activePromoPrice(p) == null && <span className="ml-1 text-zinc-400">· promoção fora do período</span>}
                       {p.pdvCode && ` · PDV ${p.pdvCode}`}
-                      {p.optionGroups.length > 0 && ` · ${p.optionGroups.length} grupo(s) de adicionais`}
-                      {canEdit && <MarginChip product={p} rates={rates ?? DEFAULT_RATES} />}
+                      {p.isCombo
+                        ? ` · ${p.optionGroups.map((g) => g.name).join(' + ')}`
+                        : p.optionGroups.length > 0 && ` · ${p.optionGroups.length} grupo(s) de adicionais`}
+                      {canEdit && !p.isCombo && <MarginChip product={p} rates={rates ?? DEFAULT_RATES} />}
                     </div>
                   </button>
                   <label className="flex items-center gap-2 text-xs text-zinc-600">
@@ -137,13 +163,30 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
               ))}
             </ul>
             {canEdit && (
-              <button className="text-sm text-[var(--brand)] hover:underline" onClick={() => setEditing({ product: { categoryId: c.id } })}>
+              <button className="text-sm text-[var(--brand)] hover:underline" onClick={() => {
+                  setCombo(null);
+                  setEditing({ product: { categoryId: c.id } });
+                }}>
                 + Adicionar produto
               </button>
             )}
           </section>
         ))}
       </div>
+
+      {combo && (
+        <ComboEditor
+          key={combo.product?.id ?? 'novo-combo'}
+          combo={combo.product}
+          categories={menu}
+          rates={rates}
+          onClose={() => setCombo(null)}
+          onSaved={async () => {
+            await load();
+            setCombo(null);
+          }}
+        />
+      )}
 
       {editing && editingProduct && (
         <ProductEditor

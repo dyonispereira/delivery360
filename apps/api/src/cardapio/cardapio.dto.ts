@@ -313,3 +313,36 @@ export class UpdateCouponDto {
   @IsOptional() @IsBoolean() public?: boolean;
   @IsOptional() @IsBoolean() active?: boolean;
 }
+
+// ---------- Combos ----------
+
+export class ComboOptionDto {
+  /** Opção já existente (na edição). */
+  @IsOptional() @IsUUID() id?: string;
+  /** Produto do cardápio que entra no combo. Sem ele, é um item só do combo (informe o nome). */
+  @IsOptional() @IsUUID() productId?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
+  /** Acréscimo no preço do combo ao escolher esta opção (ex.: borda recheada +R$ 8). */
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) priceCents?: number;
+  /** Custo de um item só do combo (o de produto do cardápio vem da ficha técnica dele). */
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) costCents?: number;
+}
+
+export class ComboStepDto {
+  @IsOptional() @IsUUID() id?: string;
+  /** "Escolha a pizza", "Bebida", "Inclui". */
+  @IsString() @MinLength(1) @MaxLength(80) name: string;
+  @IsInt() @Min(0) @Max(20) minSelect: number;
+  @IsInt() @Min(1) @Max(20) maxSelect: number;
+  @IsArray() @ArrayMaxSize(60) @ValidateNested({ each: true }) @Type(() => ComboOptionDto) options: ComboOptionDto[];
+}
+
+export class ComboDto {
+  @IsUUID() categoryId: string;
+  @IsString() @MinLength(1) @MaxLength(120) name: string;
+  @IsOptional() @IsString() @MaxLength(500) description?: string;
+  @IsOptional() @IsUrl({ require_protocol: true }) imageUrl?: string;
+  @IsInt() @Min(1) @Max(MAX_CENTS) priceCents: number;
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => ComboStepDto) steps: ComboStepDto[];
+}

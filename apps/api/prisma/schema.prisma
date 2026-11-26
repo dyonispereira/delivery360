@@ -314,11 +314,15 @@ model Product {
   promoPriceCents Int?        @map("promo_price_cents")
   promoStartsAt   DateTime?   @map("promo_starts_at")
   promoEndsAt     DateTime?   @map("promo_ends_at")
+  /// Combo: as etapas são os grupos de opções e cada opção pode apontar para um produto do cardápio.
+  isCombo       Boolean       @default(false) @map("is_combo")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
   tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   category      MenuCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   optionGroups  OptionGroup[]
+  /// Opções de combos que apontam para este produto.
+  comboOptions  Option[]      @relation("ComboOptionProduct")
 
   @@unique([tenantId, pdvCode])
   @@index([tenantId, categoryId, position])
@@ -352,7 +356,12 @@ model Option {
   pdvCode    String?     @map("pdv_code")
   available  Boolean     @default(true)
   position   Int         @default(0)
+  /// No combo: o produto do cardápio que esta opção representa (segue a disponibilidade e o custo dele).
+  linkedProductId String?  @map("linked_product_id") @db.Uuid
+  linkedProduct   Product? @relation("ComboOptionProduct", fields: [linkedProductId], references: [id], onDelete: Cascade)
   group      OptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([linkedProductId])
 
   @@map("options")
 }

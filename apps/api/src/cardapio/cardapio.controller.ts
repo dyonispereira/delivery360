@@ -5,6 +5,7 @@ import type { AuthUser, TenantContext } from '../access/access.types';
 import { CatalogService } from './catalog.service';
 import {
   CategoryDto,
+  ComboDto,
   CouponDto,
   UpdateCouponDto,
   OptionDto,
@@ -21,6 +22,7 @@ import {
 } from './cardapio.dto';
 import { OrdersService } from './orders.service';
 import { CouponsService } from './coupons.service';
+import { CombosService } from './combos.service';
 
 const UUID = new ParseUUIDPipe();
 
@@ -35,6 +37,7 @@ export class CardapioManageController {
     private readonly catalog: CatalogService,
     private readonly orders: OrdersService,
     private readonly coupons: CouponsService,
+    private readonly combos: CombosService,
   ) {}
 
   @Get('store')
@@ -226,5 +229,19 @@ export class CardapioManageController {
   @Delete('coupons/:id')
   removeCoupon(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string) {
     return this.coupons.remove(t.tenantId, u, id);
+  }
+
+  // ---------- Combos ----------
+
+  @TenantRoles('OWNER', 'MANAGER')
+  @Post('combos')
+  createCombo(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Body() dto: ComboDto) {
+    return this.combos.create(t.tenantId, u.id, dto);
+  }
+
+  @TenantRoles('OWNER', 'MANAGER')
+  @Put('combos/:id')
+  updateCombo(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string, @Body() dto: ComboDto) {
+    return this.combos.update(t.tenantId, u.id, id, dto);
   }
 }

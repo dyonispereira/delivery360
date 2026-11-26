@@ -30,6 +30,36 @@ const ONLINE_METHODS: PaymentMethod[] = ['PIX', 'CREDIT_CARD'];
 const FEEDBACK_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Opção indisponível se ela ou o produto do cardápio que ela representa (no combo) está em falta ou fora do cardápio. */
+function optionAvailable(o: { available: boolean; linkedProduct?: { active: boolean; available: boolean } | null }) {
+  return o.available && (!o.linkedProduct || (o.linkedProduct.active && o.linkedProduct.available));
+}
+
+interface PublicMenuProduct {
+  id: string;
+  priceCents: number;
+  promoPriceCents: number | null;
+  promoStartsAt: Date | null;
+  promoEndsAt: Date | null;
+  available: boolean;
+  isCombo: boolean;
+  costItems: Prisma.JsonValue;
+  optionGroups: {
+    id: string;
+    name: string;
+    minSelect: number;
+    maxSelect: number;
+    options: {
+      id: string;
+      name: string;
+      priceCents: number;
+      available: boolean;
+      linkedProductId: string | null;
+      linkedProduct: { active: boolean; available: boolean; priceCents: number; promoPriceCents: number | null; promoStartsAt: Date | null; promoEndsAt: Date | null } | null;
+    }[];
+  }[];
+}
+
 function trackingCode(): string {
   // 12 caracteres sem ambiguidade (sem 0/O/1/l): difícil de adivinhar, fácil de ditar.
   const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
@@ -105,6 +135,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
               promoEndsAt: true,
               imageUrl: true,
               available: true,
+              isCombo: true,
+              costItems: true,
               optionGroups: {
                 orderBy: { position: 'asc' },
                 select: {
@@ -112,7 +144,17 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
                   name: true,
                   minSelect: true,
                   maxSelect: true,
-                  options: { orderBy: { position: 'asc' }, select: { id: true, name: true, priceCents: true, available: true } },
+                  options: {
+                    orderBy: { position: 'asc' },
+                    select: {
+                      id: true,
+                      name: true,
+                      priceCents: true,
+                      available: true,
+                      linkedProductId: true,
+                      linkedProduct: { select: { active: true, available: true, priceCents: true, promoPriceCents: true, promoStartsAt: true, promoEndsAt: true } },
+                    },
+                  },
                 },
               },
             },
@@ -175,6 +217,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       categories: categories
         .filter((c) => c.products.length > 0)
         .map((c) => ({ ...c, products: c.products.map((p) => this.publicProduct(p, now)) })),
+      upsellProductIds: this.upsell(categories.flatMap((c) => c.products), top.map((t) => t.productId!), now),
       coupons: coupons
         .filter((c) => c.fundedBy === 'RESTAURANT' && (c.maxUses == null || c._count.orders < c.maxUses))
         .slice(0, 6)
@@ -207,15 +250,53 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Produto como a loja mostra: preço de hoje e, na promoção, o preço normal riscado e o fim. */
-  private publicProduct<T extends { priceCents: number; promoPriceCents: number | null; promoStartsAt: Date | null; promoEndsAt: Date | null }>(p: T, now: Date) {
-    const { promoPriceCents, promoStartsAt, promoEndsAt, ...rest } = p;
+  private publicProduct(p: PublicMenuProduct, now: Date) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { promoPriceCents, promoStartsAt, promoEndsAt, costItems, optionGroups, ...rest } = p;
     const promo = activePromoPrice(p, now);
+    const price = promo ?? p.priceCents;
+    const groups = optionGroups.map((g) => ({
+      ...g,
+      options: g.options.map((o) => ({ id: o.id, name: o.name, priceCents: o.priceCents, available: optionAvailable(o), productId: o.linkedProductId })),
+    }));
+    // Combo: quanto sairiam separados os itens mais baratos de cada etapa (só os que são produtos do cardápio).
+    let separate = 0;
+    if (p.isCombo) {
+      for (const g of optionGroups) {
+        const prices = g.options
+          .filter((o) => o.linkedProduct && optionAvailable(o))
+          .map((o) => effectivePrice(o.linkedProduct!, now) + o.priceCents)
+          .sort((a, b) => a - b);
+        separate += prices.slice(0, g.minSelect).reduce((s, x) => s + x, 0);
+      }
+    }
     return {
       ...rest,
-      priceCents: promo ?? p.priceCents,
+      optionGroups: groups,
+      priceCents: price,
       listPriceCents: promo != null ? p.priceCents : null,
       promoEndsAt: promo != null ? promoEndsAt : null,
+      /** Combo: preço dos itens comprados separados (null se não compensa mostrar). */
+      comboSeparateCents: p.isCombo && separate > price ? separate : null,
     };
+  }
+
+  /**
+   * "Peça também" no carrinho: produtos sem escolha obrigatória, que não são combo, do maior para o
+   * menor lucro por real vendido (pela ficha técnica). Sem ficha técnica, entram depois, pelos mais pedidos.
+   */
+  private upsell(products: PublicMenuProduct[], topIds: string[], now: Date) {
+    const rank = (id: string) => (topIds.includes(id) ? topIds.indexOf(id) : 999);
+    return products
+      .filter((p) => p.available && !p.isCombo && !p.optionGroups.some((g) => g.minSelect > 0))
+      .map((p) => {
+        const price = effectivePrice(p, now);
+        const cost = unitCost((p.costItems as unknown as CostItem[]) ?? []);
+        return { id: p.id, margin: cost > 0 && price > 0 ? (price - cost) / price : -1 };
+      })
+      .sort((a, b) => b.margin - a.margin || rank(a.id) - rank(b.id))
+      .slice(0, 8)
+      .map((x) => x.id);
   }
 
   /**
@@ -243,7 +324,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         where: { tenantId, id: { in: productIds } },
         include: {
           category: { select: { active: true } },
-          optionGroups: { include: { options: true } },
+          optionGroups: {
+            include: { options: { include: { linkedProduct: { select: { active: true, available: true, costItems: true } } } } },
+          },
         },
       }),
       this.prisma.deliveryZone.findMany({ where: { tenantId } }),
@@ -254,7 +337,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       const options = p.optionGroups.flatMap((g) => g.options);
       return unitCost(
         (p.costItems as unknown as CostItem[]) ?? [],
-        optionIds.map((id) => options.find((o) => o.id === id)?.costCents ?? 0),
+        optionIds.map((id) => {
+          const o = options.find((x) => x.id === id);
+          if (!o) return 0;
+          // Item de combo que é produto do cardápio: custo da ficha técnica dele.
+          return o.costCents + (o.linkedProduct ? unitCost((o.linkedProduct.costItems as unknown as CostItem[]) ?? []) : 0);
+        }),
       );
     };
     const now = new Date();
@@ -274,7 +362,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
             name: g.name,
             minSelect: g.minSelect,
             maxSelect: g.maxSelect,
-            options: g.options.map((o) => ({ id: o.id, name: o.name, priceCents: o.priceCents, available: o.available })),
+            options: g.options.map((o) => ({ id: o.id, name: o.name, priceCents: o.priceCents, available: optionAvailable(o) })),
           })),
         },
       ]),
