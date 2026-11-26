@@ -5,3 +5,4 @@ export * from './orders';
 export * from './costing';
 export * from './channels';
 export * from './reorder';
+export * from './promo';

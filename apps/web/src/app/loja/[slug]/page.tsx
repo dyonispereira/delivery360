@@ -3,6 +3,7 @@
 import { use, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  discountPct,
   formatBRL,
   parseBRL,
   rebuildOrder,
@@ -73,7 +74,7 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const [selected, setSelected] = useState<PublicProduct | null>(null);
   const [checkout, setCheckout] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [tab, setTab] = useState<'inicio' | 'pedidos'>('inicio');
+  const [tab, setTab] = useState<'inicio' | 'promos' | 'pedidos'>('inicio');
   const [query, setQuery] = useState('');
   const [past, setPast] = useState<PastOrder[]>([]);
   const [last, setLast] = useState<OrderTracking | null>(null);
@@ -151,6 +152,7 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   }
   if (!data) return <Spinner />;
   const { store } = data;
+  const promos = data.categories.flatMap((c) => c.products).filter((p) => p.listPriceCents != null && p.available);
   const top = data.topProductIds.map((id) => products.get(id)).filter((p): p is PublicProduct => !!p);
   const q = query.trim().toLowerCase();
   const categories = q
@@ -207,16 +209,22 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
             <input id="busca" className="input py-3" type="search" placeholder="Buscar no cardápio" value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
 
-          {!q && top.length >= 3 && (
-            <section className="pt-5" aria-label="Mais pedidos">
-              <h2 className="mb-2 px-4 text-lg font-bold">Mais pedidos</h2>
+          {!q && promos.length > 0 && (
+            <section className="pt-5" aria-label="Em promoção">
+              <div className="mb-2 flex items-baseline justify-between px-4">
+                <h2 className="text-lg font-bold">Em promoção</h2>
+                <button className="text-sm font-medium text-[var(--brand)]" onClick={() => setTab('promos')}>
+                  Ver todas
+                </button>
+              </div>
               <div className="flex gap-3 overflow-x-auto px-4 pb-1">
-                {top.map((p) => (
+                {promos.slice(0, 8).map((p) => (
                   <div key={p.id} className="w-36 shrink-0">
                     <div className="relative">
                       <button className="block w-full" onClick={() => setSelected(p)} disabled={!canOrder} aria-label={p.name}>
                         <ProductImage product={p} className="aspect-square w-full rounded-xl" />
                       </button>
+                      <OffBadge product={p} className="absolute left-2 top-2" />
                       {canOrder && (
                         <button
                           className="absolute bottom-2 right-2 flex h-9 w-9 items-center justify-center rounded-xl bg-white text-xl font-semibold shadow-md"
@@ -228,7 +236,36 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
                       )}
                     </div>
                     <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-tight">{p.name}</p>
-                    <p className="text-sm font-bold">{formatBRL(p.priceCents)}</p>
+                    <Price product={p} className="text-sm" />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {!q && top.length >= 3 && (
+            <section className="pt-5" aria-label="Mais pedidos">
+              <h2 className="mb-2 px-4 text-lg font-bold">Mais pedidos</h2>
+              <div className="flex gap-3 overflow-x-auto px-4 pb-1">
+                {top.map((p) => (
+                  <div key={p.id} className="w-36 shrink-0">
+                    <div className="relative">
+                      <button className="block w-full" onClick={() => setSelected(p)} disabled={!canOrder} aria-label={p.name}>
+                        <ProductImage product={p} className="aspect-square w-full rounded-xl" />
+                      </button>
+                      <OffBadge product={p} className="absolute left-2 top-2" />
+                      {canOrder && (
+                        <button
+                          className="absolute bottom-2 right-2 flex h-9 w-9 items-center justify-center rounded-xl bg-white text-xl font-semibold shadow-md"
+                          onClick={() => quickAdd(p)}
+                          aria-label={`Adicionar ${p.name}`}
+                        >
+                          +
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-tight">{p.name}</p>
+                    <Price product={p} className="text-sm" />
                   </div>
                 ))}
               </div>
@@ -253,7 +290,16 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
                       >
                         <p className={`font-semibold ${p.available ? '' : 'text-zinc-400'}`}>{p.name}</p>
                         {p.description && <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{p.description}</p>}
-                        <p className="mt-1.5 font-bold">{p.available ? formatBRL(p.priceCents) : <span className="text-sm font-medium text-zinc-400">Esgotado hoje</span>}</p>
+                        <p className="mt-1.5 flex flex-wrap items-center gap-2">
+                          {p.available ? (
+                            <>
+                              <Price product={p} />
+                              <OffBadge product={p} />
+                            </>
+                          ) : (
+                            <span className="text-sm font-medium text-zinc-400">Esgotado hoje</span>
+                          )}
+                        </p>
                       </button>
                       {(p.imageUrl || (p.available && canOrder)) && (
                         <div className="relative shrink-0">
@@ -278,6 +324,38 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
             ))}
           </div>
         </>
+      ) : tab === 'promos' ? (
+        <section className="px-4 pt-6" aria-label="Promoções">
+          <h1 className="text-2xl font-bold">Promoções</h1>
+          {promos.length === 0 ? (
+            <p className="mt-6 rounded-xl bg-zinc-50 p-4 text-sm text-zinc-600">Nenhuma promoção agora. Volte mais tarde!</p>
+          ) : (
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              {promos.map((p) => (
+                <div key={p.id}>
+                  <div className="relative">
+                    <button className="block w-full" onClick={() => setSelected(p)} disabled={!canOrder || !p.available} aria-label={p.name}>
+                      <ProductImage product={p} className="aspect-square w-full rounded-xl" />
+                    </button>
+                    <OffBadge product={p} className="absolute left-2 top-2" />
+                    {canOrder && p.available && (
+                      <button
+                        className="absolute bottom-2 right-2 flex h-9 w-9 items-center justify-center rounded-xl bg-white text-xl font-semibold shadow-md"
+                        onClick={() => quickAdd(p)}
+                        aria-label={`Adicionar ${p.name}`}
+                      >
+                        +
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-tight">{p.name}</p>
+                  <Price product={p} className="text-sm" />
+                  {p.promoEndsAt && <p className="text-xs text-zinc-500">{untilLabel(p.promoEndsAt)}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       ) : (
         <MyOrders slug={slug} past={past} canOrder={canOrder} storeName={store.displayName} onReorder={reorder} />
       )}
@@ -298,10 +376,11 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
       )}
 
       <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-zinc-200 bg-white pb-[env(safe-area-inset-bottom)]" aria-label="Navegação da loja">
-        <div className="mx-auto grid h-16 max-w-2xl grid-cols-2">
+        <div className="mx-auto grid h-16 max-w-2xl grid-cols-3">
           {(
             [
               ['inicio', 'Início', 'M3 11 12 4l9 7v9h-6v-6H9v6H3z'],
+              ['promos', 'Promoções', 'M20 12 12 20l-8-8V4h8zM8.5 7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3'],
               ['pedidos', 'Meus pedidos', 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6'],
             ] as const
           ).map(([key, label, d]) => (
@@ -356,6 +435,26 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     </main>
   );
 }
+
+/** Preço de hoje; na promoção, o preço normal riscado ao lado. */
+function Price({ product, className = '' }: { product: PublicProduct; className?: string }) {
+  return (
+    <span className={`inline-flex flex-wrap items-baseline gap-x-1.5 ${className}`}>
+      <span className="font-bold">{formatBRL(product.priceCents)}</span>
+      {product.listPriceCents != null && <s className="text-xs font-normal text-zinc-400">{formatBRL(product.listPriceCents)}</s>}
+    </span>
+  );
+}
+
+function OffBadge({ product, className = '' }: { product: PublicProduct; className?: string }) {
+  if (product.listPriceCents == null) return null;
+  const pct = discountPct(product.listPriceCents, product.priceCents);
+  if (!pct) return null;
+  return <span className={`rounded-md bg-[var(--brand)] px-1.5 py-0.5 text-xs font-bold text-white ${className}`}>−{pct}%</span>;
+}
+
+const untilLabel = (iso: string | null) =>
+  iso ? `até ${new Date(iso).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : null;
 
 function ProductImage({ product, className }: { product: PublicProduct; className: string }) {
   if (product.imageUrl) {
@@ -620,7 +719,11 @@ function ProductModal({ product, onClose, onAdd }: { product: PublicProduct; onC
       }
     >
       {product.imageUrl && <h2 className="text-xl font-bold">{product.name}</h2>}
-      <p className="mb-1 mt-1 text-lg font-bold">{formatBRL(product.priceCents)}</p>
+      <p className="mb-1 mt-1 flex flex-wrap items-center gap-2 text-lg">
+        <Price product={product} />
+        <OffBadge product={product} />
+        {product.promoEndsAt && <span className="text-xs text-zinc-500">{untilLabel(product.promoEndsAt)}</span>}
+      </p>
       {product.description && <p className="mb-4 text-sm text-zinc-600">{product.description}</p>}
 
       {product.optionGroups.map((g) => {
@@ -709,6 +812,11 @@ function Checkout({
   const [sending, setSending] = useState(false);
 
   const subtotal = cart.reduce((s, i) => s + i.unitPriceCents * i.quantity, 0);
+  const listOf = new Map(data.categories.flatMap((c) => c.products.map((p) => [p.id, p] as const)));
+  const savings = cart.reduce((s, i) => {
+    const p = listOf.get(i.productId);
+    return s + (p?.listPriceCents != null ? (p.listPriceCents - p.priceCents) * i.quantity : 0);
+  }, 0);
   const fee = type === 'DELIVERY' ? (zones.find((z) => z.id === zoneId)?.feeCents ?? 0) : 0;
   const total = subtotal + fee;
   const belowMin = subtotal < store.minOrderCents;
@@ -875,6 +983,7 @@ function Checkout({
           <div className="flex justify-between"><dt>Subtotal</dt><dd>{formatBRL(subtotal)}</dd></div>
           {type === 'DELIVERY' && <div className="flex justify-between"><dt>Entrega</dt><dd>{zoneId ? formatBRL(fee) : '—'}</dd></div>}
           <div className="flex justify-between font-semibold"><dt>Total</dt><dd>{formatBRL(total)}</dd></div>
+          {savings > 0 && <div className="flex justify-between text-emerald-700"><dt>Você economizou com as promoções</dt><dd>{formatBRL(savings)}</dd></div>}
         </dl>
         <ErrorBox message={error} />
       </div>

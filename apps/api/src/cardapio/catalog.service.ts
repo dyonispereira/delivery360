@@ -189,11 +189,31 @@ export class CatalogService {
     });
   }
 
+  /** Regras do preço de/por; devolve os campos já no formato do banco. */
+  private promo(
+    dto: { priceCents?: number; promoPriceCents?: number | null; promoStartsAt?: string | null; promoEndsAt?: string | null },
+    current?: { priceCents: number; promoPriceCents: number | null; promoStartsAt: Date | null; promoEndsAt: Date | null },
+  ) {
+    const date = (v: string | null | undefined, old: Date | null | undefined) => (v === undefined ? (old ?? null) : v ? new Date(v) : null);
+    const price = dto.priceCents ?? current?.priceCents ?? 0;
+    const promoPriceCents = dto.promoPriceCents !== undefined ? dto.promoPriceCents : (current?.promoPriceCents ?? null);
+    const promoStartsAt = date(dto.promoStartsAt, current?.promoStartsAt);
+    const promoEndsAt = date(dto.promoEndsAt, current?.promoEndsAt);
+    if (promoPriceCents != null && promoPriceCents >= price) {
+      throw new BadRequestException('O preço promocional precisa ser menor que o preço normal.');
+    }
+    if (promoStartsAt && promoEndsAt && promoEndsAt <= promoStartsAt) {
+      throw new BadRequestException('O fim da promoção precisa ser depois do início.');
+    }
+    return { promoPriceCents, promoStartsAt, promoEndsAt };
+  }
+
   async createProduct(tenantId: string, dto: ProductDto) {
     await this.own('menuCategory', tenantId, dto.categoryId);
+    const promo = this.promo(dto);
     const position = dto.position ?? (await this.prisma.product.count({ where: { categoryId: dto.categoryId } }));
     return this.prisma.product
-      .create({ data: { ...dto, costItems: toJson(dto.costItems ?? []), pdvCode: pdv(dto.pdvCode), channelPrices: prices(dto.channelPrices), tenantId, name: dto.name.trim(), position } })
+      .create({ data: { ...dto, ...promo, costItems: toJson(dto.costItems ?? []), pdvCode: pdv(dto.pdvCode), channelPrices: prices(dto.channelPrices), tenantId, name: dto.name.trim(), position } })
       .catch((e) => {
         throw this.unique(e, PDV_TAKEN);
       });
@@ -202,10 +222,15 @@ export class CatalogService {
   async updateProduct(tenantId: string, id: string, dto: UpdateProductDto) {
     await this.own('product', tenantId, id);
     if (dto.categoryId) await this.own('menuCategory', tenantId, dto.categoryId);
+    const current = await this.prisma.product.findUniqueOrThrow({
+      where: { id },
+      select: { priceCents: true, promoPriceCents: true, promoStartsAt: true, promoEndsAt: true },
+    });
+    const promo = this.promo(dto, current);
     return this.prisma.product
       .update({
         where: { id },
-        data: { ...dto, costItems: dto.costItems ? toJson(dto.costItems) : undefined, pdvCode: pdv(dto.pdvCode), channelPrices: prices(dto.channelPrices), name: dto.name?.trim() },
+        data: { ...dto, ...promo, costItems: dto.costItems ? toJson(dto.costItems) : undefined, pdvCode: pdv(dto.pdvCode), channelPrices: prices(dto.channelPrices), name: dto.name?.trim() },
       })
       .catch((e) => {
         throw this.unique(e, PDV_TAKEN);

@@ -101,13 +101,29 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           code: '1.2',
           description: `Pedido #${order.number}${order.type === 'PICKUP' ? ' (retirada)' : ''}`,
           counterparty: order.customerName,
-          amountCents: order.totalCents,
+          // Receita pelo preço normal; o preço de/por entra logo abaixo como desconto (2.4).
+          amountCents: order.totalCents + order.promoDiscountCents,
           day,
           status: online ? 'PAID' : 'OPEN',
           source: 'cardapio',
           paymentMethod: method,
           channel: 'LOJA',
         });
+        if (order.promoDiscountCents > 0) {
+          await this.upsert(tx, t, `order:${order.id}:promo`, {
+            type: 'PAYABLE',
+            code: '2.4',
+            description: `Preço promocional · pedido #${order.number}`,
+            counterparty: order.customerName,
+            amountCents: order.promoDiscountCents,
+            day,
+            // Nunca sai dinheiro: o desconto se acerta junto com o recebimento da venda.
+            status: online ? 'PAID' : 'OPEN',
+            source: 'cardapio',
+            paymentMethod: method,
+            channel: 'LOJA',
+          });
+        }
         const rates = await this.rates(tx, t);
         // Taxa: a que o gateway informou; se não veio, a configurada para a forma de pagamento.
         const gatewayFee = order.payments.reduce((s, x) => s + x.feeCents, 0);
@@ -149,7 +165,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         await tx.financialEntry.updateMany({
           where: {
             tenantId: t,
-            externalKey: { in: [`order:${String(p.orderId)}:sale`, `order:${String(p.orderId)}:fee`] },
+            externalKey: { in: ['sale', 'fee', 'promo'].map((k) => `order:${String(p.orderId)}:${k}`) },
             status: 'OPEN',
             paymentMethod: { not: 'APP_ONLINE' },
           },
@@ -165,7 +181,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         await tx.financialEntry.updateMany({
           where: {
             tenantId: t,
-            externalKey: { in: ['tax', 'fee', 'commission'].map((k) => `order:${String(p.orderId)}:${k}`) },
+            externalKey: { in: ['tax', 'fee', 'commission', 'promo'].map((k) => `order:${String(p.orderId)}:${k}`) },
             status: 'OPEN',
           },
           data: { status: 'CANCELLED', notes: 'Pedido cancelado' },
@@ -174,13 +190,18 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           await tx.financialEntry.update({ where: { id: sale.id }, data: { status: 'CANCELLED', notes: 'Pedido cancelado' } });
           return;
         }
-        // Já recebido (PIX): fica a devolução ao cliente como conta a pagar.
+        // Já recebido (PIX): fica a devolução ao cliente como conta a pagar, do que ele pagou de fato.
+        const promo = await tx.financialEntry.findUnique({
+          where: { tenantId_externalKey: { tenantId: t, externalKey: `order:${String(p.orderId)}:promo` } },
+          select: { amountCents: true, status: true },
+        });
+        const paidByCustomer = sale.amountCents - (promo && promo.status !== 'CANCELLED' ? promo.amountCents : 0);
         await this.upsert(tx, t, `order:${String(p.orderId)}:refund`, {
           type: 'PAYABLE',
           code: '2.5',
           description: `Devolução ao cliente · ${sale.description}`,
           counterparty: sale.counterparty,
-          amountCents: sale.amountCents,
+          amountCents: paidByCustomer,
           day,
           status: 'OPEN',
           source: 'cardapio',
@@ -260,6 +281,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         type: true,
         customerName: true,
         totalCents: true,
+        promoDiscountCents: true,
         paymentMethod: true,
         channel: true,
         externalCode: true,

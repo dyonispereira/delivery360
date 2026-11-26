@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsString,
   IsUrl,
@@ -89,6 +90,10 @@ export class ProductDto {
   @IsOptional() @IsInt() @Min(0) @Max(5000) extraCostBps?: number;
   @IsOptional() @IsString() @Matches(PDV, PDV_MSG) pdvCode?: string;
   @IsOptional() @ValidateNested() @Type(() => ChannelPricesDto) channelPrices?: ChannelPricesDto;
+  /** Preço de/por (null tira a promoção). */
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) promoPriceCents?: number | null;
+  @IsOptional() @IsISO8601({}, { message: 'Início da promoção: data inválida.' }) promoStartsAt?: string | null;
+  @IsOptional() @IsISO8601({}, { message: 'Fim da promoção: data inválida.' }) promoEndsAt?: string | null;
 }
 export class UpdateProductDto {
   @IsOptional() @IsUUID() categoryId?: string;
@@ -103,6 +108,10 @@ export class UpdateProductDto {
   @IsOptional() @IsInt() @Min(0) @Max(5000) extraCostBps?: number;
   @IsOptional() @IsString() @Matches(PDV, PDV_MSG) pdvCode?: string;
   @IsOptional() @ValidateNested() @Type(() => ChannelPricesDto) channelPrices?: ChannelPricesDto;
+  /** Preço de/por (null tira a promoção). */
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) promoPriceCents?: number | null;
+  @IsOptional() @IsISO8601({}, { message: 'Início da promoção: data inválida.' }) promoStartsAt?: string | null;
+  @IsOptional() @IsISO8601({}, { message: 'Fim da promoção: data inválida.' }) promoEndsAt?: string | null;
 }
 
 export class OptionGroupDto {

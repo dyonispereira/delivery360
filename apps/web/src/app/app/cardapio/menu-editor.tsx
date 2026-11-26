@@ -1,13 +1,21 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CHANNEL_LABELS, costSheet, DEFAULT_RATES, formatBRL, parseBRL, type ChannelPrices, type FinanceRates } from '@delivery360/shared';
+import { activePromoPrice, CHANNEL_LABELS, costSheet, DEFAULT_RATES, discountPct, formatBRL, parseBRL, type ChannelPrices, type FinanceRates } from '@delivery360/shared';
 import { CostSheetEditor, type RatesInfo } from './cost-sheet';
 import { Badge, ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { Category, Group, Product } from './types';
 
 const toMoney = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
+/** ISO → valor do campo datetime-local (hora local). */
+const toLocalInput = (iso: string | null | undefined) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const fromLocalInput = (v: string) => (v ? new Date(v).toISOString() : null);
 
 export function MenuEditor({ canEdit }: { canEdit: boolean }) {
   const [menu, setMenu] = useState<Category[] | null>(null);
@@ -110,6 +118,12 @@ export function MenuEditor({ canEdit }: { canEdit: boolean }) {
                     </div>
                     <div className="text-xs text-zinc-500">
                       {formatBRL(p.priceCents)}
+                      {activePromoPrice(p) != null && (
+                        <span className="ml-1 rounded bg-[var(--brand)]/10 px-1.5 py-0.5 font-medium text-[var(--brand)]">
+                          por {formatBRL(activePromoPrice(p)!)} (−{discountPct(p.priceCents, activePromoPrice(p)!)}%)
+                        </span>
+                      )}
+                      {p.promoPriceCents != null && activePromoPrice(p) == null && <span className="ml-1 text-zinc-400">· promoção fora do período</span>}
                       {p.pdvCode && ` · PDV ${p.pdvCode}`}
                       {p.optionGroups.length > 0 && ` · ${p.optionGroups.length} grupo(s) de adicionais`}
                       {canEdit && <MarginChip product={p} rates={rates ?? DEFAULT_RATES} />}
@@ -176,6 +190,12 @@ function ProductEditor({
     categoryId: product.categoryId,
     active: product.active ?? true,
   });
+  const [promoOn, setPromoOn] = useState(product.promoPriceCents != null);
+  const [promo, setPromo] = useState({
+    price: product.promoPriceCents != null ? toMoney(product.promoPriceCents) : '',
+    starts: toLocalInput(product.promoStartsAt),
+    ends: toLocalInput(product.promoEndsAt),
+  });
   const [costItems, setCostItems] = useState(product.costItems ?? []);
   const [extraCostBps, setExtraCostBps] = useState(product.extraCostBps ?? 0);
   const [pdvCode, setPdvCode] = useState(product.pdvCode ?? '');
@@ -195,6 +215,8 @@ function ProductEditor({
     e.preventDefault();
     const priceCents = parseBRL(form.price);
     if (priceCents === null) return setError('Preço inválido.');
+    const promoPriceCents = promoOn ? parseBRL(promo.price) : null;
+    if (promoOn && promoPriceCents === null) return setError('Preço promocional inválido.');
     setBusy(true);
     setError(null);
     const body = {
@@ -207,6 +229,9 @@ function ProductEditor({
       costItems: costItems.filter((i) => i.name.trim()),
       extraCostBps,
       pdvCode: pdvCode.trim(),
+      promoPriceCents,
+      promoStartsAt: promoOn ? fromLocalInput(promo.starts) : null,
+      promoEndsAt: promoOn ? fromLocalInput(promo.ends) : null,
       // Só os apps ativos; vazio = mesmo preço da loja.
       ...(canEdit && rates ? { channelPrices } : {}),
     };
@@ -262,6 +287,19 @@ function ProductEditor({
             </select>
           </div>
         </div>
+        {(canEdit || promoOn) && (
+          <PromoFields
+            on={promoOn}
+            onToggle={setPromoOn}
+            value={promo}
+            onChange={setPromo}
+            canEdit={canEdit}
+            priceCents={parseBRL(form.price) ?? 0}
+            costItems={costItems}
+            extraCostBps={extraCostBps}
+            rates={rates}
+          />
+        )}
         <div>
           <label className="label" htmlFor="pdv-code">Código PDV</label>
           <input
@@ -463,11 +501,95 @@ function GroupsEditor({ productId, groups, canEdit, onChanged }: { productId: st
   );
 }
 
+/** Preço de/por: preço promocional, período e quanto a margem cai pela ficha técnica. */
+function PromoFields({
+  on,
+  onToggle,
+  value,
+  onChange,
+  canEdit,
+  priceCents,
+  costItems,
+  extraCostBps,
+  rates,
+}: {
+  on: boolean;
+  onToggle: (v: boolean) => void;
+  value: { price: string; starts: string; ends: string };
+  onChange: (v: { price: string; starts: string; ends: string }) => void;
+  canEdit: boolean;
+  priceCents: number;
+  costItems: Product['costItems'];
+  extraCostBps: number;
+  rates: RatesInfo | null;
+}) {
+  const promoCents = parseBRL(value.price);
+  const valid = promoCents != null && promoCents > 0 && promoCents < priceCents;
+  const items = (costItems ?? []).filter((i) => i.name.trim());
+  const r = rates ?? DEFAULT_RATES;
+  const before = items.length ? costSheet(priceCents, items, r, extraCostBps) : null;
+  const after = items.length && valid ? costSheet(promoCents!, items, r, extraCostBps) : null;
+  return (
+    <fieldset className="rounded-lg border border-zinc-200 p-3">
+      <label className="flex items-center gap-2 text-sm font-medium">
+        <input type="checkbox" disabled={!canEdit} checked={on} onChange={(e) => onToggle(e.target.checked)} />
+        Preço promocional (de/por)
+      </label>
+      {on && (
+        <div className="mt-3 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label" htmlFor="promo-price">Por (R$)</label>
+              <input id="promo-price" className="input" inputMode="decimal" disabled={!canEdit} value={value.price} onChange={(e) => onChange({ ...value, price: e.target.value })} />
+            </div>
+            <div className="flex items-end pb-2 text-sm">
+              {valid ? (
+                <span>
+                  De <s>{formatBRL(priceCents)}</s> · selo <b>−{discountPct(priceCents, promoCents!)}%</b>
+                </span>
+              ) : (
+                value.price && <span className="text-red-600">Precisa ser menor que {formatBRL(priceCents)}.</span>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label" htmlFor="promo-start">Começa (opcional)</label>
+              <input id="promo-start" type="datetime-local" className="input" disabled={!canEdit} value={value.starts} onChange={(e) => onChange({ ...value, starts: e.target.value })} />
+            </div>
+            <div>
+              <label className="label" htmlFor="promo-end">Termina (opcional)</label>
+              <input id="promo-end" type="datetime-local" className="input" disabled={!canEdit} value={value.ends} onChange={(e) => onChange({ ...value, ends: e.target.value })} />
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500">Sem datas, vale até você desmarcar. Na loja aparece o preço riscado e o selo de desconto.</p>
+          {before && after && (
+            <p className={`rounded-lg p-2 text-sm ${after.profitCents < 0 ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-900'}`} role="status">
+              {after.profitCents < 0 ? (
+                <>
+                  <b>Abaixo do custo:</b> cada unidade dá prejuízo de {formatBRL(-after.profitCents)} pela ficha técnica.
+                </>
+              ) : (
+                <>
+                  Com {formatBRL(promoCents!)} a margem cai de <b>{before.resultPct?.toLocaleString('pt-BR')}%</b> para{' '}
+                  <b>{after.resultPct?.toLocaleString('pt-BR')}%</b>: lucro de {formatBRL(after.profitCents)} por unidade (era {formatBRL(before.profitCents)}).
+                </>
+              )}
+            </p>
+          )}
+          {!before && valid && <p className="text-xs text-zinc-500">Preencha a ficha técnica para ver quanto a margem cai com a promoção.</p>}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 /** Na lista de produtos: CMV % e lucro por unidade, para bater o olho. */
 function MarginChip({ product, rates }: { product: Product; rates: FinanceRates }) {
   const items = product.costItems ?? [];
   if (items.length === 0) return <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">sem ficha técnica</span>;
-  const s = costSheet(product.priceCents, items, rates, product.extraCostBps ?? 0);
+  // Na promoção, a margem do preço que está valendo.
+  const s = costSheet(activePromoPrice(product) ?? product.priceCents, items, rates, product.extraCostBps ?? 0);
   const tone = s.cmvHealth === 'good' ? 'bg-emerald-50 text-emerald-700' : s.cmvHealth === 'attention' ? 'bg-amber-50 text-amber-800' : 'bg-red-50 text-red-700';
   return (
     <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-medium ${tone}`}>

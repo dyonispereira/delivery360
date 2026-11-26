@@ -23,7 +23,10 @@ export interface MenuGroup {
 export interface MenuProduct {
   id: string;
   name: string;
+  /** Preço que vale agora (já com a promoção, se houver). */
   priceCents: number;
+  /** Preço normal, sem promoção (padrão: igual ao priceCents). */
+  listPriceCents?: number;
   active: boolean;
   available: boolean;
   categoryActive: boolean;
@@ -68,6 +71,8 @@ export interface PricedItem {
   name: string;
   quantity: number;
   unitPriceCents: number;
+  /** Preço unitário sem a promoção. */
+  listUnitPriceCents: number;
   totalCents: number;
   notes: string | null;
   options: PricedOption[];
@@ -75,6 +80,8 @@ export interface PricedItem {
 export interface PricedOrder {
   items: PricedItem[];
   subtotalCents: number;
+  /** Economia do cliente com preço de/por (já descontada do subtotal). */
+  promoDiscountCents: number;
   deliveryFeeCents: number;
   totalCents: number;
   zone: Zone | null;
@@ -131,13 +138,16 @@ export function priceOrder(
     }
     if (usedIds.size !== chosen.length) fail(`Adicional inválido em ${p.name}.`);
 
-    const unitPriceCents = p.priceCents + options.reduce((s, o) => s + o.priceCents, 0);
+    const optionsCents = options.reduce((s, o) => s + o.priceCents, 0);
+    const unitPriceCents = p.priceCents + optionsCents;
+    const listUnitPriceCents = Math.max(p.listPriceCents ?? p.priceCents, p.priceCents) + optionsCents;
     const notes = it.notes?.trim().slice(0, 300) || null;
     return {
       productId: p.id,
       name: p.name,
       quantity: it.quantity,
       unitPriceCents,
+      listUnitPriceCents,
       totalCents: unitPriceCents * it.quantity,
       notes,
       options,
@@ -145,6 +155,7 @@ export function priceOrder(
   });
 
   const subtotalCents = items.reduce((s, i) => s + i.totalCents, 0);
+  const promoDiscountCents = items.reduce((s, i) => s + (i.listUnitPriceCents - i.unitPriceCents) * i.quantity, 0);
   if (subtotalCents < store.minOrderCents) fail(`O pedido mínimo é de ${brl(store.minOrderCents)}.`);
 
   let zone: Zone | null = null;
@@ -159,7 +170,7 @@ export function priceOrder(
     fail(`O troco precisa ser para um valor maior que o total (${brl(totalCents)}).`);
   }
 
-  return { items, subtotalCents, deliveryFeeCents, totalCents, zone };
+  return { items, subtotalCents, promoDiscountCents, deliveryFeeCents, totalCents, zone };
 }
 
 /** Telefone brasileiro só com dígitos, com DDD (10 ou 11 dígitos). Remove +55 se vier. */
