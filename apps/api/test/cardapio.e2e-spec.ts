@@ -392,6 +392,91 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     expect(off.body.message).toContain('não está mais valendo');
   });
 
+  it('combos: cria com produtos do cardápio e item só do combo, loja mostra a economia, pedido e CMV', async () => {
+    const combosCat = (await owner().post('/cardapio/categories').send({ name: 'Combos' })).body.id;
+    const coca = (await owner().post('/cardapio/products').send({ categoryId: ids.cat, name: 'Coca 2L', priceCents: 1400, costItems: [{ name: 'Coca', kind: 'INGREDIENT', costCents: 700 }] })).body.id;
+    const guarana = (await owner().post('/cardapio/products').send({ categoryId: ids.cat, name: 'Guaraná 2L', priceCents: 1200 })).body.id;
+    await owner().patch(`/cardapio/products/${ids.pizza}`).send({ costItems: [{ name: 'Massa e recheio', kind: 'INGREDIENT', costCents: 1500 }] });
+
+    expect((await as(staffToken).post('/cardapio/combos').send({ categoryId: combosCat, name: 'X', priceCents: 100, steps: [] })).status).toBe(403);
+    const bad = await owner().post('/cardapio/combos').send({ categoryId: combosCat, name: 'X', priceCents: 100, steps: [{ name: 'Pizza', minSelect: 2, maxSelect: 2, options: [{ productId: ids.pizza }] }] });
+    expect(bad.status).toBe(400);
+
+    const created = await owner()
+      .post('/cardapio/combos')
+      .send({
+        categoryId: combosCat,
+        name: 'Combo Família',
+        priceCents: 5200,
+        steps: [
+          { name: 'Escolha a pizza', minSelect: 1, maxSelect: 1, options: [{ productId: ids.pizza }] },
+          { name: 'Bebida', minSelect: 1, maxSelect: 1, options: [{ productId: coca }, { productId: guarana }] },
+          { name: 'Sobremesa', minSelect: 1, maxSelect: 1, options: [{ name: 'Brownie da casa', costCents: 300 }] },
+        ],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ isCombo: true, name: 'Combo Família' });
+    const [pizzaStep, drinkStep, dessertStep] = created.body.optionGroups;
+    expect(drinkStep.options.map((o: { name: string }) => o.name)).toEqual(['Coca 2L', 'Guaraná 2L']);
+
+    // Combo dentro de combo é recusado.
+    const nested = await owner().post('/cardapio/combos').send({ categoryId: combosCat, name: 'Y', priceCents: 100, steps: [{ name: 'Combo', minSelect: 1, maxSelect: 1, options: [{ productId: created.body.id }] }] });
+    expect(nested.status).toBe(400);
+
+    // Loja: separado sairia pizza 45,00 + guaraná 12,00 (o mais barato) = 57,00 > 52,00.
+    let menu = (await http().get(`/public/stores/${slug}`)).body;
+    const combo = menu.categories.flatMap((c: { products: unknown[] }) => c.products).find((p: { id: string }) => p.id === created.body.id);
+    expect(combo).toMatchObject({ isCombo: true, priceCents: 5200, comboSeparateCents: 5700 });
+    expect(combo.costItems).toBeUndefined();
+    expect(combo.optionGroups[1].options[0]).toMatchObject({ productId: coca, available: true });
+    // Peça também: com ficha técnica e sem escolha obrigatória, a Coca vem antes do Guaraná (sem ficha).
+    expect(menu.upsellProductIds.indexOf(coca)).toBeLessThan(menu.upsellProductIds.indexOf(guarana));
+    expect(menu.upsellProductIds).not.toContain(created.body.id);
+
+    // Produto esgotado some do combo (fica indisponível na etapa).
+    await owner().patch(`/cardapio/products/${coca}/available`).send({ available: false });
+    menu = (await http().get(`/public/stores/${slug}`)).body;
+    const again = menu.categories.flatMap((c: { products: unknown[] }) => c.products).find((p: { id: string }) => p.id === created.body.id);
+    expect(again.optionGroups[1].options[0]).toMatchObject({ available: false });
+    const sold = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY', items: [{ productId: created.body.id, quantity: 1, optionIds: [pizzaStep.options[0].id, drinkStep.options[0].id, dessertStep.options[0].id] }] }));
+    expect(sold.status).toBe(400);
+    await owner().patch(`/cardapio/products/${coca}/available`).send({ available: true });
+
+    const order = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY', items: [{ productId: created.body.id, quantity: 2, optionIds: [pizzaStep.options[0].id, drinkStep.options[0].id, dessertStep.options[0].id] }] }));
+    expect(order.status).toBe(201);
+    expect(order.body).toMatchObject({ subtotalCents: 10400 });
+    expect(order.body.items[0].options.map((o: { name: string }) => o.name)).toEqual([pizzaStep.options[0].name, 'Coca 2L', 'Brownie da casa']);
+    const row = await prisma.order.findUniqueOrThrow({ where: { trackingCode: order.body.trackingCode }, include: { items: true } });
+    // CMV teórico: pizza 15,00 + coca 7,00 + brownie 3,00.
+    expect(row.items[0].unitCostCents).toBe(2500);
+
+    // Edição mantém os ids das opções que ficaram e tira o guaraná.
+    const edited = await owner()
+      .put(`/cardapio/combos/${created.body.id}`)
+      .send({
+        categoryId: combosCat,
+        name: 'Combo Família',
+        priceCents: 4990,
+        steps: [
+          { id: pizzaStep.id, name: 'Escolha a pizza', minSelect: 1, maxSelect: 1, options: [{ id: pizzaStep.options[0].id, productId: ids.pizza }] },
+          { id: drinkStep.id, name: 'Bebida', minSelect: 1, maxSelect: 1, options: [{ id: drinkStep.options[0].id, productId: coca }] },
+        ],
+      });
+    expect(edited.status).toBe(200);
+    expect(edited.body.priceCents).toBe(4990);
+    expect(edited.body.optionGroups).toHaveLength(2);
+    expect(edited.body.optionGroups[1].options).toEqual([expect.objectContaining({ id: drinkStep.options[0].id, linkedProductId: coca })]);
+
+    await owner().delete(`/cardapio/products/${created.body.id}`);
+    await owner().delete(`/cardapio/products/${coca}`);
+    await owner().delete(`/cardapio/products/${guarana}`);
+    await owner().patch(`/cardapio/products/${ids.pizza}`).send({ costItems: [] });
+  });
+
   it('cancelar: só dono ou gerente; pedido de outro restaurante dá 404', async () => {
     const created = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY' }));
     const id = (await prisma.order.findUniqueOrThrow({ where: { trackingCode: created.body.trackingCode } })).id;

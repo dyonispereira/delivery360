@@ -44,6 +44,8 @@ export interface PublicOption {
   name: string;
   priceCents: number;
   available: boolean;
+  /** No combo: o produto do cardápio que esta opção representa (para mostrar a foto). */
+  productId?: string | null;
 }
 export interface PublicOptionGroup {
   id: string;
@@ -64,6 +66,10 @@ export interface PublicProduct {
   promoEndsAt: string | null;
   imageUrl: string | null;
   available: boolean;
+  /** Combo: as etapas são os grupos de opções. */
+  isCombo?: boolean;
+  /** Combo: quanto sairiam os itens comprados separados (null se não compensa mostrar). */
+  comboSeparateCents?: number | null;
   optionGroups: PublicOptionGroup[];
 }
 export interface PublicStore {
@@ -86,6 +92,8 @@ export interface PublicStore {
   categories: { id: string; name: string; products: PublicProduct[] }[];
   /** Produtos mais pedidos nos últimos 30 dias, do mais para o menos pedido. */
   topProductIds: string[];
+  /** "Peça também" no carrinho: do maior para o menor lucro por real vendido. */
+  upsellProductIds: string[];
   zones: { id: string; name: string; feeCents: number }[];
   /** Cupons que a loja mostra para todos (os outros só com o código). */
   coupons: PublicCoupon[];

@@ -179,6 +179,7 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
     : data.categories;
   const canOrder = store.isOpen;
   const offerFor = (id: string) => data.offers.find((o) => o.productIds.includes(id));
+  const combos = data.categories.flatMap((c) => c.products).filter((p) => p.isCombo && p.available);
   const storeWide = data.offers.filter((o) => o.productIds.length === 0);
 
   return (
@@ -238,6 +239,30 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
           )}
 
           {!q && data.coupons.length > 0 && <CouponStrip coupons={data.coupons} applied={coupon} onPick={pickCoupon} />}
+
+          {!q && combos.length > 0 && (
+            <section className="pt-5" aria-label="Combos">
+              <h2 className="mb-2 px-4 text-lg font-bold">Combos</h2>
+              <div className="flex gap-3 overflow-x-auto px-4 pb-1">
+                {combos.map((p) => (
+                  <button key={p.id} className="w-60 shrink-0 overflow-hidden rounded-2xl border border-zinc-200 text-left" onClick={() => setSelected(p)} disabled={!canOrder}>
+                    <ComboCover product={p} lookup={(id) => products.get(id)} />
+                    <div className="space-y-1 p-3">
+                      <p className="line-clamp-1 font-semibold">{p.name}</p>
+                      <p className="line-clamp-1 text-xs text-zinc-500">{p.optionGroups.map((g) => g.name).join(' + ')}</p>
+                      <p className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold">{formatBRL(p.priceCents)}</span>
+                        {p.comboSeparateCents != null && <span className="text-xs text-zinc-400 line-through">{formatBRL(p.comboSeparateCents)}</span>}
+                        {p.comboSeparateCents != null && (
+                          <span className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-xs font-bold text-white">−{discountPct(p.comboSeparateCents, p.priceCents)}%</span>
+                        )}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
 
           {!q && promos.length > 0 && (
             <section className="pt-5" aria-label="Em promoção">
@@ -325,6 +350,7 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
                             <>
                               <Price product={p} />
                               <OffBadge product={p} />
+                              <ComboSaving product={p} />
                               <OfferTag offer={offerFor(p.id)} />
                             </>
                           ) : (
@@ -442,6 +468,7 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
       {selected && (
         <ProductModal
           product={selected}
+          lookup={(id) => products.get(id)}
           onClose={() => setSelected(null)}
           onAdd={(item) => {
             addToCart(item);
@@ -483,6 +510,51 @@ function Price({ product, className = '' }: { product: PublicProduct; className?
 function OfferTag({ offer }: { offer: PublicOffer | undefined }) {
   if (!offer) return null;
   return <span className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-xs font-bold text-white">{offer.label.replace(/ em .*/, '')} no carrinho</span>;
+}
+
+/** Combo: preço dos itens separados, riscado, e quanto o cliente economiza. */
+function ComboSaving({ product }: { product: PublicProduct }) {
+  if (!product.isCombo) return null;
+  const separate = product.comboSeparateCents;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="rounded-md bg-amber-400 px-1.5 py-0.5 text-xs font-bold text-amber-950">Combo</span>
+      {separate != null && (
+        <span className="text-xs text-zinc-500">
+          separado <span className="line-through">{formatBRL(separate)}</span>
+          <span className="ml-1 font-semibold text-emerald-700">economize {formatBRL(separate - product.priceCents)}</span>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Combo sem foto: mostra lado a lado a foto do primeiro produto de cada etapa. */
+function ComboCover({ product, lookup }: { product: PublicProduct; lookup: (id: string) => PublicProduct | undefined }) {
+  const pics = product.imageUrl
+    ? []
+    : product.optionGroups
+        .map((g) => g.options.map((o) => (o.productId ? lookup(o.productId)?.imageUrl : null)).find(Boolean))
+        .filter((u): u is string => !!u)
+        .slice(0, 3);
+  if (pics.length < 2) return <ProductImage product={product} className="aspect-[16/9] w-full" />;
+  return (
+    <div className="flex aspect-[16/9] w-full items-center justify-center gap-1 bg-zinc-50" aria-hidden>
+      {pics.map((u, i) => (
+        <span key={u} className="flex items-center gap-1">
+          {i > 0 && <span className="text-lg font-bold text-zinc-400">+</span>}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={u} alt="" className="h-20 w-16 rounded-xl object-cover" />
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ComboThumb({ product }: { product: PublicProduct | undefined }) {
+  if (!product?.imageUrl) return <span className="h-10 w-10 shrink-0 rounded-lg bg-zinc-100" aria-hidden />;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={product.imageUrl} alt="" className="h-10 w-10 shrink-0 rounded-lg object-cover" />;
 }
 
 function OffBadge({ product, className = '' }: { product: PublicProduct; className?: string }) {
@@ -700,8 +772,23 @@ function Sheet({ title, onClose, children, footer, cover }: { title: string; onC
   );
 }
 
-function ProductModal({ product, onClose, onAdd }: { product: PublicProduct; onClose: () => void; onAdd: (i: CartItem) => void }) {
-  const [picked, setPicked] = useState<Record<string, string[]>>({});
+/** Etapa de combo que já vem inteira (ex.: "Inclui: batata e refri"): não tem o que escolher. */
+const isFixed = (g: PublicProduct['optionGroups'][number]) => g.minSelect > 0 && g.minSelect >= g.options.length;
+
+function ProductModal({
+  product,
+  onClose,
+  onAdd,
+  lookup,
+}: {
+  product: PublicProduct;
+  onClose: () => void;
+  onAdd: (i: CartItem) => void;
+  lookup?: (id: string) => PublicProduct | undefined;
+}) {
+  const [picked, setPicked] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(product.optionGroups.filter(isFixed).map((g) => [g.id, g.options.map((o) => o.id)])),
+  );
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState('');
 
@@ -761,11 +848,28 @@ function ProductModal({ product, onClose, onAdd }: { product: PublicProduct; onC
       <p className="mb-1 mt-1 flex flex-wrap items-center gap-2 text-lg">
         <Price product={product} />
         <OffBadge product={product} />
+        <ComboSaving product={product} />
         {product.promoEndsAt && <span className="text-xs text-zinc-500">{untilLabel(product.promoEndsAt)}</span>}
       </p>
       {product.description && <p className="mb-4 text-sm text-zinc-600">{product.description}</p>}
 
       {product.optionGroups.map((g) => {
+        if (isFixed(g)) {
+          return (
+            <div key={g.id} className="-mx-4 mb-4">
+              <p className="bg-zinc-100 px-4 py-2.5 font-semibold">{g.name}</p>
+              <ul>
+                {g.options.map((o) => (
+                  <li key={o.id} className="flex items-center gap-3 border-b border-zinc-100 px-4 py-2.5 text-sm">
+                    <ComboThumb product={o.productId ? lookup?.(o.productId) : undefined} />
+                    <span className="flex-1 font-medium">{o.name}</span>
+                    <span className="text-xs font-semibold text-emerald-700">{o.available ? 'Incluso' : 'Esgotado'}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        }
         const cur = picked[g.id] ?? [];
         const full = g.maxSelect > 1 && cur.length >= g.maxSelect;
         const done = cur.length >= Math.max(1, g.minSelect);
@@ -791,7 +895,8 @@ function ProductModal({ product, onClose, onAdd }: { product: PublicProduct; onC
               const off = !o.available || (!on && full);
               return (
                 <label key={o.id} className={`flex cursor-pointer items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3 text-sm ${off ? 'opacity-45' : ''}`}>
-                  <span>
+                  {o.productId && <ComboThumb product={lookup?.(o.productId)} />}
+                  <span className="flex-1">
                     <span className="font-medium">{o.name}</span>
                     {!o.available && <span className="text-zinc-500"> · esgotado</span>}
                     {o.priceCents > 0 && <span className="block text-zinc-500">+ {formatBRL(o.priceCents)}</span>}
@@ -1083,6 +1188,8 @@ function Checkout({
           </div>
         )}
 
+        <Upsell data={data} cart={cart} onAdd={(i) => onCart([...cart, i])} />
+
         <CouponField
           applied={coupon}
           quote={quote}
@@ -1252,5 +1359,42 @@ function CouponField({
         </div>
       )}
     </div>
+  );
+}
+
+/** "Peça também": até 3 itens que ainda não estão no carrinho, os que mais dão lucro primeiro. */
+function Upsell({ data, cart, onAdd }: { data: PublicStore; cart: CartItem[]; onAdd: (i: CartItem) => void }) {
+  const products = new Map(data.categories.flatMap((c) => c.products.map((p) => [p.id, p] as const)));
+  const inCart = new Set(cart.map((i) => i.productId));
+  const picks = data.upsellProductIds
+    .filter((id) => !inCart.has(id))
+    .map((id) => products.get(id))
+    .filter((p): p is PublicProduct => !!p && p.available)
+    .slice(0, 3);
+  if (!picks.length) return null;
+  return (
+    <section aria-label="Peça também">
+      <h3 className="mb-2 font-semibold">Peça também</h3>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {picks.map((p) => (
+          <div key={p.id} className="flex w-44 shrink-0 items-center gap-2 rounded-xl border border-zinc-200 p-2">
+            <ProductImage product={p} className="h-12 w-12 shrink-0 rounded-lg" />
+            <div className="min-w-0 flex-1">
+              <p className="line-clamp-2 text-xs font-medium leading-tight">{p.name}</p>
+              <Price product={p} className="text-xs" />
+            </div>
+            <button
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--brand)] text-lg font-semibold text-white"
+              aria-label={`Adicionar ${p.name}`}
+              onClick={() =>
+                onAdd({ key: newKey(), productId: p.id, name: p.name, quantity: 1, unitPriceCents: p.priceCents, optionIds: [], optionNames: [], notes: '' })
+              }
+            >
+              +
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

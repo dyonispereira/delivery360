@@ -1,6 +1,16 @@
 import type { ChannelPrices, CostItem, PaymentMethod } from '@delivery360/shared';
 
-export interface Option { id: string; name: string; priceCents: number; costCents?: number; pdvCode?: string | null; available: boolean; position: number }
+export interface Option {
+  id: string;
+  name: string;
+  priceCents: number;
+  costCents?: number;
+  pdvCode?: string | null;
+  available: boolean;
+  position: number;
+  /** No combo: o produto do cardápio que esta opção representa. */
+  linkedProductId?: string | null;
+}
 export interface Group { id: string; name: string; minSelect: number; maxSelect: number; position: number; options: Option[] }
 export interface Product {
   id: string;
@@ -21,6 +31,8 @@ export interface Product {
   promoPriceCents?: number | null;
   promoStartsAt?: string | null;
   promoEndsAt?: string | null;
+  /** Combo: as etapas são os grupos de opções. */
+  isCombo?: boolean;
   optionGroups: Group[];
 }
 export interface Category { id: string; name: string; position: number; active: boolean; products: Product[] }
