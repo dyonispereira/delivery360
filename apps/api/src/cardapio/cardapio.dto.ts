@@ -176,6 +176,17 @@ export class CreateOrderDto {
   @IsOptional() @IsString() @MaxLength(500) notes?: string;
   @IsOptional() @IsString() @MaxLength(100) utmSource?: string;
   @IsOptional() @IsString() @MaxLength(100) utmCampaign?: string;
+  @IsOptional() @IsString() @MaxLength(40) couponCode?: string;
+}
+
+/** Prévia da conta no carrinho (sem criar pedido). */
+export class QuoteOrderDto {
+  @IsIn(['DELIVERY', 'PICKUP']) type: 'DELIVERY' | 'PICKUP';
+  @IsOptional() @IsUUID() zoneId?: string;
+  @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => OrderItemInputDto) items: OrderItemInputDto[];
+  @IsOptional() @IsIn(PAYMENT_METHODS) paymentMethod?: (typeof PAYMENT_METHODS)[number];
+  @IsOptional() @IsString() @MaxLength(20) phone?: string;
+  @IsOptional() @IsString() @MaxLength(40) couponCode?: string;
 }
 
 export class UpdateOrderStatusDto {
@@ -257,4 +268,45 @@ export class ChannelOrderDto {
   /** Código de entrega que o app mostra ao cliente (4 dígitos). */
   @IsOptional() @Matches(/^\d{4}$/, { message: 'Código de entrega: 4 números.' }) deliveryCode?: string;
   @IsOptional() @IsString() @MaxLength(500) notes?: string;
+}
+
+// ---------- Cupons da loja própria ----------
+
+const COUPON_CODE = /^[A-Za-z0-9_-]{3,20}$/;
+
+export class CouponDto {
+  @IsString() @Matches(COUPON_CODE, { message: 'Código: de 3 a 20 letras ou números, sem espaços.' }) code: string;
+  @IsOptional() @IsString() @MaxLength(120) description?: string;
+  @IsIn(['PERCENT', 'FIXED', 'FREE_DELIVERY']) type: 'PERCENT' | 'FIXED' | 'FREE_DELIVERY';
+  /** PERCENT: pontos-base (1000 = 10%). FIXED: centavos. */
+  @IsInt() @Min(0) @Max(MAX_CENTS) value: number;
+  @IsOptional() @IsInt() @Min(1) @Max(MAX_CENTS) maxDiscountCents?: number | null;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) minOrderCents?: number;
+  @IsOptional() @IsISO8601() startsAt?: string | null;
+  @IsOptional() @IsISO8601() endsAt?: string | null;
+  @IsOptional() @IsArray() @ArrayMaxSize(7) @IsInt({ each: true }) @Min(0, { each: true }) @Max(6, { each: true }) weekdays?: number[];
+  @IsOptional() @IsInt() @Min(1) @Max(1_000_000) maxUses?: number | null;
+  @IsOptional() @IsInt() @Min(1) @Max(1000) maxUsesPerCustomer?: number | null;
+  @IsOptional() @IsBoolean() firstOrderOnly?: boolean;
+  @IsOptional() @IsBoolean() combinesWithPromo?: boolean;
+  @IsOptional() @IsBoolean() public?: boolean;
+  @IsOptional() @IsBoolean() active?: boolean;
+}
+
+export class UpdateCouponDto {
+  @IsOptional() @IsString() @Matches(COUPON_CODE, { message: 'Código: de 3 a 20 letras ou números, sem espaços.' }) code?: string;
+  @IsOptional() @IsString() @MaxLength(120) description?: string;
+  @IsOptional() @IsIn(['PERCENT', 'FIXED', 'FREE_DELIVERY']) type?: 'PERCENT' | 'FIXED' | 'FREE_DELIVERY';
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) value?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(MAX_CENTS) maxDiscountCents?: number | null;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) minOrderCents?: number;
+  @IsOptional() @IsISO8601() startsAt?: string | null;
+  @IsOptional() @IsISO8601() endsAt?: string | null;
+  @IsOptional() @IsArray() @ArrayMaxSize(7) @IsInt({ each: true }) @Min(0, { each: true }) @Max(6, { each: true }) weekdays?: number[];
+  @IsOptional() @IsInt() @Min(1) @Max(1_000_000) maxUses?: number | null;
+  @IsOptional() @IsInt() @Min(1) @Max(1000) maxUsesPerCustomer?: number | null;
+  @IsOptional() @IsBoolean() firstOrderOnly?: boolean;
+  @IsOptional() @IsBoolean() combinesWithPromo?: boolean;
+  @IsOptional() @IsBoolean() public?: boolean;
+  @IsOptional() @IsBoolean() active?: boolean;
 }

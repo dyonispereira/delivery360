@@ -62,6 +62,7 @@ model Tenant {
   channelSettings  ChannelSetting[]
   employees        Employee[]
   payrolls         Payroll[]
+  coupons          Coupon[]
 
   @@map("tenants")
 }
@@ -393,6 +394,10 @@ model Order {
   subtotalCents     Int                  @map("subtotal_cents")
   deliveryFeeCents  Int                  @map("delivery_fee_cents")
   discountCents     Int                  @default(0) @map("discount_cents")
+  /// Cupom usado (loja própria). O desconto do cupom fica em discountCents.
+  couponId          String?              @map("coupon_id") @db.Uuid
+  couponCode        String?              @map("coupon_code")
+  coupon            Coupon?              @relation(fields: [couponId], references: [id], onDelete: SetNull)
   /// Quanto o cliente economizou com preço de/por (já fora do subtotal). Vai para "Descontos e cupons" no DRE.
   promoDiscountCents Int                 @default(0) @map("promo_discount_cents")
   totalCents        Int                  @map("total_cents")
@@ -439,6 +444,7 @@ model Order {
   @@unique([tenantId, channel, externalId])
   @@index([tenantId, status, createdAt])
   @@index([batchId])
+  @@index([couponId])
   @@map("orders")
 }
 
@@ -884,4 +890,46 @@ model PayrollItem {
 
   @@unique([payrollId, employeeId])
   @@map("payroll_items")
+}
+
+enum CouponType {
+  /// Percentual sobre os produtos.
+  PERCENT
+  /// Valor fixo em reais.
+  FIXED
+  /// Entrega grátis (desconta a taxa do bairro).
+  FREE_DELIVERY
+}
+
+/// Cupom de desconto da loja própria.
+model Coupon {
+  id                 String     @id @default(uuid()) @db.Uuid
+  tenantId           String     @map("tenant_id") @db.Uuid
+  /// Sempre em maiúsculas, sem espaços (ex.: VOLTEI15).
+  code               String
+  description        String?
+  type               CouponType
+  /// PERCENT: pontos-base (1000 = 10%). FIXED: centavos. FREE_DELIVERY: 0.
+  value              Int        @default(0)
+  /// Teto do desconto (só no percentual).
+  maxDiscountCents   Int?       @map("max_discount_cents")
+  minOrderCents      Int        @default(0) @map("min_order_cents")
+  startsAt           DateTime?  @map("starts_at")
+  endsAt             DateTime?  @map("ends_at")
+  /// Dias da semana em que vale (0 = domingo). Vazio = todos.
+  weekdays           Int[]      @default([])
+  maxUses            Int?       @map("max_uses")
+  maxUsesPerCustomer Int?       @default(1) @map("max_uses_per_customer")
+  firstOrderOnly     Boolean    @default(false) @map("first_order_only")
+  /// Vale também sobre produtos em preço de/por.
+  combinesWithPromo  Boolean    @default(false) @map("combines_with_promo")
+  /// Aparece na faixa de cupons da loja (falso = só quem tem o código).
+  public             Boolean    @default(false)
+  active             Boolean    @default(true)
+  createdAt          DateTime   @default(now()) @map("created_at")
+  tenant             Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders             Order[]
+
+  @@unique([tenantId, code])
+  @@map("coupons")
 }

@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../access/access.decorators';
-import { CreateOrderDto, RateOrderDto, TipDto } from '../cardapio/cardapio.dto';
+import { CreateOrderDto, QuoteOrderDto, RateOrderDto, TipDto } from '../cardapio/cardapio.dto';
 import { OrdersService } from '../cardapio/orders.service';
 
 /** Rotas abertas da loja online (sem login). */
@@ -20,6 +20,14 @@ export class PublicController {
   @Post('stores/:slug/orders')
   createOrder(@Param('slug') slug: string, @Body() dto: CreateOrderDto) {
     return this.orders.createPublicOrder(slug, dto);
+  }
+
+  /** Prévia da conta com cupom. Limite por IP para ninguém testar códigos em massa. */
+  @Throttle({ default: { limit: process.env.NODE_ENV === 'test' ? 1000 : 30, ttl: 60_000 } })
+  @Post('stores/:slug/quote')
+  @HttpCode(200)
+  quote(@Param('slug') slug: string, @Body() dto: QuoteOrderDto) {
+    return this.orders.quotePublicOrder(slug, dto);
   }
 
   @Get('orders/:code')

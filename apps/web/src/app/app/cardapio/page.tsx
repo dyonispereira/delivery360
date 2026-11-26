@@ -8,10 +8,12 @@ import { MenuEditor } from './menu-editor';
 import { StoreSettings } from './store-settings';
 import { ZonesEditor } from './zones-editor';
 import { ChannelsEditor } from './channels';
+import { CouponsEditor } from './coupons-editor';
 
 const TABS = [
   { id: 'menu', label: 'Cardápio' },
   { id: 'loja', label: 'Loja online' },
+  { id: 'cupons', label: 'Cupons' },
   { id: 'bairros', label: 'Bairros e taxas' },
   { id: 'canais', label: 'Canais de venda' },
 ] as const;
@@ -49,6 +51,7 @@ export default function CardapioPage() {
       </div>
       {tab === 'menu' && <MenuEditor canEdit={canEdit} />}
       {tab === 'loja' && <StoreSettings canEdit={canEdit} />}
+      {tab === 'cupons' && <CouponsEditor canEdit={canEdit} />}
       {tab === 'bairros' && <ZonesEditor canEdit={canEdit} />}
       {tab === 'canais' && canEdit && <ChannelsEditor />}
     </div>

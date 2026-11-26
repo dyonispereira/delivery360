@@ -191,6 +191,9 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
             <div className="flex justify-between text-emerald-700"><dt>Você economizou com as promoções</dt><dd>{formatBRL(order.promoDiscountCents)}</dd></div>
           )}
           {order.type === 'DELIVERY' && <div className="flex justify-between"><dt>Entrega</dt><dd>{formatBRL(order.deliveryFeeCents)}</dd></div>}
+          {order.discountCents > 0 && (
+            <div className="flex justify-between text-emerald-700"><dt>Cupom {order.couponCode}</dt><dd>−{formatBRL(order.discountCents)}</dd></div>
+          )}
           <div className="flex justify-between font-semibold"><dt>Total</dt><dd>{formatBRL(order.totalCents)}</dd></div>
           <div className="flex justify-between text-zinc-500">
             <dt>Pagamento</dt>

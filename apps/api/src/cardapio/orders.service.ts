@@ -15,7 +15,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EventsService } from '../core/events.service';
 import { activeModuleCodes } from '../access/access.rules';
 import { PAYMENT_GATEWAY, type PaymentGateway } from '../payments/payment-gateway';
-import { CreateOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
+import { CreateOrderDto, QuoteOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
+import { CouponError, couponDiscount, couponLabel } from './coupon-rules';
 import { activePromoPrice, effectivePrice, unitCost, type CostItem } from '@delivery360/shared';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
 import { ACTIVE_STATUSES, canTransition } from './order-status';
@@ -83,7 +84,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async getPublicMenu(slug: string) {
     const store = await this.findPublicStore(slug);
     const tenantId = store.tenantId;
-    const [categories, zones, ratings, top] = await Promise.all([
+    const now = new Date();
+    const [categories, zones, ratings, top, coupons] = await Promise.all([
       this.prisma.menuCategory.findMany({
         where: { tenantId, active: true },
         orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
@@ -132,8 +134,20 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         orderBy: { _sum: { quantity: 'desc' } },
         take: 12,
       }),
+      // Cupons que a loja mostra na faixa (os outros só funcionam para quem tem o código).
+      this.prisma.coupon.findMany({
+        where: {
+          tenantId,
+          active: true,
+          public: true,
+          OR: [{ startsAt: null }, { startsAt: { lte: now } }],
+          AND: [{ OR: [{ endsAt: null }, { endsAt: { gt: now } }] }],
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 6,
+        include: { _count: { select: { orders: { where: { status: { not: 'CANCELLED' } } } } } },
+      }),
     ]);
-    const now = new Date();
     const visible = new Set(categories.flatMap((c) => c.products.filter((p) => p.available).map((p) => p.id)));
     return {
       store: {
@@ -154,6 +168,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       categories: categories
         .filter((c) => c.products.length > 0)
         .map((c) => ({ ...c, products: c.products.map((p) => this.publicProduct(p, now)) })),
+      coupons: coupons
+        .filter((c) => c.maxUses == null || c._count.orders < c.maxUses)
+        .map((c) => ({
+          code: c.code,
+          label: couponLabel(c),
+          description: c.description,
+          type: c.type,
+          minOrderCents: c.minOrderCents,
+          firstOrderOnly: c.firstOrderOnly,
+          weekdays: c.weekdays,
+          endsAt: c.endsAt,
+        })),
       topProductIds: top.map((t) => t.productId!).filter((id) => visible.has(id)).slice(0, 8),
       zones,
     };
@@ -171,19 +197,26 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async createPublicOrder(slug: string, dto: CreateOrderDto) {
-    const store = await this.findPublicStore(slug);
+  /**
+   * Preço do pedido como o servidor calcula (o que vale é isto, nunca o navegador):
+   * cardápio de hoje, promoções, taxa do bairro e o cupom, se veio.
+   */
+  private async quoteFor(
+    store: Awaited<ReturnType<OrdersService['findPublicStore']>>,
+    input: {
+      type: 'DELIVERY' | 'PICKUP';
+      zoneId?: string;
+      paymentMethod?: PaymentMethod;
+      changeForCents?: number;
+      items: CreateOrderDto['items'];
+      couponCode?: string;
+    },
+    phone: string | null,
+    /** Entrega sem bairro escolhido ainda: calcula sem taxa (só na prévia). */
+    zoneless = false,
+  ) {
     const tenantId = store.tenantId;
-
-    // Cartão online depende do SDK do gateway no navegador (tokenização): entra junto com o gateway real.
-    if (dto.paymentMethod === 'CREDIT_CARD') {
-      throw new BadRequestException('Pagamento com cartão pela loja ainda não está disponível. Use PIX ou pague na entrega.');
-    }
-    const phone = normalizePhone(dto.customer.phone);
-    if (!phone) throw new BadRequestException('Informe um telefone com DDD.');
-    if (dto.type === 'DELIVERY' && !dto.address) throw new BadRequestException('Informe o endereço de entrega.');
-
-    const productIds = [...new Set(dto.items.map((i) => i.productId))];
+    const productIds = [...new Set(input.items.map((i) => i.productId))];
     const [products, zones] = await Promise.all([
       this.prisma.product.findMany({
         where: { tenantId, id: { in: productIds } },
@@ -230,13 +263,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     try {
       priced = priceOrder(
         {
-          type: dto.type,
-          zoneId: dto.address?.zoneId,
-          paymentMethod: dto.paymentMethod,
-          changeForCents: dto.changeForCents,
-          items: dto.items,
+          type: zoneless ? 'PICKUP' : input.type,
+          zoneId: input.zoneId,
+          paymentMethod: input.paymentMethod ?? (store.paymentMethods.find((m) => m !== 'CREDIT_CARD') as PaymentMethod),
+          // O troco é conferido depois do cupom, contra o total final.
+          items: input.items,
         },
-        store,
+        zoneless ? { ...store, acceptsPickup: true } : store,
         menu,
         zones,
       );
@@ -245,11 +278,80 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw err;
     }
 
+    let coupon: { id: string; code: string; discountCents: number; label: string; promoExcluded: boolean } | null = null;
+    const code = input.couponCode?.trim().toUpperCase();
+    if (code) {
+      const c = await this.prisma.coupon.findUnique({ where: { tenantId_code: { tenantId, code } } });
+      if (!c) throw new BadRequestException('Cupom não encontrado. Confira o código.');
+      const used = { tenantId, couponId: c.id, status: { not: 'CANCELLED' as const } };
+      const [usesTotal, usesByCustomer, customerOrders] = await Promise.all([
+        this.prisma.order.count({ where: used }),
+        phone ? this.prisma.order.count({ where: { ...used, customerPhone: phone } }) : null,
+        phone && c.firstOrderOnly ? this.prisma.order.count({ where: { tenantId, customerPhone: phone, status: { not: 'CANCELLED' } } }) : null,
+      ]);
+      const promoItemsCents = priced.items.filter((i) => i.listUnitPriceCents > i.unitPriceCents).reduce((s, i) => s + i.totalCents, 0);
+      try {
+        const discountCents = couponDiscount(c, {
+          now,
+          subtotalCents: priced.subtotalCents,
+          promoItemsCents,
+          deliveryFeeCents: priced.deliveryFeeCents,
+          orderType: input.type,
+          usesTotal,
+          usesByCustomer,
+          customerHasOrders: customerOrders == null ? null : customerOrders > 0,
+        });
+        coupon = { id: c.id, code: c.code, discountCents, label: couponLabel(c), promoExcluded: c.type !== 'FREE_DELIVERY' && !c.combinesWithPromo && promoItemsCents > 0 };
+      } catch (err) {
+        if (err instanceof CouponError) throw new BadRequestException(err.message);
+        throw err;
+      }
+    }
+
+    const totalCents = priced.totalCents - (coupon?.discountCents ?? 0);
+    if (input.paymentMethod === 'CASH_ON_DELIVERY' && input.changeForCents != null && input.changeForCents < totalCents) {
+      throw new BadRequestException(`O troco precisa ser para um valor maior que o total (R$ ${(totalCents / 100).toFixed(2).replace('.', ',')}).`);
+    }
+    return { priced, costOf, coupon, totalCents };
+  }
+
+  /** Conta do carrinho antes de fechar: subtotal, taxa, promoções e cupom, calculados pelo servidor. */
+  async quotePublicOrder(slug: string, dto: QuoteOrderDto) {
+    const store = await this.findPublicStore(slug);
+    const phone = dto.phone ? normalizePhone(dto.phone) : null;
+    // Antes de escolher o bairro a taxa ainda não existe: calcula sem ela.
+    const zoneless = dto.type === 'DELIVERY' && !dto.zoneId;
+    const { priced, coupon, totalCents } = await this.quoteFor(store, dto, phone, zoneless);
+    return {
+      subtotalCents: priced.subtotalCents,
+      promoDiscountCents: priced.promoDiscountCents,
+      deliveryFeeCents: priced.deliveryFeeCents,
+      discountCents: coupon?.discountCents ?? 0,
+      coupon: coupon ? { code: coupon.code, label: coupon.label, discountCents: coupon.discountCents, promoExcluded: coupon.promoExcluded } : null,
+      totalCents,
+      zonePending: zoneless,
+    };
+  }
+
+  async createPublicOrder(slug: string, dto: CreateOrderDto) {
+    const store = await this.findPublicStore(slug);
+    const tenantId = store.tenantId;
+
+    // Cartão online depende do SDK do gateway no navegador (tokenização): entra junto com o gateway real.
+    if (dto.paymentMethod === 'CREDIT_CARD') {
+      throw new BadRequestException('Pagamento com cartão pela loja ainda não está disponível. Use PIX ou pague na entrega.');
+    }
+    const phone = normalizePhone(dto.customer.phone);
+    if (!phone) throw new BadRequestException('Informe um telefone com DDD.');
+    if (dto.type === 'DELIVERY' && !dto.address) throw new BadRequestException('Informe o endereço de entrega.');
+
+    const { priced, costOf, coupon, totalCents } = await this.quoteFor(store, { ...dto, zoneId: dto.address?.zoneId }, phone);
+
     const online = ONLINE_METHODS.includes(dto.paymentMethod);
     const charge = online
       ? await this.gateway.createCharge({
           paymentId: 'pending',
-          amountCents: priced.totalCents,
+          amountCents: totalCents,
           method: dto.paymentMethod as 'PIX',
           description: `Pedido ${store.displayName}`,
           customer: { name: dto.customer.name, phone },
@@ -282,8 +384,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           notes: dto.notes?.trim() || null,
           subtotalCents: priced.subtotalCents,
           promoDiscountCents: priced.promoDiscountCents,
+          discountCents: coupon?.discountCents ?? 0,
+          couponId: coupon?.id ?? null,
+          couponCode: coupon?.code ?? null,
           deliveryFeeCents: priced.deliveryFeeCents,
-          totalCents: priced.totalCents,
+          totalCents: totalCents,
           paymentMethod: dto.paymentMethod,
           changeForCents: dto.paymentMethod === 'CASH_ON_DELIVERY' ? (dto.changeForCents ?? null) : null,
           utmSource: dto.utmSource || null,
@@ -308,7 +413,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
               tenantId,
               provider: online ? this.gateway.name : 'offline',
               method: dto.paymentMethod,
-              amountCents: priced.totalCents,
+              amountCents: totalCents,
               externalId: charge?.externalId ?? null,
               pixCopyPaste: charge?.pixCopyPaste ?? null,
               expiresAt: charge?.expiresAt ?? null,
@@ -316,7 +421,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           },
         },
       });
-      if (!online) await this.publishReceived(tx, created.id, tenantId, priced.totalCents, dto.paymentMethod);
+      if (!online) await this.publishReceived(tx, created.id, tenantId, totalCents, dto.paymentMethod);
       return created;
     });
 
@@ -366,6 +471,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       })),
       subtotalCents: order.subtotalCents,
       promoDiscountCents: order.promoDiscountCents,
+      discountCents: order.discountCents,
+      couponCode: order.couponCode,
       deliveryFeeCents: order.deliveryFeeCents,
       totalCents: order.totalCents,
       paymentMethod: order.paymentMethod,
