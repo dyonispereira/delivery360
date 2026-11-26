@@ -2,23 +2,26 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  Inject,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { OrderStatus, PaymentMethod, Prisma } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventsService } from '../core/events.service';
 import { activeModuleCodes } from '../access/access.rules';
-import { PAYMENT_GATEWAY, type PaymentGateway } from '../payments/payment-gateway';
+import type { PaymentGateway } from '../payments/payment-gateway';
+import { PaymentAccountsService } from '../payments/payment-accounts.service';
+import { AsaasError } from '../payments/asaas.client';
 import { CreateOrderDto, QuoteOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
 import { CouponError, couponDiscount, couponLabel } from './coupon-rules';
 import { activePromoPrice, effectivePrice, unitCost, type CostItem } from '@delivery360/shared';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
+import { normalizeDocument } from './document';
 import { ACTIVE_STATUSES, canTransition } from './order-status';
 import { AuditService } from '../core/audit.service';
 import { CampaignsService, campaignRule, fundedByShare, platformPart } from './campaigns.service';
@@ -77,7 +80,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
     private readonly audit: AuditService,
-    @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
+    private readonly payments: PaymentAccountsService,
     private readonly campaigns: CampaignsService,
   ) {}
 
@@ -117,7 +120,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const store = await this.findPublicStore(slug);
     const tenantId = store.tenantId;
     const now = new Date();
-    const [categories, zones, ratings, top, coupons, banners] = await Promise.all([
+    const [categories, zones, ratings, top, coupons, banners, gateway] = await Promise.all([
       this.prisma.menuCategory.findMany({
         where: { tenantId, active: true },
         orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
@@ -199,6 +202,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }),
       // Banners das campanhas da rede (criados pela equipe Delivery360).
       this.campaigns.banners(tenantId, now),
+      this.payments.gatewayFor(tenantId),
     ]);
     const names = new Map(categories.flatMap((c) => c.products.map((p) => [p.id, p.name] as const)));
     const visible = new Set(categories.flatMap((c) => c.products.filter((p) => p.available).map((p) => p.id)));
@@ -214,7 +218,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         acceptsDelivery: store.acceptsDelivery,
         acceptsPickup: store.acceptsPickup,
         minOrderCents: store.minOrderCents,
-        paymentMethods: store.paymentMethods.filter((m) => m !== 'CREDIT_CARD'),
+        // Pix pelo site só com conta de pagamento conectada (ou o Pix de teste ligado).
+        paymentMethods: store.paymentMethods.filter((m) => m !== 'CREDIT_CARD' && (m !== 'PIX' || !!gateway)),
+        /** O Pix desta loja pede CPF (exigência do Asaas). */
+        pixNeedsDocument: !!gateway?.requiresDocument,
         estimatedMinutes: store.estimatedMinutes,
         rating: ratings._count.ratingStore >= 3 ? { average: Math.round((ratings._avg.ratingStore ?? 0) * 10) / 10, count: ratings._count.ratingStore } : null,
       },
@@ -524,21 +531,34 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const { priced, costOf, coupon, boost, totalCents } = await this.quoteFor(store, { ...dto, zoneId: dto.address?.zoneId }, phone);
 
     const online = ONLINE_METHODS.includes(dto.paymentMethod);
-    const charge = online
-      ? await this.gateway.createCharge({
-          paymentId: 'pending',
+    const gateway = online ? await this.payments.gatewayFor(tenantId) : null;
+    if (online && !gateway) throw new BadRequestException('Esta loja ainda não recebe Pix pelo site. Escolha pagar na entrega.');
+    const document = normalizeDocument(dto.customer.document);
+    if (gateway?.requiresDocument && !document) throw new BadRequestException('Informe um CPF válido para pagar com Pix.');
+    const known = gateway ? await this.prisma.customer.findUnique({ where: { tenantId_phone: { tenantId, phone } } }) : null;
+    const charge = gateway
+      ? await this.charge(gateway, {
           amountCents: totalCents,
-          method: dto.paymentMethod as 'PIX',
+          method: 'PIX',
           description: `Pedido ${store.displayName}`,
-          customer: { name: dto.customer.name, phone },
+          customer: {
+            name: dto.customer.name.trim(),
+            phone,
+            document,
+            gatewayCustomerId: known?.document === document && known?.gatewayCustomerId ? known.gatewayCustomerId : null,
+          },
         })
       : null;
 
     const order = await this.withOrderNumber(tenantId, async (tx, number) => {
       const customer = await tx.customer.upsert({
         where: { tenantId_phone: { tenantId, phone } },
-        update: { name: dto.customer.name.trim() },
-        create: { tenantId, phone, name: dto.customer.name.trim() },
+        update: {
+          name: dto.customer.name.trim(),
+          ...(document ? { document } : {}),
+          ...(charge?.gatewayCustomerId ? { gatewayCustomerId: charge.gatewayCustomerId } : {}),
+        },
+        create: { tenantId, phone, name: dto.customer.name.trim(), document, gatewayCustomerId: charge?.gatewayCustomerId ?? null },
       });
       const status: OrderStatus = online ? 'AWAITING_PAYMENT' : 'PAID';
       const created = await tx.order.create({
@@ -592,11 +612,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           payments: {
             create: {
               tenantId,
-              provider: online ? this.gateway.name : 'offline',
+              provider: gateway ? gateway.name : 'offline',
               method: dto.paymentMethod,
               amountCents: totalCents,
               externalId: charge?.externalId ?? null,
               pixCopyPaste: charge?.pixCopyPaste ?? null,
+              pixQrImage: charge?.pixQrImage ?? null,
               expiresAt: charge?.expiresAt ?? null,
             },
           },
@@ -663,6 +684,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         ? {
             status: payment.status,
             pixCopyPaste: payment.status === 'PENDING' ? payment.pixCopyPaste : null,
+            pixQrImage: payment.status === 'PENDING' ? payment.pixQrImage : null,
             expiresAt: payment.expiresAt,
             canSimulate: payment.provider === 'fake' && payment.status === 'PENDING' && this.fakeEnabled(),
           }
@@ -686,6 +708,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
               status: tip.status,
               amountCents: tip.amountCents,
               pixCopyPaste: tip.status === 'PENDING' ? tip.pixCopyPaste : null,
+              pixQrImage: tip.status === 'PENDING' ? tip.pixQrImage : null,
               expiresAt: tip.expiresAt,
               canSimulate: tip.provider === 'fake' && tip.status === 'PENDING' && this.fakeEnabled(),
             }
@@ -740,20 +763,30 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (!this.feedbackOpen(order) || !delivered) throw new ConflictException('A gorjeta abre quando o motoboy entrega o pedido.');
     if (order.tip?.status === 'PAID') throw new ConflictException('A gorjeta deste pedido já foi paga. Obrigado!');
 
-    const charge = await this.gateway.createCharge({
-      paymentId: order.tip?.id ?? 'pending',
+    const gateway = await this.payments.gatewayFor(order.tenantId);
+    if (!gateway) throw new ConflictException('Esta loja ainda não recebe Pix pelo site.');
+    const customer = order.customerId ? await this.prisma.customer.findUnique({ where: { id: order.customerId } }) : null;
+    const document = normalizeDocument(dto.document) ?? customer?.document ?? null;
+    if (gateway.requiresDocument && !document) throw new BadRequestException('Informe um CPF válido para pagar a gorjeta com Pix.');
+    const charge = await this.charge(gateway, {
       amountCents: dto.amountCents,
       method: 'PIX',
       description: `Gorjeta para o entregador · ${order.tenant.store?.displayName ?? ''}`.trim(),
-      customer: { name: order.customerName, phone: order.customerPhone },
+      customer: {
+        name: order.customerName,
+        phone: order.customerPhone,
+        document,
+        gatewayCustomerId: customer?.document === document ? customer?.gatewayCustomerId : null,
+      },
     });
     const data = {
       courierId: delivered.courierId,
       amountCents: dto.amountCents,
-      provider: this.gateway.name,
+      provider: gateway.name,
       status: 'PENDING' as const,
       externalId: charge.externalId,
       pixCopyPaste: charge.pixCopyPaste ?? null,
+      pixQrImage: charge.pixQrImage ?? null,
       expiresAt: charge.expiresAt ?? null,
     };
     // Um registro por pedido: trocar o valor ou gerar de novo depois de vencer reaproveita o mesmo.
@@ -802,7 +835,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * Confirma um pagamento vindo do gateway (webhook). Idempotente: chamar de novo não duplica nada.
    * Só aqui o pedido PIX passa a "Pago" e entra na operação.
    */
-  async markPaid(provider: string, externalId: string) {
+  async markPaid(provider: string, externalId: string, feeCents = 0) {
     await this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.findUnique({ where: { provider_externalId: { provider, externalId } }, include: { order: true } });
       if (!payment) throw new NotFoundException('Pagamento não encontrado.');
@@ -811,7 +844,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         throw new ConflictException('Este pagamento não pode mais ser confirmado.');
       }
       // Atualização condicional: se dois webhooks chegarem juntos, só um vence.
-      const updated = await tx.payment.updateMany({ where: { id: payment.id, status: 'PENDING' }, data: { status: 'PAID', paidAt: new Date() } });
+      const updated = await tx.payment.updateMany({ where: { id: payment.id, status: 'PENDING' }, data: { status: 'PAID', paidAt: new Date(), feeCents } });
       if (updated.count === 0) return;
       await tx.order.update({ where: { id: payment.orderId }, data: { status: 'PAID' } });
       await tx.orderStatusHistory.create({ data: { orderId: payment.orderId, status: 'PAID', note: 'Pagamento confirmado' } });
@@ -833,7 +866,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async expireStale(now = new Date()) {
     const stale = await this.prisma.payment.findMany({
       where: { status: 'PENDING', expiresAt: { lt: now }, order: { status: 'AWAITING_PAYMENT' } },
-      select: { id: true, orderId: true },
+      select: { id: true, orderId: true, tenantId: true, provider: true, externalId: true },
       take: 200,
     });
     for (const p of stale) {
@@ -843,6 +876,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         await tx.order.updateMany({ where: { id: p.orderId, status: 'AWAITING_PAYMENT' }, data: { status: 'CANCELLED' } });
         await tx.orderStatusHistory.create({ data: { orderId: p.orderId, status: 'CANCELLED', note: 'PIX não pago no prazo' } });
       });
+      // Cancela a cobrança no gateway para o cliente não pagar um pedido que já foi cancelado.
+      if (p.provider !== 'fake' && p.externalId) {
+        try {
+          await (await this.payments.gatewayFor(p.tenantId))?.cancelCharge(p.externalId);
+        } catch (e) {
+          this.log.warn(`Não consegui cancelar a cobrança ${p.externalId} no gateway: ${(e as Error).message}`);
+        }
+      }
     }
     return stale.length;
   }
@@ -927,6 +968,44 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (!order) throw new NotFoundException('Pedido não encontrado.');
     const { count } = await this.prisma.order.updateMany({ where: { id: orderId, printedAt: null }, data: { printedAt: new Date() } });
     return { first: count === 1 };
+  }
+
+  /**
+   * Webhook do Asaas da conta de um restaurante. Só aceita com o token que cadastramos nessa conta.
+   * Responde rápido e é idempotente (o Asaas reenvia se não receber 200).
+   */
+  async asaasWebhook(tenantId: string, token: string | undefined, body: { event?: string; payment?: { id?: string; value?: number; netValue?: number } }) {
+    if (!(await this.payments.checkWebhookToken(tenantId, token))) throw new UnauthorizedException('Token do webhook inválido.');
+    const id = body.payment?.id;
+    if (!id || !['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(body.event ?? '')) return { received: true };
+    const payment = await this.prisma.payment.findUnique({ where: { provider_externalId: { provider: 'asaas', externalId: id } } });
+    if (payment && payment.tenantId === tenantId) {
+      try {
+        await this.markPaid('asaas', id, PaymentAccountsService.feeCents(body.payment ?? {}));
+      } catch (e) {
+        // Pago depois de cancelado (raro: a cobrança é apagada no Asaas quando o prazo vence). Fica registrado para devolver.
+        if (!(e instanceof ConflictException)) throw e;
+        this.log.warn(`Pix ${id} pago depois de o pedido ${payment.orderId} ser cancelado: devolver pelo Asaas.`);
+        await this.prisma.orderStatusHistory.create({ data: { orderId: payment.orderId, status: 'CANCELLED', note: 'Pix pago depois do prazo: devolver ao cliente pelo Asaas' } });
+      }
+      return { received: true };
+    }
+    const tip = await this.prisma.tip.findUnique({ where: { provider_externalId: { provider: 'asaas', externalId: id } } });
+    if (tip && tip.tenantId === tenantId) await this.markTipPaid('asaas', id);
+    return { received: true };
+  }
+
+  /** Cria a cobrança no gateway, traduzindo os erros dele para o cliente. */
+  private async charge(gateway: PaymentGateway, input: Parameters<PaymentGateway['createCharge']>[0]) {
+    try {
+      return await gateway.createCharge(input);
+    } catch (e) {
+      if (e instanceof AsaasError) {
+        this.log.warn(`Asaas recusou a cobrança: ${e.message}`);
+        throw new BadRequestException(`Não foi possível gerar o Pix: ${e.message}`);
+      }
+      throw e;
+    }
   }
 
   // ---------- Auxiliares ----------

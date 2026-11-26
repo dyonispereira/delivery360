@@ -1,9 +1,11 @@
 import { Global, Module } from '@nestjs/common';
-import { FakePaymentGateway, PAYMENT_GATEWAY } from './payment-gateway';
+import { PaymentAccountsService } from './payment-accounts.service';
+import { PaymentsController } from './payments.controller';
 
 @Global()
 @Module({
-  providers: [{ provide: PAYMENT_GATEWAY, useFactory: () => new FakePaymentGateway() }],
-  exports: [PAYMENT_GATEWAY],
+  controllers: [PaymentsController],
+  providers: [PaymentAccountsService],
+  exports: [PaymentAccountsService],
 })
 export class PaymentsModule {}
