@@ -49,6 +49,7 @@ model Tenant {
   events          DomainEvent[]
 
   store            Store?
+  paymentAccount   PaymentAccount?
   deliveryZones    DeliveryZone[]
   menuCategories   MenuCategory[]
   products         Product[]
@@ -373,6 +374,10 @@ model Customer {
   name      String
   /// Só dígitos, com DDD (ex.: 11987654321).
   phone     String
+  /// CPF ou CNPJ, só dígitos (o Asaas exige para gerar o Pix).
+  document  String?
+  /// Id do cliente na conta Asaas do restaurante (para não cadastrar de novo).
+  gatewayCustomerId String? @map("gateway_customer_id")
   createdAt DateTime @default(now()) @map("created_at")
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   orders    Order[]
@@ -530,6 +535,8 @@ model Payment {
   externalId   String?       @map("external_id")
   /// PIX copia e cola (quando houver).
   pixCopyPaste String?       @map("pix_copy_paste")
+  /// QR Code do Pix em PNG (base64), quando o gateway manda a imagem.
+  pixQrImage   String?       @map("pix_qr_image")
   expiresAt    DateTime?     @map("expires_at")
   paidAt       DateTime?     @map("paid_at")
   createdAt    DateTime      @default(now()) @map("created_at")
@@ -538,6 +545,26 @@ model Payment {
 
   @@unique([provider, externalId])
   @@map("payments")
+}
+
+/// Conta do gateway de pagamento do restaurante (Asaas): o Pix cai direto nela.
+/// A chave da API fica cifrada e nunca volta para o navegador.
+model PaymentAccount {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @unique @map("tenant_id") @db.Uuid
+  provider        String   @default("asaas")
+  sandbox         Boolean  @default(false)
+  apiKeyEncrypted String   @map("api_key_encrypted")
+  apiKeyLast4     String   @map("api_key_last4")
+  accountName     String?  @map("account_name")
+  /// Token que o Asaas manda no header asaas-access-token de cada webhook.
+  webhookToken    String   @map("webhook_token")
+  webhookId       String?  @map("webhook_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("payment_accounts")
 }
 
 // ---------- Entregas ----------
@@ -654,6 +681,8 @@ model Tip {
   status       PaymentStatus @default(PENDING)
   externalId   String?       @map("external_id")
   pixCopyPaste String?       @map("pix_copy_paste")
+  /// QR Code do Pix em PNG (base64), quando o gateway manda a imagem.
+  pixQrImage   String?       @map("pix_qr_image")
   expiresAt    DateTime?     @map("expires_at")
   paidAt       DateTime?     @map("paid_at")
   /// Quando o restaurante entregou o dinheiro ao motoboy.

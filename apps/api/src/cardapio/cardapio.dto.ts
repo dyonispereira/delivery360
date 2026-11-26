@@ -156,6 +156,8 @@ export class OrderItemInputDto {
 export class CustomerInputDto {
   @IsString() @MinLength(2) @MaxLength(80) name: string;
   @IsString() @MaxLength(20) phone: string;
+  /** CPF ou CNPJ: exigido pelo Asaas para o Pix. */
+  @IsOptional() @IsString() @MaxLength(20) document?: string;
 }
 
 export class AddressInputDto {
@@ -204,6 +206,8 @@ export class RateOrderDto {
 export class TipDto {
   /** De R$ 1 a R$ 200. */
   @IsInt() @Min(100, { message: 'A gorjeta mínima é R$ 1,00.' }) @Max(20_000, { message: 'A gorjeta máxima é R$ 200,00.' }) amountCents: number;
+  /** CPF de quem paga (quando a loja usa Asaas e o pedido ainda não tem). */
+  @IsOptional() @IsString() @MaxLength(20) document?: string;
 }
 
 // ---------- Canais de venda (iFood, 99Food, Keeta) ----------

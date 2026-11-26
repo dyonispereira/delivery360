@@ -948,7 +948,7 @@ function Checkout({
 }) {
   const router = useRouter();
   const { store, zones } = data;
-  const saved = useMemo(() => load(customerKey, { name: '', phone: '', street: '', number: '', complement: '', zoneId: '' }), []);
+  const saved = useMemo(() => load(customerKey, { name: '', phone: '', street: '', number: '', complement: '', zoneId: '', document: '' }), []);
   const [type, setType] = useState<'DELIVERY' | 'PICKUP'>(store.acceptsDelivery ? 'DELIVERY' : 'PICKUP');
   const [name, setName] = useState(saved.name);
   const [phone, setPhone] = useState(saved.phone);
@@ -956,6 +956,7 @@ function Checkout({
   const [street, setStreet] = useState(saved.street);
   const [number, setNumber] = useState(saved.number);
   const [complement, setComplement] = useState(saved.complement);
+  const [doc, setDoc] = useState(saved.document ?? '');
   const methods = store.paymentMethods.filter((m) => m !== 'CREDIT_CARD');
   const [method, setMethod] = useState<PaymentMethod | ''>(methods[0] ?? '');
   const [change, setChange] = useState('');
@@ -1045,13 +1046,15 @@ function Checkout({
       return setError('Preencha bairro, rua e número para a entrega.');
     }
     if (!method) return setError('Escolha a forma de pagamento.');
+    const needsDoc = method === 'PIX' && !!store.pixNeedsDocument;
+    if (needsDoc && ![11, 14].includes(doc.replace(/\D/g, '').length)) return setError('Informe seu CPF para pagar com Pix.');
     let changeForCents: number | undefined;
     if (method === 'CASH_ON_DELIVERY' && change.trim()) {
       const c = parseBRL(change);
       if (c === null || c < total) return setError(`O troco precisa ser para um valor de pelo menos ${formatBRL(total)}.`);
       changeForCents = c;
     }
-    save(customerKey, { name, phone, street, number, complement, zoneId });
+    save(customerKey, { name, phone, street, number, complement, zoneId, document: doc });
     const utm = load<{ source: string | null; campaign: string | null }>(`d360.utm.${slug}`, { source: null, campaign: null });
 
     setSending(true);
@@ -1060,7 +1063,7 @@ function Checkout({
         method: 'POST',
         body: {
           type,
-          customer: { name: name.trim(), phone },
+          customer: { name: name.trim(), phone, ...(needsDoc ? { document: doc } : {}) },
           address: type === 'DELIVERY' ? { zoneId, street: street.trim(), number: number.trim(), complement: complement.trim() || undefined } : undefined,
           items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, optionIds: i.optionIds, notes: i.notes || undefined })),
           paymentMethod: method,
@@ -1184,6 +1187,12 @@ function Checkout({
             ))}
           </div>
         </div>
+        {method === 'PIX' && store.pixNeedsDocument && (
+          <div>
+            <label className="label" htmlFor="c-doc">CPF (o banco exige no Pix)</label>
+            <input id="c-doc" className="input" inputMode="numeric" autoComplete="off" placeholder="000.000.000-00" value={doc} onChange={(e) => setDoc(e.target.value)} />
+          </div>
+        )}
         {method === 'CASH_ON_DELIVERY' && (
           <div>
             <label className="label" htmlFor="c-change">Troco para (opcional)</label>

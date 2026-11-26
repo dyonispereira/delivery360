@@ -52,6 +52,12 @@ services:
         value: "true"
       - key: SEED_SIMULATION_PASSWORD
         generateValue: true
-      # Link de TESTE: PIX simulado. Desligar quando o gateway real entrar.
+      # Lojas sem conta Asaas conectada usam o PIX simulado. Desligar em produção.
       - key: PAYMENTS_FAKE_ENABLED
         value: "true"
+      # Endereço público da API: o Asaas manda o aviso de pagamento para <PUBLIC_API_URL>/public/webhooks/asaas/<loja>.
+      - key: PUBLIC_API_URL
+        value: https://delivery360-wgi4.onrender.com/api
+      # Cifra as chaves da API do Asaas guardadas no banco. Não trocar depois (as chaves salvas deixam de abrir).
+      - key: PAYMENTS_SECRET
+        generateValue: true

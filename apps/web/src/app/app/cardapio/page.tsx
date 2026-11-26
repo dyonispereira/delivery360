@@ -9,6 +9,7 @@ import { StoreSettings } from './store-settings';
 import { ZonesEditor } from './zones-editor';
 import { ChannelsEditor } from './channels';
 import { CampaignsPanel } from './campaigns-panel';
+import { PaymentAccount } from './payment-account';
 import { CouponsEditor } from './coupons-editor';
 
 const TABS = [
@@ -51,7 +52,12 @@ export default function CardapioPage() {
         </div>
       </div>
       {tab === 'menu' && <MenuEditor canEdit={canEdit} />}
-      {tab === 'loja' && <StoreSettings canEdit={canEdit} />}
+      {tab === 'loja' && (
+        <div className="space-y-4">
+          <StoreSettings canEdit={canEdit} />
+          {canEdit && <PaymentAccount canConnect={tenant.role === null || tenant.role === 'OWNER'} />}
+        </div>
+      )}
       {tab === 'cupons' && (
         <div className="space-y-4">
           <CouponsEditor canEdit={canEdit} platform={tenant.role === null} />

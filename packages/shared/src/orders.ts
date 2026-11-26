@@ -85,6 +85,8 @@ export interface PublicStore {
     acceptsPickup: boolean;
     minOrderCents: number;
     paymentMethods: PaymentMethod[];
+    /** O Pix desta loja pede CPF (exigência do Asaas). */
+    pixNeedsDocument?: boolean;
     estimatedMinutes: number;
     /** Nota média das avaliações (null com menos de 3 avaliações). */
     rating: { average: number; count: number } | null;
@@ -187,7 +189,7 @@ export interface OrderTracking {
   totalCents: number;
   paymentMethod: PaymentMethod;
   changeForCents: number | null;
-  payment: { status: PaymentStatus; pixCopyPaste: string | null; expiresAt: string | null; canSimulate: boolean } | null;
+  payment: { status: PaymentStatus; pixCopyPaste: string | null; pixQrImage?: string | null; expiresAt: string | null; canSimulate: boolean } | null;
   history: { status: OrderStatus; createdAt: string }[];
   store: { slug: string; displayName: string; whatsapp: string | null; estimatedMinutes: number } | null;
   courierName: string | null;
@@ -201,7 +203,7 @@ export interface OrderTracking {
   /** Primeiro nome do motoboy que entregou (para a gorjeta). */
   tipCourierName: string | null;
   canTip: boolean;
-  tip: { status: PaymentStatus; amountCents: number; pixCopyPaste: string | null; expiresAt: string | null; canSimulate: boolean } | null;
+  tip: { status: PaymentStatus; amountCents: number; pixCopyPaste: string | null; pixQrImage?: string | null; expiresAt: string | null; canSimulate: boolean } | null;
 }
 
 // ---------- Entregas: ocorrências e avaliação ----------

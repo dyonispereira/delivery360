@@ -140,11 +140,12 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
         <section className="card space-y-3">
           <h2 className="font-semibold">Pague com PIX para confirmar</h2>
           <p className="text-sm text-zinc-600">
-            Copie o código abaixo e cole no app do seu banco, em “PIX copia e cola”.
+            {order.payment?.pixQrImage ? 'Aponte a câmera do app do banco para o QR Code ou copie o código e cole em “PIX copia e cola”.' : 'Copie o código abaixo e cole no app do seu banco, em “PIX copia e cola”.'}
             {order.payment?.expiresAt && (
               <> O código vale até {new Date(order.payment.expiresAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</>
             )}
           </p>
+          {order.payment?.pixQrImage && <PixQr image={order.payment.pixQrImage} />}
           <textarea readOnly className="input font-mono text-xs" rows={3} value={order.payment?.pixCopyPaste ?? ''} />
           <button
             className="btn-primary w-full"
@@ -345,6 +346,7 @@ function TipCard({ order, code, onSaved }: { order: OrderTracking; code: string;
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cpf, setCpf] = useState('');
   const tip = order.tip;
   const name = order.tipCourierName;
 
@@ -374,6 +376,7 @@ function TipCard({ order, code, onSaved }: { order: OrderTracking; code: string;
       <section className="card space-y-3">
         <h2 className="font-semibold">Gorjeta de {formatBRL(tip.amountCents)} para {name}</h2>
         <p className="text-sm text-zinc-600">Copie o código e pague no app do banco, em “PIX copia e cola”.</p>
+        {tip.pixQrImage && <PixQr image={tip.pixQrImage} />}
         <textarea readOnly className="input font-mono text-xs" rows={3} value={tip.pixCopyPaste ?? ''} />
         <button
           className="btn-primary w-full"
@@ -401,6 +404,7 @@ function TipCard({ order, code, onSaved }: { order: OrderTracking; code: string;
 
   const customCents = custom ? parseBRL(custom) : null;
   const chosen = amount ?? customCents;
+  const askCpf = !!error?.includes('CPF') || cpf !== '';
   return (
     <section className="card space-y-3">
       <div>
@@ -433,10 +437,30 @@ function TipCard({ order, code, onSaved }: { order: OrderTracking; code: string;
           }}
         />
       </div>
+      {askCpf && (
+        <label className="block text-sm">
+          CPF de quem paga (o banco exige no Pix)
+          <input className="input mt-1" inputMode="numeric" placeholder="000.000.000-00" value={cpf} onChange={(e) => setCpf(e.target.value)} />
+        </label>
+      )}
       <ErrorBox message={error} />
-      <button className="btn-primary w-full" disabled={busy || !chosen} onClick={() => void call('/tip', { amountCents: chosen })}>
+      <button
+        className="btn-primary w-full"
+        disabled={busy || !chosen}
+        onClick={() => void call('/tip', { amountCents: chosen, ...(cpf.trim() ? { document: cpf.trim() } : {}) })}
+      >
         {busy ? 'Gerando PIX...' : chosen ? `Dar ${formatBRL(chosen)} de gorjeta` : 'Escolha um valor'}
       </button>
     </section>
+  );
+}
+
+/** QR Code do Pix que o gateway gerou (PNG em base64). */
+function PixQr({ image }: { image: string }) {
+  return (
+    <div className="flex justify-center">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={`data:image/png;base64,${image}`} alt="QR Code do Pix" className="h-52 w-52 rounded-xl border border-zinc-200 bg-white p-2" />
+    </div>
   );
 }

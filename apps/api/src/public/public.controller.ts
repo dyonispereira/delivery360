@@ -1,5 +1,5 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+import { Body, Controller, Get, Headers, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { Public } from '../access/access.decorators';
 import { CreateOrderDto, QuoteOrderDto, RateOrderDto, TipDto } from '../cardapio/cardapio.dto';
 import { OrdersService } from '../cardapio/orders.service';
@@ -62,5 +62,17 @@ export class PublicController {
   @HttpCode(200)
   simulateTip(@Param('code') code: string) {
     return this.orders.simulateTip(code);
+  }
+
+  /** Aviso de pagamento do Asaas (conta do restaurante). Autenticado pelo header asaas-access-token. */
+  @SkipThrottle()
+  @Post('webhooks/asaas/:tenantId')
+  @HttpCode(200)
+  asaasWebhook(
+    @Param('tenantId', ParseUUIDPipe) tenantId: string,
+    @Headers('asaas-access-token') token: string | undefined,
+    @Body() body: { event?: string; payment?: { id?: string; value?: number; netValue?: number } },
+  ) {
+    return this.orders.asaasWebhook(tenantId, token, body);
   }
 }

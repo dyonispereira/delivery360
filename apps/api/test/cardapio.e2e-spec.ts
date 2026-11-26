@@ -552,6 +552,99 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     await owner().patch(`/cardapio/products/${ids.pizza}`).send({ costItems: [] });
   });
 
+  it('Pix pelo Asaas: dono conecta a conta, cliente paga com CPF e o webhook confirma sozinho', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { PaymentAccountsService } = require('../src/payments/payment-accounts.service');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { OrdersService } = require('../src/cardapio/orders.service');
+    process.env.PUBLIC_API_URL = 'https://loja.delivery360.test/api/';
+
+    // Asaas de mentira (a API real não é chamada nos testes).
+    const calls: { method: string; path: string; body?: Record<string, unknown>; key: string }[] = [];
+    let n = 0;
+    const accounts = app.get(PaymentAccountsService);
+    accounts.fetchImpl = async (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => {
+      const path = url.replace(/^https:\/\/[^/]+\/v3/, '');
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      calls.push({ method: init.method, path, body, key: init.headers.access_token });
+      const reply = (status: number, json: unknown) => ({ ok: status < 300, status, text: async () => JSON.stringify(json) });
+      if (init.headers.access_token.startsWith('$aact_ruim')) return reply(401, {});
+      if (path === '/myAccount/commercialInfo/') return reply(200, { name: 'Bella Napoli LTDA', tradingName: 'Pizzaria Bella Napoli' });
+      if (init.method === 'POST' && path === '/webhooks') return reply(200, { id: `wh_${++n}` });
+      if (init.method === 'DELETE') return reply(200, { deleted: true });
+      if (path.startsWith('/customers?')) return reply(200, { data: [] });
+      if (init.method === 'POST' && path === '/customers') return reply(200, { id: `cus_${++n}` });
+      if (init.method === 'POST' && path === '/payments') return reply(200, { id: `pay_${++n}`, status: 'PENDING', value: body.value, billingType: 'PIX' });
+      if (path.endsWith('/pixQrCode')) return reply(200, { encodedImage: 'iVBORw0KGgo=', payload: `00020126pix${path}` });
+      return reply(404, { errors: [{ description: 'rota desconhecida' }] });
+    };
+    const key = '$aact_YTU5YTE0M2M2N2I4MTliNzk0YTI5N2U5MzdjNWZmNDQ6OjAwMDAwMDAwMDAwMDAwNjc5NDQ6OiRhYWNoX2MxOTJhZTk1';
+
+    expect((await owner().get('/cardapio/payments/account')).body).toMatchObject({ connected: false, testPixAvailable: true, webhookUrlConfigured: true });
+    expect((await as(staffToken).put('/cardapio/payments/account/asaas').send({ apiKey: key, sandbox: true })).status).toBe(403);
+    const bad = await owner().put('/cardapio/payments/account/asaas').send({ apiKey: '$aact_ruim_0000000000000000000000', sandbox: true });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toContain('Chave da API do Asaas inválida');
+
+    const connected = await owner().put('/cardapio/payments/account/asaas').send({ apiKey: key, sandbox: true });
+    expect(connected.status).toBe(200);
+    expect(connected.body).toMatchObject({ connected: true, provider: 'asaas', sandbox: true, apiKeyLast4: 'ZTk1', accountName: 'Pizzaria Bella Napoli', webhookActive: true });
+    expect(JSON.stringify(connected.body)).not.toContain(key);
+    const hook = calls.find((c) => c.method === 'POST' && c.path === '/webhooks')!;
+    expect(hook.body).toMatchObject({ url: `https://loja.delivery360.test/api/public/webhooks/asaas/${tenantId}`, email: 'dono@bella.test', events: ['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'] });
+    const stored = await prisma.paymentAccount.findUniqueOrThrow({ where: { tenantId } });
+    expect(stored.apiKeyEncrypted).not.toContain('YTU5');
+    expect(stored.webhookToken).toBe(hook.body!.authToken);
+
+    const menu = (await http().get(`/public/stores/${slug}`)).body;
+    expect(menu.store).toMatchObject({ pixNeedsDocument: true, paymentMethods: expect.arrayContaining(['PIX']) });
+
+    const phone = '(11) 97777-0000';
+    const noDoc = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ customer: { name: 'Lia', phone } }));
+    expect(noDoc.status).toBe(400);
+    expect(noDoc.body.message).toContain('CPF');
+    expect((await http().post(`/public/stores/${slug}/orders`).send(orderBody({ customer: { name: 'Lia', phone, document: '529.982.247-24' } }))).status).toBe(400);
+    const order = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ customer: { name: 'Lia', phone, document: '529.982.247-25' } }));
+    expect(order.status).toBe(201);
+    expect(order.body).toMatchObject({ status: 'AWAITING_PAYMENT', payment: { status: 'PENDING', pixQrImage: 'iVBORw0KGgo=', canSimulate: false } });
+    expect(order.body.payment.pixCopyPaste).toMatch(/^00020126pix/);
+    const pay = await prisma.payment.findFirstOrThrow({ where: { order: { trackingCode: order.body.trackingCode } } });
+    expect(pay).toMatchObject({ provider: 'asaas' });
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/payments')!.body).toMatchObject({ billingType: 'PIX', value: order.body.totalCents / 100 });
+    expect((await http().post(`/public/orders/${order.body.trackingCode}/simulate-payment`)).status).toBe(404);
+
+    // Webhook: só com o token desta conta.
+    const event = { event: 'PAYMENT_RECEIVED', payment: { id: pay.externalId, value: order.body.totalCents / 100, netValue: order.body.totalCents / 100 - 0.99 } };
+    const hookUrl = `/public/webhooks/asaas/${tenantId}`;
+    expect((await http().post(hookUrl).send(event)).status).toBe(401);
+    expect((await http().post(hookUrl).set('asaas-access-token', 'x'.repeat(43)).send(event)).status).toBe(401);
+    expect((await http().post(`/public/webhooks/asaas/${crypto.randomUUID()}`).set('asaas-access-token', stored.webhookToken).send(event)).status).toBe(401);
+    expect((await http().post(hookUrl).set('asaas-access-token', stored.webhookToken).send(event)).status).toBe(200);
+    expect((await http().post(hookUrl).set('asaas-access-token', stored.webhookToken).send({ ...event, event: 'PAYMENT_CONFIRMED' })).status).toBe(200);
+    expect((await http().get(`/public/orders/${order.body.trackingCode}`)).body).toMatchObject({ status: 'PAID', payment: { status: 'PAID', pixQrImage: null } });
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: pay.id } })).toMatchObject({ status: 'PAID', feeCents: 99 });
+    expect(await prisma.customer.findFirstOrThrow({ where: { tenantId, phone: '11977770000' } })).toMatchObject({ document: '52998224725' });
+
+    // Mesmo cliente de novo: não cadastra no Asaas outra vez. Pix vencido: pedido cancelado e cobrança apagada no Asaas.
+    const before = calls.filter((c) => c.method === 'POST' && c.path === '/customers').length;
+    const late = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ customer: { name: 'Lia', phone, document: '52998224725' } }));
+    expect(late.status).toBe(201);
+    expect(calls.filter((c) => c.method === 'POST' && c.path === '/customers').length).toBe(before);
+    const latePay = await prisma.payment.findFirstOrThrow({ where: { order: { trackingCode: late.body.trackingCode } } });
+    await prisma.payment.update({ where: { id: latePay.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    await app.get(OrdersService).expireStale();
+    expect((await http().get(`/public/orders/${late.body.trackingCode}`)).body.status).toBe('CANCELLED');
+    expect(calls).toContainEqual(expect.objectContaining({ method: 'DELETE', path: `/payments/${latePay.externalId}` }));
+
+    // Desconectar: tira o webhook do Asaas e a loja volta ao Pix de teste.
+    const off = await owner().delete('/cardapio/payments/account');
+    expect(off.body).toMatchObject({ connected: false });
+    expect(calls).toContainEqual(expect.objectContaining({ method: 'DELETE', path: '/webhooks/wh_1' }));
+    expect((await http().get(`/public/stores/${slug}`)).body.store.pixNeedsDocument).toBe(false);
+    expect((await http().post(hookUrl).set('asaas-access-token', stored.webhookToken).send(event)).status).toBe(401);
+    delete process.env.PUBLIC_API_URL;
+  });
+
   it('cancelar: só dono ou gerente; pedido de outro restaurante dá 404', async () => {
     const created = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY' }));
     const id = (await prisma.order.findUniqueOrThrow({ where: { trackingCode: created.body.trackingCode } })).id;
