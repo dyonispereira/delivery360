@@ -15,6 +15,7 @@ import {
 import { Badge, ErrorBox, STATUS_LABEL, STATUS_TONE, Spinner, Toggle } from '@/components/ui';
 import { api, session } from '@/lib/api';
 import { useSession } from '@/lib/session-context';
+import { CouponsEditor } from '@/app/app/cardapio/coupons-editor';
 
 interface TenantDetail extends TenantSummary {
   phone: string | null;
@@ -179,6 +180,19 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
           {isSuper && <AccountManagersEditor tenantId={id} current={tenant.accountManagers.map((a) => a.id)} onDone={setTenant} />}
         </section>
       </div>
+
+      {tenant.modules.some((m) => m.code === 'cardapio' && m.active) && (
+        <section id="cupons" className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">Cupons e contrapartida Delivery360</h2>
+            <p className="text-sm text-zinc-500">
+              Cupom criado aqui é bancado pela Delivery360, para impulsionar este restaurante (de preferência em um produto ou combo). O restaurante
+              recebe de nós o valor do desconto e não pode alterar o cupom. Os cupons do próprio restaurante aparecem na mesma lista e são custo dele.
+            </p>
+          </div>
+          <CouponsEditor canEdit platform tenantId={id} />
+        </section>
+      )}
     </div>
   );
 }

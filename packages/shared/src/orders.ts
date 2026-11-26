@@ -87,6 +87,36 @@ export interface PublicStore {
   /** Produtos mais pedidos nos últimos 30 dias, do mais para o menos pedido. */
   topProductIds: string[];
   zones: { id: string; name: string; feeCents: number }[];
+  /** Cupons que a loja mostra para todos (os outros só com o código). */
+  coupons: PublicCoupon[];
+}
+
+export interface PublicCoupon {
+  code: string;
+  /** "15% off até R$ 20,00 acima de R$ 50,00". */
+  label: string;
+  description: string | null;
+  type: 'PERCENT' | 'FIXED' | 'FREE_DELIVERY';
+  /** Só vale para estes produtos ou combos (vazio = pedido inteiro). */
+  productIds: string[];
+  minOrderCents: number;
+  firstOrderOnly: boolean;
+  /** Dias em que vale (0 = domingo). Vazio = todos. */
+  weekdays: number[];
+  endsAt: string | null;
+}
+
+/** Conta do carrinho calculada pelo servidor (com cupom). */
+export interface OrderQuote {
+  subtotalCents: number;
+  promoDiscountCents: number;
+  deliveryFeeCents: number;
+  discountCents: number;
+  /** promoExcluded: o cupom não vale nos itens em promoção do carrinho. */
+  coupon: { code: string; label: string; discountCents: number; promoExcluded: boolean } | null;
+  totalCents: number;
+  /** Entrega sem bairro escolhido: a taxa ainda não entrou. */
+  zonePending: boolean;
 }
 
 export interface OrderTracking {
@@ -110,6 +140,9 @@ export interface OrderTracking {
   subtotalCents: number;
   /** Economia com preço de/por. */
   promoDiscountCents: number;
+  /** Desconto do cupom. */
+  discountCents: number;
+  couponCode: string | null;
   deliveryFeeCents: number;
   totalCents: number;
   paymentMethod: PaymentMethod;

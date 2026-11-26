@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import crypto from 'node:crypto';
 
 process.env.DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? 'postgresql://delivery:delivery@localhost:5432/delivery360_test?schema=public';
@@ -32,6 +33,7 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     post: (url: string) => http().post(url).set('Authorization', `Bearer ${token}`).set('x-tenant-id', tenantId),
     put: (url: string) => http().put(url).set('Authorization', `Bearer ${token}`).set('x-tenant-id', tenantId),
     patch: (url: string) => http().patch(url).set('Authorization', `Bearer ${token}`).set('x-tenant-id', tenantId),
+    delete: (url: string) => http().delete(url).set('Authorization', `Bearer ${token}`).set('x-tenant-id', tenantId),
   });
   const owner = () => as(ownerToken);
 
@@ -276,6 +278,102 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     const again = (await http().get(`/public/stores/${slug}`)).body.categories[0].products.find((p: { id: string }) => p.id === ids.pizza);
     expect(again).toMatchObject({ priceCents: 4500, listPriceCents: null });
     expect((await owner().patch(`/cardapio/products/${ids.pizza}`).send({ promoPriceCents: null, promoStartsAt: null, promoEndsAt: null })).status).toBe(200);
+  });
+
+  it('cupons: cadastro, prévia no carrinho, pedido com desconto, limite por cliente e DRE', async () => {
+    expect((await as(staffToken).post('/cardapio/coupons').send({ code: 'X10', type: 'PERCENT', value: 1000 })).status).toBe(403);
+    expect((await owner().post('/cardapio/coupons').send({ code: 'TUDO', type: 'PERCENT', value: 20_000 })).status).toBe(400);
+    const created = await owner()
+      .post('/cardapio/coupons')
+      .send({ code: 'bemvindo10', type: 'PERCENT', value: 1000, maxDiscountCents: 1000, public: true, description: 'Para a primeira pizza' });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ code: 'BEMVINDO10', maxUsesPerCustomer: 1 });
+    expect((await owner().post('/cardapio/coupons').send({ code: 'BEMVINDO10', type: 'FIXED', value: 500 })).status).toBe(409);
+    const frete = await owner().post('/cardapio/coupons').send({ code: 'FRETE', type: 'FREE_DELIVERY', value: 0, minOrderCents: 5000 });
+    expect(frete.status).toBe(201);
+
+    const menu = (await http().get(`/public/stores/${slug}`)).body;
+    expect(menu.coupons).toEqual([expect.objectContaining({ code: 'BEMVINDO10', label: '10% off até R$ 10,00' })]);
+
+    // 2 pizzas com catupiry e bacon = 116,00; 10% seria 11,60, mas o teto é 10,00. Entrega 6,00.
+    const quote = await http().post(`/public/stores/${slug}/quote`).send({ ...orderBody(), zoneId: ids.centro, couponCode: ' bemvindo10 ', customer: undefined, address: undefined });
+    expect(quote.status).toBe(200);
+    expect(quote.body).toMatchObject({ subtotalCents: 11600, deliveryFeeCents: 600, discountCents: 1000, totalCents: 11200, coupon: { code: 'BEMVINDO10' } });
+    expect((await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', items: orderBody().items, couponCode: 'NAOEXISTE' })).status).toBe(400);
+
+    // Entrega grátis antes de escolher o bairro: ainda sem taxa; depois, desconta a taxa.
+    const noZone = (await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', items: orderBody().items, couponCode: 'FRETE' })).body;
+    expect(noZone).toMatchObject({ zonePending: true, deliveryFeeCents: 0, discountCents: 0 });
+    const withZone = (await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', zoneId: ids.centro, items: orderBody().items, couponCode: 'FRETE' })).body;
+    expect(withZone).toMatchObject({ deliveryFeeCents: 600, discountCents: 600, totalCents: 11600 });
+
+    const phone = '(11) 91111-2222';
+    const order = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY', couponCode: 'BEMVINDO10', customer: { name: 'Ana', phone } }));
+    expect(order.status).toBe(201);
+    expect(order.body).toMatchObject({ discountCents: 1000, couponCode: 'BEMVINDO10', totalCents: 11200 });
+
+    const again = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY', couponCode: 'BEMVINDO10', customer: { name: 'Ana', phone } }));
+    expect(again.status).toBe(400);
+    expect(again.body.message).toContain('já usou');
+
+    const row = await prisma.order.findUniqueOrThrow({ where: { trackingCode: order.body.trackingCode } });
+    await app.get(GestaoSyncService).processPending(tenantId);
+    const entries: { externalKey: string; amountCents: number; account: { code: string } }[] = await prisma.financialEntry.findMany({
+      where: { tenantId, externalKey: { startsWith: `order:${row.id}:` } },
+      include: { account: true },
+    });
+    const by = (k: string) => entries.find((e) => e.externalKey === `order:${row.id}:${k}`);
+    expect(by('sale')).toMatchObject({ amountCents: 12200 });
+    expect(by('coupon')).toMatchObject({ amountCents: 1000, account: { code: '2.4' } });
+
+    const list = (await owner().get('/cardapio/coupons')).body;
+    expect(list.find((c: { code: string }) => c.code === 'BEMVINDO10')).toMatchObject({ uses: 1, discountGivenCents: 1000, salesCents: 11200 });
+
+    // Cupom de produto: desconto só sobre a pizza; sem ela no carrinho, explica.
+    const refri = (await owner().post('/cardapio/products').send({ categoryId: ids.cat, name: 'Refri lata', priceCents: 600 })).body.id;
+    expect((await owner().post('/cardapio/coupons').send({ code: 'PIZZA20', type: 'PERCENT', value: 2000, productIds: [crypto.randomUUID()] })).status).toBe(400);
+    const pz = await owner().post('/cardapio/coupons').send({ code: 'PIZZA20', type: 'PERCENT', value: 2000, productIds: [ids.pizza], public: true });
+    expect(pz.status).toBe(201);
+    expect((await http().get(`/public/stores/${slug}`)).body.coupons.find((c: { code: string }) => c.code === 'PIZZA20').label).toBe('20% off em Calabresa');
+    const mix = [
+      { productId: ids.pizza, quantity: 1, optionIds: [ids.tradicional] },
+      { productId: refri, quantity: 2 },
+    ];
+    const pq = (await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', zoneId: ids.centro, items: mix, couponCode: 'PIZZA20' })).body;
+    expect(pq).toMatchObject({ subtotalCents: 5700, discountCents: 900 });
+    const onlyRefri = await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', zoneId: ids.centro, items: [{ productId: refri, quantity: 5 }], couponCode: 'PIZZA20' });
+    expect(onlyRefri.body.message).toBe('Este cupom vale só para Calabresa. Coloque no carrinho para usar.');
+    await owner().delete(`/cardapio/products/${refri}`);
+
+    // Cupom da Delivery360 (criado pela equipe no cadastro do restaurante): o restaurante não mexe e não paga.
+    const staff = as(adminToken);
+    const d360 = await staff.post('/cardapio/coupons').send({ code: 'D360PIZZA', type: 'FIXED', value: 800, productIds: [ids.pizza], maxUsesPerCustomer: null });
+    expect(d360.body).toMatchObject({ fundedBy: 'PLATFORM' });
+    expect((await owner().patch(`/cardapio/coupons/${d360.body.id}`).send({ active: false })).status).toBe(403);
+    expect((await owner().delete(`/cardapio/coupons/${d360.body.id}`)).status).toBe(403);
+    const boosted = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY', couponCode: 'D360PIZZA', customer: { name: 'Bia', phone: '(11) 93333-4444' } }));
+    expect(boosted.body).toMatchObject({ discountCents: 800, totalCents: 11600 + 600 - 800 });
+    const bRow = await prisma.order.findUniqueOrThrow({ where: { trackingCode: boosted.body.trackingCode } });
+    await app.get(GestaoSyncService).processPending(tenantId);
+    const bEntries: { externalKey: string; amountCents: number; type: string; status: string; counterparty: string | null; account: { code: string } }[] =
+      await prisma.financialEntry.findMany({ where: { tenantId, externalKey: { startsWith: `order:${bRow.id}:` } }, include: { account: true } });
+    const bBy = (k: string) => bEntries.find((e) => e.externalKey === `order:${bRow.id}:${k}`);
+    expect(bBy('sale')).toMatchObject({ amountCents: bRow.totalCents });
+    expect(bBy('coupon')).toBeUndefined();
+    expect(bBy('coupon360')).toMatchObject({ type: 'RECEIVABLE', amountCents: 800, status: 'OPEN', counterparty: 'Delivery360', account: { code: '1.2' } });
+    expect((await staff.delete(`/cardapio/coupons/${d360.body.id}`)).body).toEqual({ deleted: false, deactivated: true });
+
+    // Cupom já usado não é apagado, só desativado; o que nunca foi usado some.
+    expect((await owner().delete(`/cardapio/coupons/${created.body.id}`)).body).toEqual({ deleted: false, deactivated: true });
+    expect((await owner().delete(`/cardapio/coupons/${frete.body.id}`)).body).toEqual({ deleted: true, deactivated: false });
+    const off = await http().post(`/public/stores/${slug}/quote`).send({ type: 'DELIVERY', zoneId: ids.centro, items: orderBody().items, couponCode: 'BEMVINDO10' });
+    expect(off.body.message).toContain('não está mais valendo');
   });
 
   it('cancelar: só dono ou gerente; pedido de outro restaurante dá 404', async () => {

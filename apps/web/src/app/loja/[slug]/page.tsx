@@ -9,8 +9,10 @@ import {
   rebuildOrder,
   ORDER_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
+  type OrderQuote,
   type OrderTracking,
   type PaymentMethod,
+  type PublicCoupon,
   type PublicProduct,
   type PublicStore,
 } from '@delivery360/shared';
@@ -38,6 +40,7 @@ interface PastOrder {
 const cartKey = (slug: string) => `d360.cart.${slug}`;
 const ordersKey = (slug: string) => `d360.orders.${slug}`;
 const customerKey = 'd360.customer';
+const couponKey = (slug: string) => `d360.coupon.${slug}`;
 const MAX_PAST_ORDERS = 20;
 
 function load<T>(key: string, fallback: T): T {
@@ -79,8 +82,10 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const [past, setPast] = useState<PastOrder[]>([]);
   const [last, setLast] = useState<OrderTracking | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [coupon, setCoupon] = useState<string | null>(null);
 
   useEffect(() => {
+    setCoupon(load<string | null>(couponKey(slug), null));
     api<PublicStore>(`/public/stores/${encodeURIComponent(slug)}`)
       .then(setData)
       .catch((e: ApiError) => setError(e.status === 404 ? 'Loja não encontrada.' : e.message));
@@ -111,6 +116,17 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const addToCart = (item: CartItem) => {
     updateCart([...cart, item]);
     setToast(`${item.name} no carrinho`);
+  };
+
+  const chooseCoupon = (code: string | null) => {
+    setCoupon(code);
+    save(couponKey(slug), code);
+  };
+  /** Cupom tocado na faixa da loja: fica guardado e entra sozinho no carrinho. */
+  const pickCoupon = (code: string) => {
+    chooseCoupon(code);
+    if (cart.length) setCheckout(true);
+    else setToast(`Cupom ${code} guardado. Ele entra no carrinho.`);
   };
 
   const products = useMemo(() => new Map((data?.categories ?? []).flatMap((c) => c.products.map((p) => [p.id, p] as const))), [data]);
@@ -208,6 +224,8 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
             <label className="sr-only" htmlFor="busca">Buscar no cardápio</label>
             <input id="busca" className="input py-3" type="search" placeholder="Buscar no cardápio" value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
+
+          {!q && data.coupons.length > 0 && <CouponStrip coupons={data.coupons} applied={coupon} onPick={pickCoupon} />}
 
           {!q && promos.length > 0 && (
             <section className="pt-5" aria-label="Em promoção">
@@ -425,6 +443,8 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
           data={data}
           cart={cart}
           warnings={warnings}
+          coupon={coupon}
+          onCoupon={chooseCoupon}
           onCart={updateCart}
           onClose={() => {
             setCheckout(false);
@@ -785,6 +805,8 @@ function Checkout({
   data,
   cart,
   warnings,
+  coupon,
+  onCoupon,
   onCart,
   onClose,
 }: {
@@ -792,6 +814,8 @@ function Checkout({
   data: PublicStore;
   cart: CartItem[];
   warnings: string[];
+  coupon: string | null;
+  onCoupon: (code: string | null) => void;
   onCart: (c: CartItem[]) => void;
   onClose: () => void;
 }) {
@@ -818,7 +842,61 @@ function Checkout({
     return s + (p?.listPriceCents != null ? (p.listPriceCents - p.priceCents) * i.quantity : 0);
   }, 0);
   const fee = type === 'DELIVERY' ? (zones.find((z) => z.id === zoneId)?.feeCents ?? 0) : 0;
-  const total = subtotal + fee;
+
+  // Cupom: quem calcula é o servidor. Recalcula quando muda o carrinho, a entrega, o bairro ou o telefone.
+  const [couponInput, setCouponInput] = useState('');
+  const [couponOpen, setCouponOpen] = useState(false);
+  const [quote, setQuote] = useState<OrderQuote | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const phoneOk = phone.replace(/\D/g, '').length >= 10 ? phone : '';
+  const cartSig = JSON.stringify(cart.map((i) => [i.productId, i.quantity, i.optionIds]));
+  useEffect(() => {
+    if (!coupon) {
+      setQuote(null);
+      setCouponError(null);
+      return;
+    }
+    let alive = true;
+    setChecking(true);
+    const t = setTimeout(() => {
+      api<OrderQuote>(`/public/stores/${encodeURIComponent(slug)}/quote`, {
+        method: 'POST',
+        body: {
+          type,
+          zoneId: type === 'DELIVERY' && zoneId ? zoneId : undefined,
+          items: JSON.parse(cartSig).map(([productId, quantity, optionIds]: [string, number, string[]]) => ({ productId, quantity, optionIds })),
+          paymentMethod: method || undefined,
+          phone: phoneOk || undefined,
+          couponCode: coupon,
+        },
+      })
+        .then((q) => {
+          if (!alive) return;
+          setQuote(q);
+          setCouponError(null);
+        })
+        .catch((e: ApiError) => {
+          if (!alive) return;
+          setQuote(null);
+          setCouponError(e.message);
+        })
+        .finally(() => {
+          if (alive) setChecking(false);
+        });
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [coupon, type, zoneId, phoneOk, method, cartSig, slug]);
+
+  const discount = quote?.coupon ? quote.discountCents : 0;
+  const total = subtotal + fee - discount;
+  const applyCoupon = (code: string) => {
+    const c = code.trim().toUpperCase();
+    if (c) onCoupon(c);
+  };
   const belowMin = subtotal < store.minOrderCents;
 
   const setQty = (key: string, q: number) => {
@@ -855,11 +933,13 @@ function Checkout({
           items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity, optionIds: i.optionIds, notes: i.notes || undefined })),
           paymentMethod: method,
           changeForCents,
+          couponCode: quote?.coupon ? coupon : undefined,
           utmSource: utm.source ?? undefined,
           utmCampaign: utm.campaign ?? undefined,
         },
       });
       rememberOrder(slug, order);
+      if (order.couponCode) onCoupon(null);
       onCart([]);
       router.push(`/pedido/${order.trackingCode}`);
     } catch (e) {
@@ -979,14 +1059,171 @@ function Checkout({
           </div>
         )}
 
+        <CouponField
+          applied={coupon}
+          quote={quote}
+          error={couponError}
+          checking={checking}
+          open={couponOpen}
+          onOpen={() => setCouponOpen(true)}
+          input={couponInput}
+          onInput={setCouponInput}
+          onApply={applyCoupon}
+          onRemove={() => {
+            onCoupon(null);
+            setCouponInput('');
+          }}
+          suggestions={data.coupons}
+        />
+
         <dl className="space-y-1 border-t border-zinc-200 pt-3 text-sm">
           <div className="flex justify-between"><dt>Subtotal</dt><dd>{formatBRL(subtotal)}</dd></div>
           {type === 'DELIVERY' && <div className="flex justify-between"><dt>Entrega</dt><dd>{zoneId ? formatBRL(fee) : '—'}</dd></div>}
+          {discount > 0 && (
+            <div className="flex justify-between text-emerald-700"><dt>Cupom {quote!.coupon!.code}</dt><dd>−{formatBRL(discount)}</dd></div>
+          )}
           <div className="flex justify-between font-semibold"><dt>Total</dt><dd>{formatBRL(total)}</dd></div>
           {savings > 0 && <div className="flex justify-between text-emerald-700"><dt>Você economizou com as promoções</dt><dd>{formatBRL(savings)}</dd></div>}
         </dl>
         <ErrorBox message={error} />
       </div>
     </Sheet>
+  );
+}
+
+const WEEKDAY_SHORT = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+
+/** Regras do cupom em poucas palavras, para o cliente não se frustrar no carrinho. */
+function couponFinePrint(c: PublicCoupon) {
+  const parts: string[] = [];
+  if (c.firstOrderOnly) parts.push('Primeiro pedido');
+  if (c.weekdays.length && c.weekdays.length < 7) parts.push(`Só ${c.weekdays.map((d) => WEEKDAY_SHORT[d]).join(', ')}`);
+  if (c.endsAt) parts.push(`Até ${new Date(c.endsAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`);
+  return parts.join(' · ');
+}
+
+/** Faixa de cupons no topo da loja, com cara de ticket. */
+function CouponStrip({ coupons, applied, onPick }: { coupons: PublicCoupon[]; applied: string | null; onPick: (code: string) => void }) {
+  return (
+    <section className="pt-5" aria-label="Cupons">
+      <h2 className="mb-2 px-4 text-lg font-bold">Cupons para você</h2>
+      <div className="flex gap-3 overflow-x-auto px-4 pb-1">
+        {coupons.map((c) => {
+          const on = applied === c.code;
+          const fine = couponFinePrint(c);
+          return (
+            <div key={c.code} className="relative flex w-64 shrink-0 overflow-hidden rounded-2xl border border-[var(--brand)]/30 bg-[var(--brand)]/5">
+              <div className="flex w-14 shrink-0 items-center justify-center bg-[var(--brand)] text-2xl text-white" aria-hidden>
+                {c.type === 'FREE_DELIVERY' ? '🛵' : '%'}
+              </div>
+              <div className="min-w-0 flex-1 border-l-2 border-dashed border-white p-3">
+                <p className="text-sm font-bold leading-tight">{c.label}</p>
+                {(c.description || fine) && <p className="mt-0.5 line-clamp-2 text-xs text-zinc-600">{c.description || fine}</p>}
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="font-mono text-xs font-semibold tracking-wide text-[var(--brand)]">{c.code}</span>
+                  <button
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${on ? 'bg-emerald-600 text-white' : 'bg-[var(--brand)] text-white'}`}
+                    onClick={() => onPick(c.code)}
+                    aria-pressed={on}
+                  >
+                    {on ? 'Ativado ✓' : 'Usar'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function CouponField({
+  applied,
+  quote,
+  error,
+  checking,
+  open,
+  onOpen,
+  input,
+  onInput,
+  onApply,
+  onRemove,
+  suggestions,
+}: {
+  applied: string | null;
+  quote: OrderQuote | null;
+  error: string | null;
+  checking: boolean;
+  open: boolean;
+  onOpen: () => void;
+  input: string;
+  onInput: (v: string) => void;
+  onApply: (code: string) => void;
+  onRemove: () => void;
+  suggestions: PublicCoupon[];
+}) {
+  if (applied) {
+    const ok = quote?.coupon;
+    return (
+      <div className={`rounded-xl border p-3 text-sm ${error ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`} role="status">
+        <div className="flex items-center gap-2">
+          <span aria-hidden>🎟️</span>
+          <span className="font-mono font-semibold">{applied}</span>
+          <span className="flex-1 text-zinc-600">
+            {checking ? 'Conferindo...' : ok ? ok.label : ''}
+          </span>
+          <button className="text-xs font-medium text-zinc-600 underline" onClick={onRemove}>
+            Remover
+          </button>
+        </div>
+        {!checking && error && <p className="mt-1 text-amber-900">{error}</p>}
+        {!checking && ok && ok.discountCents > 0 && <p className="mt-1 font-medium text-emerald-800">Você ganhou {formatBRL(ok.discountCents)} de desconto.</p>}
+        {!checking && ok?.promoExcluded && <p className="mt-0.5 text-xs text-zinc-600">Os itens que já estão em promoção ficam fora deste cupom.</p>}
+        {!checking && ok && quote.zonePending && <p className="mt-1 text-emerald-800">Escolha o bairro para ver o desconto na entrega.</p>}
+      </div>
+    );
+  }
+  if (!open) {
+    return (
+      <button className="flex w-full items-center gap-2 rounded-xl border border-dashed border-zinc-300 p-3 text-left text-sm font-medium" onClick={onOpen}>
+        <span aria-hidden>🎟️</span>
+        <span className="flex-1">Tem um cupom?</span>
+        {suggestions.length > 0 && <span className="text-xs text-[var(--brand)]">{suggestions.length === 1 ? '1 disponível' : `${suggestions.length} disponíveis`}</span>}
+      </button>
+    );
+  }
+  return (
+    <div className="space-y-2 rounded-xl border border-zinc-200 p-3">
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onApply(input);
+        }}
+      >
+        <label className="sr-only" htmlFor="c-coupon">Código do cupom</label>
+        <input
+          id="c-coupon"
+          className="input flex-1 font-mono uppercase"
+          placeholder="Código do cupom"
+          autoFocus
+          value={input}
+          onChange={(e) => onInput(e.target.value.replace(/\s/g, '').toUpperCase())}
+        />
+        <button className="btn-primary px-4" disabled={!input.trim()}>
+          Aplicar
+        </button>
+      </form>
+      {suggestions.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {suggestions.map((c) => (
+            <button key={c.code} className="rounded-full border border-[var(--brand)]/40 px-2.5 py-1 text-xs" onClick={() => onApply(c.code)}>
+              <span className="font-mono font-semibold text-[var(--brand)]">{c.code}</span> · {c.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

@@ -96,13 +96,15 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         if (order.channel !== 'LOJA') return this.marketplaceSale(tx, t, day, order);
         const online = ONLINE.includes(order.paymentMethod);
         const method = order.paymentMethod as PaymentMethod;
+        const platformCoupon = order.discountCents > 0 && order.couponFundedBy === 'PLATFORM';
         await this.upsert(tx, t, `order:${order.id}:sale`, {
           type: 'RECEIVABLE',
           code: '1.2',
           description: `Pedido #${order.number}${order.type === 'PICKUP' ? ' (retirada)' : ''}`,
           counterparty: order.customerName,
-          // Receita pelo preço normal; o preço de/por entra logo abaixo como desconto (2.4).
-          amountCents: order.totalCents + order.promoDiscountCents,
+          // Receita pelo preço normal; preço de/por e cupom do restaurante entram logo abaixo como desconto (2.4).
+          // Cupom da Delivery360 não é desconto do restaurante: vira um valor a receber da Delivery360.
+          amountCents: order.totalCents + order.promoDiscountCents + (platformCoupon ? 0 : order.discountCents),
           day,
           status: online ? 'PAID' : 'OPEN',
           source: 'cardapio',
@@ -118,6 +120,33 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
             amountCents: order.promoDiscountCents,
             day,
             // Nunca sai dinheiro: o desconto se acerta junto com o recebimento da venda.
+            status: online ? 'PAID' : 'OPEN',
+            source: 'cardapio',
+            paymentMethod: method,
+            channel: 'LOJA',
+          });
+        }
+        if (platformCoupon) {
+          await this.upsert(tx, t, `order:${order.id}:coupon360`, {
+            type: 'RECEIVABLE',
+            code: '1.2',
+            description: `Cupom ${order.couponCode ?? ''} bancado pela Delivery360 · pedido #${order.number}`.replace(/ +/g, ' '),
+            counterparty: 'Delivery360',
+            amountCents: order.discountCents,
+            day,
+            // A Delivery360 repassa depois: fica em aberto até o repasse.
+            status: 'OPEN',
+            source: 'cardapio',
+            channel: 'LOJA',
+          });
+        } else if (order.discountCents > 0) {
+          await this.upsert(tx, t, `order:${order.id}:coupon`, {
+            type: 'PAYABLE',
+            code: '2.4',
+            description: `Cupom ${order.couponCode ?? ''} · pedido #${order.number}`.replace(/ +/g, ' '),
+            counterparty: order.customerName,
+            amountCents: order.discountCents,
+            day,
             status: online ? 'PAID' : 'OPEN',
             source: 'cardapio',
             paymentMethod: method,
@@ -165,7 +194,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         await tx.financialEntry.updateMany({
           where: {
             tenantId: t,
-            externalKey: { in: ['sale', 'fee', 'promo'].map((k) => `order:${String(p.orderId)}:${k}`) },
+            externalKey: { in: ['sale', 'fee', 'promo', 'coupon'].map((k) => `order:${String(p.orderId)}:${k}`) },
             status: 'OPEN',
             paymentMethod: { not: 'APP_ONLINE' },
           },
@@ -181,7 +210,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         await tx.financialEntry.updateMany({
           where: {
             tenantId: t,
-            externalKey: { in: ['tax', 'fee', 'commission', 'promo'].map((k) => `order:${String(p.orderId)}:${k}`) },
+            externalKey: { in: ['tax', 'fee', 'commission', 'promo', 'coupon', 'coupon360'].map((k) => `order:${String(p.orderId)}:${k}`) },
             status: 'OPEN',
           },
           data: { status: 'CANCELLED', notes: 'Pedido cancelado' },
@@ -191,11 +220,11 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           return;
         }
         // Já recebido (PIX): fica a devolução ao cliente como conta a pagar, do que ele pagou de fato.
-        const promo = await tx.financialEntry.findUnique({
-          where: { tenantId_externalKey: { tenantId: t, externalKey: `order:${String(p.orderId)}:promo` } },
-          select: { amountCents: true, status: true },
+        const discounts = await tx.financialEntry.findMany({
+          where: { tenantId: t, externalKey: { in: ['promo', 'coupon'].map((k) => `order:${String(p.orderId)}:${k}`) }, status: { not: 'CANCELLED' } },
+          select: { amountCents: true },
         });
-        const paidByCustomer = sale.amountCents - (promo && promo.status !== 'CANCELLED' ? promo.amountCents : 0);
+        const paidByCustomer = sale.amountCents - discounts.reduce((s, d) => s + d.amountCents, 0);
         await this.upsert(tx, t, `order:${String(p.orderId)}:refund`, {
           type: 'PAYABLE',
           code: '2.5',
@@ -282,6 +311,9 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         customerName: true,
         totalCents: true,
         promoDiscountCents: true,
+        discountCents: true,
+        couponCode: true,
+        couponFundedBy: true,
         paymentMethod: true,
         channel: true,
         externalCode: true,

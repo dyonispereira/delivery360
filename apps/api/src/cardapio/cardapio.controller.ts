@@ -5,6 +5,8 @@ import type { AuthUser, TenantContext } from '../access/access.types';
 import { CatalogService } from './catalog.service';
 import {
   CategoryDto,
+  CouponDto,
+  UpdateCouponDto,
   OptionDto,
   OptionGroupDto,
   ProductDto,
@@ -18,6 +20,7 @@ import {
   ZoneDto,
 } from './cardapio.dto';
 import { OrdersService } from './orders.service';
+import { CouponsService } from './coupons.service';
 
 const UUID = new ParseUUIDPipe();
 
@@ -31,6 +34,7 @@ export class CardapioManageController {
   constructor(
     private readonly catalog: CatalogService,
     private readonly orders: OrdersService,
+    private readonly coupons: CouponsService,
   ) {}
 
   @Get('store')
@@ -197,5 +201,30 @@ export class CardapioManageController {
     @Query('status', new ParseEnumPipe(OrderStatus, { optional: true })) status?: OrderStatus,
   ) {
     return this.orders.listOrders(t.tenantId, status);
+  }
+
+  // ---------- Cupons ----------
+
+  @Get('coupons')
+  listCoupons(@CurrentTenant() t: TenantContext) {
+    return this.coupons.list(t.tenantId);
+  }
+
+  @TenantRoles('OWNER', 'MANAGER')
+  @Post('coupons')
+  createCoupon(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Body() dto: CouponDto) {
+    return this.coupons.create(t.tenantId, u, dto);
+  }
+
+  @TenantRoles('OWNER', 'MANAGER')
+  @Patch('coupons/:id')
+  updateCoupon(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string, @Body() dto: UpdateCouponDto) {
+    return this.coupons.update(t.tenantId, u, id, dto);
+  }
+
+  @TenantRoles('OWNER', 'MANAGER')
+  @Delete('coupons/:id')
+  removeCoupon(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string) {
+    return this.coupons.remove(t.tenantId, u, id);
   }
 }
