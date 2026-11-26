@@ -275,7 +275,8 @@ export class ChannelOrderDto {
 const COUPON_CODE = /^[A-Za-z0-9_-]{3,20}$/;
 
 export class CouponDto {
-  @IsString() @Matches(COUPON_CODE, { message: 'Código: de 3 a 20 letras ou números, sem espaços.' }) code: string;
+  /** Obrigatório no cupom do restaurante; no impulso Delivery360 é gerado. */
+  @IsOptional() @IsString() @Matches(COUPON_CODE, { message: 'Código: de 3 a 20 letras ou números, sem espaços.' }) code?: string;
   @IsOptional() @IsString() @MaxLength(120) description?: string;
   @IsIn(['PERCENT', 'FIXED', 'FREE_DELIVERY']) type: 'PERCENT' | 'FIXED' | 'FREE_DELIVERY';
   /** PERCENT: pontos-base (1000 = 10%). FIXED: centavos. */

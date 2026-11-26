@@ -104,7 +104,7 @@ const fromCoupon = (c: Coupon): Form => ({
 });
 
 /** Converte o formulário no corpo da API, ou devolve o erro para mostrar. */
-function toBody(f: Form): Record<string, unknown> | string {
+function toBody(f: Form, boost: boolean): Record<string, unknown> | string {
   const int = (v: string) => (v.trim() ? Number.parseInt(v, 10) : null);
   let value = 0;
   if (f.type === 'PERCENT') {
@@ -121,7 +121,8 @@ function toBody(f: Form): Record<string, unknown> | string {
   const minOrderCents = f.minOrder.trim() ? parseBRL(f.minOrder) : 0;
   if (minOrderCents === null) return 'Pedido mínimo inválido.';
   return {
-    code: f.code.trim().toUpperCase(),
+    // Impulso Delivery360 não tem código para o cliente (o servidor gera um interno).
+    code: boost ? undefined : f.code.trim().toUpperCase(),
     description: f.description.trim(),
     type: f.type,
     value,
@@ -135,7 +136,7 @@ function toBody(f: Form): Record<string, unknown> | string {
     firstOrderOnly: f.firstOrderOnly,
     combinesWithPromo: f.combinesWithPromo,
     productIds: f.type === 'FREE_DELIVERY' ? [] : f.productIds,
-    public: f.public,
+    public: boost ? false : f.public,
   };
 }
 
@@ -166,6 +167,8 @@ export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  /** O formulário aberto é de impulso Delivery360 (novo pela equipe, ou edição de um impulso). */
+  const [boost, setBoost] = useState(false);
 
   const load = () => api<Coupon[]>('/cardapio/coupons', { tenant }).then(setCoupons).catch((e) => setError(e.message));
   useEffect(() => {
@@ -191,7 +194,7 @@ export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit
   async function save(e: React.FormEvent) {
     e.preventDefault();
     if (!form) return;
-    const body = toBody(form);
+    const body = toBody(form, boost);
     if (typeof body === 'string') return setError(body);
     setSaving(true);
     const ok = await run(() =>
@@ -222,7 +225,8 @@ export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit
             <h2 className="font-semibold">Cupons da loja</h2>
             <p className="text-sm text-zinc-500">
               O cliente digita o código no carrinho. Os marcados como &quot;Na loja&quot; aparecem para todos no topo do cardápio. O desconto dos cupons
-              do restaurante entra no financeiro em 2.4 Descontos e cupons. Os bancados pela Delivery360 viram valor a receber da Delivery360.
+              do restaurante entra no financeiro em 2.4 Descontos e cupons. O impulso Delivery360 entra sozinho nos pedidos, soma com o cupom e vira valor a
+              receber da Delivery360.
             </p>
           </div>
           {canEdit && !form && (
@@ -230,10 +234,11 @@ export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit
               className="btn-primary"
               onClick={() => {
                 setEditing(null);
-                setForm(EMPTY);
+                setBoost(platform);
+                setForm({ ...EMPTY, public: !platform });
               }}
             >
-              Novo cupom
+              {platform ? 'Novo impulso' : 'Novo cupom'}
             </button>
           )}
         </div>
@@ -248,25 +253,30 @@ export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit
 
       {form && (
         <form onSubmit={save} className="card space-y-4">
-          <h3 className="font-semibold">{editing ? `Editar ${form.code}` : 'Novo cupom'}</h3>
-          {platform && !editing && (
+          <h3 className="font-semibold">
+            {boost ? (editing ? 'Editar impulso Delivery360' : 'Novo impulso Delivery360') : editing ? `Editar ${form.code}` : 'Novo cupom'}
+          </h3>
+          {boost && (
             <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-              Você está na equipe Delivery360: este cupom é bancado pela Delivery360. O restaurante recebe o valor do desconto de nós e não paga nada.
+              Impulso é um desconto automático bancado pela Delivery360: entra sozinho em todo pedido que se encaixa, sem código, e soma com o cupom do
+              restaurante. O restaurante recebe de nós o valor do desconto.
             </p>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="label" htmlFor="c-code">Código</label>
-              <input
-                id="c-code"
-                className="input font-mono uppercase"
-                required
-                maxLength={20}
-                placeholder="VOLTEI15"
-                value={form.code}
-                onChange={(e) => setForm({ ...form, code: e.target.value.replace(/\s/g, '').toUpperCase() })}
-              />
-            </div>
+            {!boost && (
+              <div>
+                <label className="label" htmlFor="c-code">Código</label>
+                <input
+                  id="c-code"
+                  className="input font-mono uppercase"
+                  required
+                  maxLength={20}
+                  placeholder="VOLTEI15"
+                  value={form.code}
+                  onChange={(e) => setForm({ ...form, code: e.target.value.replace(/\s/g, '').toUpperCase() })}
+                />
+              </div>
+            )}
             <div>
               <label className="label" htmlFor="c-desc">Descrição para o cliente (opcional)</label>
               <input id="c-desc" className="input" maxLength={120} placeholder="Na sua primeira compra" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
@@ -352,7 +362,9 @@ export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit
           </div>
 
           <div className="space-y-2 text-sm">
-            <Check checked={form.public} onChange={(v) => setForm({ ...form, public: v })} label="Mostrar na loja" hint="Aparece na faixa de cupons do cardápio. Desmarcado, só funciona para quem tem o código." />
+            {!boost && (
+              <Check checked={form.public} onChange={(v) => setForm({ ...form, public: v })} label="Mostrar na loja" hint="Aparece na faixa de cupons do cardápio. Desmarcado, só funciona para quem tem o código." />
+            )}
             <Check checked={form.firstOrderOnly} onChange={(v) => setForm({ ...form, firstOrderOnly: v })} label="Só no primeiro pedido" hint="Para trazer cliente novo. Conferido pelo telefone." />
             {form.type !== 'FREE_DELIVERY' && (
               <Check
@@ -366,7 +378,7 @@ export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit
 
           <ErrorBox message={error} />
           <div className="flex gap-2">
-            <button className="btn-primary" disabled={saving}>{saving ? 'Salvando...' : editing ? 'Salvar' : 'Criar cupom'}</button>
+            <button className="btn-primary" disabled={saving}>{saving ? 'Salvando...' : editing ? 'Salvar' : boost ? 'Criar impulso' : 'Criar cupom'}</button>
             <button
               type="button"
               className="btn-ghost"
@@ -393,12 +405,21 @@ export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit
         <ul className="space-y-2">
           {coupons.map((c) => (
             <li key={c.id} className={`card flex flex-wrap items-center gap-3 ${c.active ? '' : 'opacity-60'}`}>
-              <div className="rounded-lg border-2 border-dashed border-[var(--brand)] px-3 py-1.5 font-mono text-sm font-bold text-[var(--brand)]">{c.code}</div>
+              {c.fundedBy === 'PLATFORM' ? (
+                <div className="rounded-lg border-2 border-amber-400 bg-amber-50 px-3 py-1.5 text-sm font-bold text-amber-800">Automático</div>
+              ) : (
+                <div className="rounded-lg border-2 border-dashed border-[var(--brand)] px-3 py-1.5 font-mono text-sm font-bold text-[var(--brand)]">{c.code}</div>
+              )}
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{c.label}</span>
-                  {c.public ? <Badge tone="green">Na loja</Badge> : <Badge>Só com código</Badge>}
-                  {c.fundedBy === 'PLATFORM' && <Badge tone="amber">Bancado pela Delivery360</Badge>}
+                  {c.fundedBy === 'PLATFORM' ? (
+                    <Badge tone="amber">Impulso Delivery360 · bancado por nós</Badge>
+                  ) : c.public ? (
+                    <Badge tone="green">Na loja</Badge>
+                  ) : (
+                    <Badge>Só com código</Badge>
+                  )}
                 </div>
                 <p className="text-xs text-zinc-500">{rulesLine(c)}</p>
               </div>
@@ -415,6 +436,7 @@ export function CouponsEditor({ canEdit, tenantId, platform = false }: { canEdit
                     className="text-[var(--brand)] hover:underline"
                     onClick={() => {
                       setEditing(c.id);
+                      setBoost(c.fundedBy === 'PLATFORM');
                       setForm(fromCoupon(c));
                       setError(null);
                       window.scrollTo({ top: 0, behavior: 'smooth' });

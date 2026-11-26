@@ -13,6 +13,7 @@ import {
   type OrderTracking,
   type PaymentMethod,
   type PublicCoupon,
+  type PublicOffer,
   type PublicProduct,
   type PublicStore,
 } from '@delivery360/shared';
@@ -177,6 +178,8 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
         .filter((c) => c.products.length > 0)
     : data.categories;
   const canOrder = store.isOpen;
+  const offerFor = (id: string) => data.offers.find((o) => o.productIds.includes(id));
+  const storeWide = data.offers.filter((o) => o.productIds.length === 0);
 
   return (
     <main className="mx-auto min-h-screen max-w-2xl bg-white pb-36">
@@ -224,6 +227,15 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
             <label className="sr-only" htmlFor="busca">Buscar no cardápio</label>
             <input id="busca" className="input py-3" type="search" placeholder="Buscar no cardápio" value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
+
+          {!q && storeWide.length > 0 && (
+            <div className="mx-4 mt-4 rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-900" role="note">
+              <p className="font-bold">Desconto especial hoje</p>
+              <p>
+                {storeWide.map((o) => o.label).join(' · ')}. Já sai no carrinho, sem código.
+              </p>
+            </div>
+          )}
 
           {!q && data.coupons.length > 0 && <CouponStrip coupons={data.coupons} applied={coupon} onPick={pickCoupon} />}
 
@@ -313,6 +325,7 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
                             <>
                               <Price product={p} />
                               <OffBadge product={p} />
+                              <OfferTag offer={offerFor(p.id)} />
                             </>
                           ) : (
                             <span className="text-sm font-medium text-zinc-400">Esgotado hoje</span>
@@ -464,6 +477,12 @@ function Price({ product, className = '' }: { product: PublicProduct; className?
       {product.listPriceCents != null && <s className="text-xs font-normal text-zinc-400">{formatBRL(product.listPriceCents)}</s>}
     </span>
   );
+}
+
+/** Desconto especial automático deste produto (o carrinho já desconta). */
+function OfferTag({ offer }: { offer: PublicOffer | undefined }) {
+  if (!offer) return null;
+  return <span className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-xs font-bold text-white">{offer.label.replace(/ em .*/, '')} no carrinho</span>;
 }
 
 function OffBadge({ product, className = '' }: { product: PublicProduct; className?: string }) {
@@ -851,15 +870,17 @@ function Checkout({
   const [checking, setChecking] = useState(false);
   const phoneOk = phone.replace(/\D/g, '').length >= 10 ? phone : '';
   const cartSig = JSON.stringify(cart.map((i) => [i.productId, i.quantity, i.optionIds]));
+  // Com cupom ou com desconto especial na loja, quem calcula a conta é o servidor.
+  const needsQuote = !!coupon || data.offers.length > 0;
   useEffect(() => {
-    if (!coupon) {
+    if (!needsQuote) {
       setQuote(null);
       setCouponError(null);
       return;
     }
     let alive = true;
     setChecking(true);
-    const t = setTimeout(() => {
+    const ask = (couponCode: string | null) =>
       api<OrderQuote>(`/public/stores/${encodeURIComponent(slug)}/quote`, {
         method: 'POST',
         body: {
@@ -868,31 +889,34 @@ function Checkout({
           items: JSON.parse(cartSig).map(([productId, quantity, optionIds]: [string, number, string[]]) => ({ productId, quantity, optionIds })),
           paymentMethod: method || undefined,
           phone: phoneOk || undefined,
-          couponCode: coupon,
+          couponCode: couponCode ?? undefined,
         },
-      })
-        .then((q) => {
-          if (!alive) return;
-          setQuote(q);
-          setCouponError(null);
-        })
-        .catch((e: ApiError) => {
-          if (!alive) return;
-          setQuote(null);
-          setCouponError(e.message);
-        })
-        .finally(() => {
-          if (alive) setChecking(false);
-        });
+      });
+    const t = setTimeout(async () => {
+      try {
+        const q = await ask(coupon);
+        if (!alive) return;
+        setQuote(q);
+        setCouponError(null);
+      } catch (e) {
+        if (!alive) return;
+        setCouponError(coupon ? (e as ApiError).message : null);
+        // Cupom recusado: o desconto especial continua valendo sem ele.
+        const q = coupon ? await ask(null).catch(() => null) : null;
+        if (alive) setQuote(q);
+      } finally {
+        if (alive) setChecking(false);
+      }
     }, 300);
     return () => {
       alive = false;
       clearTimeout(t);
     };
-  }, [coupon, type, zoneId, phoneOk, method, cartSig, slug]);
+  }, [needsQuote, coupon, type, zoneId, phoneOk, method, cartSig, slug]);
 
   const discount = quote?.coupon ? quote.discountCents : 0;
-  const total = subtotal + fee - discount;
+  const special = quote?.platformDiscountCents ?? 0;
+  const total = subtotal + fee - discount - special;
   const applyCoupon = (code: string) => {
     const c = code.trim().toUpperCase();
     if (c) onCoupon(c);
@@ -1081,6 +1105,9 @@ function Checkout({
           {type === 'DELIVERY' && <div className="flex justify-between"><dt>Entrega</dt><dd>{zoneId ? formatBRL(fee) : '—'}</dd></div>}
           {discount > 0 && (
             <div className="flex justify-between text-emerald-700"><dt>Cupom {quote!.coupon!.code}</dt><dd>−{formatBRL(discount)}</dd></div>
+          )}
+          {special > 0 && (
+            <div className="flex justify-between text-emerald-700"><dt>Desconto especial</dt><dd>−{formatBRL(special)}</dd></div>
           )}
           <div className="flex justify-between font-semibold"><dt>Total</dt><dd>{formatBRL(total)}</dd></div>
           {savings > 0 && <div className="flex justify-between text-emerald-700"><dt>Você economizou com as promoções</dt><dd>{formatBRL(savings)}</dd></div>}

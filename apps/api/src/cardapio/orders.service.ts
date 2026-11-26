@@ -134,18 +134,24 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         orderBy: { _sum: { quantity: 'desc' } },
         take: 12,
       }),
-      // Cupons que a loja mostra na faixa (os outros só funcionam para quem tem o código).
+      // Cupons que a loja mostra na faixa (os outros só funcionam para quem tem o código) e os impulsos Delivery360.
       this.prisma.coupon.findMany({
         where: {
           tenantId,
           active: true,
-          public: true,
-          OR: [{ startsAt: null }, { startsAt: { lte: now } }],
-          AND: [{ OR: [{ endsAt: null }, { endsAt: { gt: now } }] }],
+          OR: [{ public: true, fundedBy: 'RESTAURANT' }, { fundedBy: 'PLATFORM' }],
+          AND: [{ OR: [{ startsAt: null }, { startsAt: { lte: now } }] }, { OR: [{ endsAt: null }, { endsAt: { gt: now } }] }],
         },
         orderBy: { createdAt: 'desc' },
-        take: 6,
-        include: { _count: { select: { orders: { where: { status: { not: 'CANCELLED' } } } } } },
+        take: 20,
+        include: {
+          _count: {
+            select: {
+              orders: { where: { status: { not: 'CANCELLED' } } },
+              boostedOrders: { where: { status: { not: 'CANCELLED' } } },
+            },
+          },
+        },
       }),
     ]);
     const names = new Map(categories.flatMap((c) => c.products.map((p) => [p.id, p.name] as const)));
@@ -170,13 +176,26 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         .filter((c) => c.products.length > 0)
         .map((c) => ({ ...c, products: c.products.map((p) => this.publicProduct(p, now)) })),
       coupons: coupons
-        .filter((c) => c.maxUses == null || c._count.orders < c.maxUses)
+        .filter((c) => c.fundedBy === 'RESTAURANT' && (c.maxUses == null || c._count.orders < c.maxUses))
+        .slice(0, 6)
         .map((c) => ({
           code: c.code,
           label: couponLabel(c, c.productIds.map((id) => names.get(id)).filter((n): n is string => !!n)),
           productIds: c.productIds,
           description: c.description,
           type: c.type,
+          minOrderCents: c.minOrderCents,
+          firstOrderOnly: c.firstOrderOnly,
+          weekdays: c.weekdays,
+          endsAt: c.endsAt,
+        })),
+      // Desconto especial automático: a loja marca os produtos e o carrinho já desconta, sem código.
+      offers: coupons
+        .filter((c) => c.fundedBy === 'PLATFORM' && (c.maxUses == null || c._count.boostedOrders < c.maxUses))
+        .map((c) => ({
+          label: couponLabel(c, c.productIds.map((id) => names.get(id)).filter((n): n is string => !!n)),
+          type: c.type,
+          productIds: c.productIds,
           minOrderCents: c.minOrderCents,
           firstOrderOnly: c.firstOrderOnly,
           weekdays: c.weekdays,
@@ -280,38 +299,24 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw err;
     }
 
-    let coupon: { id: string; code: string; discountCents: number; label: string; promoExcluded: boolean; fundedBy: 'RESTAURANT' | 'PLATFORM' } | null = null;
+    const items = priced.items.map((i) => ({ productId: i.productId, totalCents: i.totalCents, promo: i.listUnitPriceCents > i.unitPriceCents }));
+    const base = { now, subtotalCents: priced.subtotalCents, items, deliveryFeeCents: priced.deliveryFeeCents, orderType: input.type };
+
+    // Cupom do restaurante: só pelo código que o cliente digitou.
+    let coupon: { id: string; code: string; discountCents: number; label: string; promoExcluded: boolean } | null = null;
     const code = input.couponCode?.trim().toUpperCase();
     if (code) {
       const c = await this.prisma.coupon.findUnique({ where: { tenantId_code: { tenantId, code } } });
-      if (!c) throw new BadRequestException('Cupom não encontrado. Confira o código.');
-      const used = { tenantId, couponId: c.id, status: { not: 'CANCELLED' as const } };
-      const [usesTotal, usesByCustomer, customerOrders] = await Promise.all([
-        this.prisma.order.count({ where: used }),
-        phone ? this.prisma.order.count({ where: { ...used, customerPhone: phone } }) : null,
-        phone && c.firstOrderOnly ? this.prisma.order.count({ where: { tenantId, customerPhone: phone, status: { not: 'CANCELLED' } } }) : null,
-      ]);
-      const items = priced.items.map((i) => ({ productId: i.productId, totalCents: i.totalCents, promo: i.listUnitPriceCents > i.unitPriceCents }));
+      if (!c || c.fundedBy !== 'RESTAURANT') throw new BadRequestException('Cupom não encontrado. Confira o código.');
       const productNames = await this.couponProductNames(tenantId, c.productIds);
-      const counted = c.productIds.length ? items.filter((i) => c.productIds.includes(i.productId)) : items;
       try {
-        const discountCents = couponDiscount(c, {
-          now,
-          subtotalCents: priced.subtotalCents,
-          items,
-          productNames,
-          deliveryFeeCents: priced.deliveryFeeCents,
-          orderType: input.type,
-          usesTotal,
-          usesByCustomer,
-          customerHasOrders: customerOrders == null ? null : customerOrders > 0,
-        });
+        const discountCents = couponDiscount(c, { ...base, productNames, ...(await this.couponUses(tenantId, c, 'couponId', phone)) });
+        const counted = c.productIds.length ? items.filter((i) => c.productIds.includes(i.productId)) : items;
         coupon = {
           id: c.id,
           code: c.code,
           discountCents,
           label: couponLabel(c, productNames),
-          fundedBy: c.fundedBy,
           promoExcluded: c.type !== 'FREE_DELIVERY' && !c.combinesWithPromo && counted.some((i) => i.promo),
         };
       } catch (err) {
@@ -320,11 +325,39 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const totalCents = priced.totalCents - (coupon?.discountCents ?? 0);
+    // Impulso Delivery360: entra sozinho, o maior que se encaixar, e soma com o cupom do restaurante.
+    let boost: { id: string; label: string; discountCents: number } | null = null;
+    const boosts = await this.prisma.coupon.findMany({ where: { tenantId, fundedBy: 'PLATFORM', active: true } });
+    for (const b of boosts) {
+      try {
+        const d = couponDiscount(b, { ...base, ...(await this.couponUses(tenantId, b, 'platformCouponId', phone)) });
+        if (d > 0 && (!boost || d > boost.discountCents)) {
+          boost = { id: b.id, label: couponLabel(b, await this.couponProductNames(tenantId, b.productIds)), discountCents: d };
+        }
+      } catch (err) {
+        if (!(err instanceof CouponError)) throw err;
+      }
+    }
+    // Os dois descontos juntos nunca passam do valor do pedido.
+    if (boost) boost.discountCents = Math.min(boost.discountCents, priced.totalCents - (coupon?.discountCents ?? 0));
+    if (boost && boost.discountCents <= 0) boost = null;
+
+    const totalCents = priced.totalCents - (coupon?.discountCents ?? 0) - (boost?.discountCents ?? 0);
     if (input.paymentMethod === 'CASH_ON_DELIVERY' && input.changeForCents != null && input.changeForCents < totalCents) {
       throw new BadRequestException(`O troco precisa ser para um valor maior que o total (R$ ${(totalCents / 100).toFixed(2).replace('.', ',')}).`);
     }
-    return { priced, costOf, coupon, totalCents };
+    return { priced, costOf, coupon, boost, totalCents };
+  }
+
+  /** Usos do cupom (ou do impulso) em pedidos não cancelados: no total, por este telefone e se o cliente já pediu. */
+  private async couponUses(tenantId: string, c: { id: string; firstOrderOnly: boolean }, field: 'couponId' | 'platformCouponId', phone: string | null) {
+    const used = { tenantId, [field]: c.id, status: { not: 'CANCELLED' as const } };
+    const [usesTotal, usesByCustomer, customerOrders] = await Promise.all([
+      this.prisma.order.count({ where: used }),
+      phone ? this.prisma.order.count({ where: { ...used, customerPhone: phone } }) : null,
+      phone && c.firstOrderOnly ? this.prisma.order.count({ where: { tenantId, customerPhone: phone, status: { not: 'CANCELLED' } } }) : null,
+    ]);
+    return { usesTotal, usesByCustomer, customerHasOrders: customerOrders == null ? null : customerOrders > 0 };
   }
 
   /** Nomes dos produtos de um cupom de produto (para o rótulo e as mensagens). */
@@ -340,13 +373,15 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const phone = dto.phone ? normalizePhone(dto.phone) : null;
     // Antes de escolher o bairro a taxa ainda não existe: calcula sem ela.
     const zoneless = dto.type === 'DELIVERY' && !dto.zoneId;
-    const { priced, coupon, totalCents } = await this.quoteFor(store, dto, phone, zoneless);
+    const { priced, coupon, boost, totalCents } = await this.quoteFor(store, dto, phone, zoneless);
     return {
       subtotalCents: priced.subtotalCents,
       promoDiscountCents: priced.promoDiscountCents,
       deliveryFeeCents: priced.deliveryFeeCents,
       discountCents: coupon?.discountCents ?? 0,
       coupon: coupon ? { code: coupon.code, label: coupon.label, discountCents: coupon.discountCents, promoExcluded: coupon.promoExcluded } : null,
+      /** Desconto especial automático (impulso Delivery360). */
+      platformDiscountCents: boost?.discountCents ?? 0,
       totalCents,
       zonePending: zoneless,
     };
@@ -364,7 +399,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (!phone) throw new BadRequestException('Informe um telefone com DDD.');
     if (dto.type === 'DELIVERY' && !dto.address) throw new BadRequestException('Informe o endereço de entrega.');
 
-    const { priced, costOf, coupon, totalCents } = await this.quoteFor(store, { ...dto, zoneId: dto.address?.zoneId }, phone);
+    const { priced, costOf, coupon, boost, totalCents } = await this.quoteFor(store, { ...dto, zoneId: dto.address?.zoneId }, phone);
 
     const online = ONLINE_METHODS.includes(dto.paymentMethod);
     const charge = online
@@ -406,7 +441,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           discountCents: coupon?.discountCents ?? 0,
           couponId: coupon?.id ?? null,
           couponCode: coupon?.code ?? null,
-          couponFundedBy: coupon?.fundedBy ?? null,
+          couponFundedBy: coupon ? 'RESTAURANT' : null,
+          platformDiscountCents: boost?.discountCents ?? 0,
+          platformCouponId: boost?.id ?? null,
           deliveryFeeCents: priced.deliveryFeeCents,
           totalCents: totalCents,
           paymentMethod: dto.paymentMethod,
@@ -493,6 +530,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       promoDiscountCents: order.promoDiscountCents,
       discountCents: order.discountCents,
       couponCode: order.couponCode,
+      platformDiscountCents: order.platformDiscountCents,
       deliveryFeeCents: order.deliveryFeeCents,
       totalCents: order.totalCents,
       paymentMethod: order.paymentMethod,

@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { AuthUser } from '../access/access.types';
 import { Prisma } from '@prisma/client';
+import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../core/audit.service';
 import { CouponDto, UpdateCouponDto } from './cardapio.dto';
@@ -18,7 +19,7 @@ export class CouponsService {
 
   /** Lista com o resultado de cada cupom: usos, desconto dado e vendas que trouxe. */
   async list(tenantId: string) {
-    const [coupons, stats, products] = await Promise.all([
+    const [coupons, stats, boosts, products] = await Promise.all([
       this.prisma.coupon.findMany({ where: { tenantId }, orderBy: [{ active: 'desc' }, { createdAt: 'desc' }] }),
       this.prisma.order.groupBy({
         by: ['couponId'],
@@ -26,25 +27,32 @@ export class CouponsService {
         _count: { _all: true },
         _sum: { discountCents: true, totalCents: true },
       }),
+      this.prisma.order.groupBy({
+        by: ['platformCouponId'],
+        where: { tenantId, platformCouponId: { not: null }, status: { notIn: ['CANCELLED', 'AWAITING_PAYMENT'] } },
+        _count: { _all: true },
+        _sum: { platformDiscountCents: true, totalCents: true },
+      }),
       this.prisma.product.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     ]);
     const names = new Map(products.map((p) => [p.id, p.name]));
-    const byId = new Map(stats.map((s) => [s.couponId, s]));
+    const byId = new Map(stats.map((s) => [s.couponId, { uses: s._count._all, discount: s._sum.discountCents ?? 0, sales: s._sum.totalCents ?? 0 }]));
+    const byBoost = new Map(boosts.map((s) => [s.platformCouponId, { uses: s._count._all, discount: s._sum.platformDiscountCents ?? 0, sales: s._sum.totalCents ?? 0 }]));
     return coupons.map((c) => {
-      const s = byId.get(c.id);
+      const s = (c.fundedBy === 'PLATFORM' ? byBoost : byId).get(c.id);
       return {
         ...c,
         label: couponLabel(c, c.productIds.map((id) => names.get(id)).filter((n): n is string => !!n)),
-        uses: s?._count._all ?? 0,
-        discountGivenCents: s?._sum.discountCents ?? 0,
-        salesCents: s?._sum.totalCents ?? 0,
+        uses: s?.uses ?? 0,
+        discountGivenCents: s?.discount ?? 0,
+        salesCents: s?.sales ?? 0,
       };
     });
   }
 
   /**
-   * Cupom criado pela equipe Delivery360 é bancado pela Delivery360 (contrapartida para impulsionar o restaurante).
-   * O restaurante vê esse cupom, mas não altera nem apaga.
+   * Criado pela equipe Delivery360 = impulso Delivery360: bancado por nós, entra sozinho nos pedidos (sem código)
+   * e soma com o cupom do restaurante. O restaurante vê, mas não altera nem apaga.
    */
   private guard(user: AuthUser, coupon: { fundedBy: string }) {
     if (coupon.fundedBy === 'PLATFORM' && !user.staffRole) {
@@ -54,6 +62,10 @@ export class CouponsService {
 
   async create(tenantId: string, user: AuthUser, dto: CouponDto) {
     const userId = user.id;
+    const platform = !!user.staffRole;
+    // O impulso não tem código para o cliente: geramos um interno só para identificar.
+    if (platform) dto = { ...dto, code: `IMPULSO-${randomBytes(4).toString('hex').toUpperCase()}`, public: false };
+    if (!dto.code) throw new BadRequestException('Informe o código do cupom.');
     await this.checkProducts(tenantId, dto.productIds);
     const data = this.check({ ...dto, code: dto.code.toUpperCase() });
     try {
@@ -64,7 +76,7 @@ export class CouponsService {
           code: dto.code.toUpperCase(),
           type: dto.type,
           value: dto.value,
-          fundedBy: user.staffRole ? 'PLATFORM' : 'RESTAURANT',
+          fundedBy: platform ? 'PLATFORM' : 'RESTAURANT',
         } as Prisma.CouponUncheckedCreateInput,
       });
       await this.audit.log({ tenantId, userId, action: 'coupon.create', entity: 'coupon', entityId: c.id, after: c });
@@ -103,7 +115,7 @@ export class CouponsService {
     const before = await this.prisma.coupon.findFirst({ where: { id, tenantId } });
     if (!before) throw new NotFoundException('Cupom não encontrado.');
     this.guard(user, before);
-    const used = await this.prisma.order.count({ where: { tenantId, couponId: id } });
+    const used = await this.prisma.order.count({ where: { tenantId, OR: [{ couponId: id }, { platformCouponId: id }] } });
     if (used > 0) {
       await this.prisma.coupon.update({ where: { id }, data: { active: false } });
       await this.audit.log({ tenantId, userId, action: 'coupon.deactivate', entity: 'coupon', entityId: id, before });

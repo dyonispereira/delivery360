@@ -96,15 +96,14 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         if (order.channel !== 'LOJA') return this.marketplaceSale(tx, t, day, order);
         const online = ONLINE.includes(order.paymentMethod);
         const method = order.paymentMethod as PaymentMethod;
-        const platformCoupon = order.discountCents > 0 && order.couponFundedBy === 'PLATFORM';
         await this.upsert(tx, t, `order:${order.id}:sale`, {
           type: 'RECEIVABLE',
           code: '1.2',
           description: `Pedido #${order.number}${order.type === 'PICKUP' ? ' (retirada)' : ''}`,
           counterparty: order.customerName,
           // Receita pelo preço normal; preço de/por e cupom do restaurante entram logo abaixo como desconto (2.4).
-          // Cupom da Delivery360 não é desconto do restaurante: vira um valor a receber da Delivery360.
-          amountCents: order.totalCents + order.promoDiscountCents + (platformCoupon ? 0 : order.discountCents),
+          // O impulso Delivery360 não é desconto do restaurante: vira um valor a receber da Delivery360 (abaixo).
+          amountCents: order.totalCents + order.promoDiscountCents + order.discountCents,
           day,
           status: online ? 'PAID' : 'OPEN',
           source: 'cardapio',
@@ -126,20 +125,21 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
             channel: 'LOJA',
           });
         }
-        if (platformCoupon) {
+        if (order.platformDiscountCents > 0) {
           await this.upsert(tx, t, `order:${order.id}:coupon360`, {
             type: 'RECEIVABLE',
             code: '1.2',
-            description: `Cupom ${order.couponCode ?? ''} bancado pela Delivery360 · pedido #${order.number}`.replace(/ +/g, ' '),
+            description: `Desconto especial bancado pela Delivery360 · pedido #${order.number}`,
             counterparty: 'Delivery360',
-            amountCents: order.discountCents,
+            amountCents: order.platformDiscountCents,
             day,
             // A Delivery360 repassa depois: fica em aberto até o repasse.
             status: 'OPEN',
             source: 'cardapio',
             channel: 'LOJA',
           });
-        } else if (order.discountCents > 0) {
+        }
+        if (order.discountCents > 0) {
           await this.upsert(tx, t, `order:${order.id}:coupon`, {
             type: 'PAYABLE',
             code: '2.4',
@@ -313,7 +313,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         promoDiscountCents: true,
         discountCents: true,
         couponCode: true,
-        couponFundedBy: true,
+        platformDiscountCents: true,
         paymentMethod: true,
         channel: true,
         externalCode: true,
