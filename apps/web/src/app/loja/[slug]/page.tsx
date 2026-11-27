@@ -20,6 +20,7 @@ import {
 } from '@delivery360/shared';
 import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
+import { CardFields, cardError, cardPayload, emptyCard, type CardState } from '@/components/card-form';
 
 interface CartItem {
   key: string;
@@ -960,6 +961,8 @@ function Checkout({
   const methods = store.paymentMethods;
   const [method, setMethod] = useState<PaymentMethod | ''>(methods[0] ?? '');
   const [change, setChange] = useState('');
+  // Cartão: só em memória, nunca salvo no navegador.
+  const [cardData, setCardData] = useState<CardState>(() => emptyCard(saved.number));
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
@@ -1048,6 +1051,10 @@ function Checkout({
     if (!method) return setError('Escolha a forma de pagamento.');
     const needsDoc = (method === 'PIX' || method === 'CREDIT_CARD') && !!store.pixNeedsDocument;
     if (needsDoc && ![11, 14].includes(doc.replace(/\D/g, '').length)) return setError(`Informe seu CPF para pagar com ${method === 'PIX' ? 'Pix' : 'cartão'}.`);
+    if (method === 'CREDIT_CARD') {
+      const bad = cardError(cardData);
+      if (bad) return setError(bad);
+    }
     let changeForCents: number | undefined;
     if (method === 'CASH_ON_DELIVERY' && change.trim()) {
       const c = parseBRL(change);
@@ -1076,7 +1083,19 @@ function Checkout({
       rememberOrder(slug, order);
       if (order.couponCode) onCoupon(null);
       onCart([]);
-      router.push(`/pedido/${order.trackingCode}`);
+      let cardFailure = '';
+      if (method === 'CREDIT_CARD' && order.payment?.cardForm) {
+        // Checkout transparente: paga o cartão logo depois de criar o pedido, sem sair da loja.
+        try {
+          await api<OrderTracking>(`/public/orders/${encodeURIComponent(order.trackingCode)}/pay-card`, {
+            method: 'POST',
+            body: cardPayload(cardData, needsDoc ? doc : undefined),
+          });
+        } catch (e) {
+          cardFailure = (e as ApiError).message;
+        }
+      }
+      router.push(`/pedido/${order.trackingCode}${cardFailure ? `?cartao=${encodeURIComponent(cardFailure)}` : ''}`);
     } catch (e) {
       setError((e as ApiError).message);
       setSending(false);
@@ -1193,9 +1212,7 @@ function Checkout({
             <input id="c-doc" className="input" inputMode="numeric" autoComplete="off" placeholder="000.000.000-00" value={doc} onChange={(e) => setDoc(e.target.value)} />
           </div>
         )}
-        {method === 'CREDIT_CARD' && (
-          <p className="text-xs text-zinc-500">Depois de fazer o pedido, você digita o cartão na página segura do Asaas. A loja não vê os dados do cartão.</p>
-        )}
+        {method === 'CREDIT_CARD' && <CardFields value={cardData} onChange={setCardData} idPrefix="checkout-card" />}
         {method === 'CASH_ON_DELIVERY' && (
           <div>
             <label className="label" htmlFor="c-change">Troco para (opcional)</label>

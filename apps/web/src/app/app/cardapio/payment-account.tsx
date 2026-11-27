@@ -57,7 +57,7 @@ export function PaymentAccount({ canConnect }: { canConnect: boolean }) {
         <div className="flex-1">
           <h2 className="font-semibold">Pagamento online (Pix e cartão)</h2>
           <p className="text-sm text-zinc-500">
-            O cliente paga o Pix pelo QR Code ou copia e cola, ou o cartão de crédito na página segura do Asaas. O pedido entra sozinho quando o pagamento
+            O cliente paga o Pix pelo QR Code ou copia e cola, ou digita o cartão de crédito na própria loja (checkout transparente, sem sair do site). O pedido entra sozinho quando o pagamento
             é confirmado. O dinheiro cai direto na sua conta Asaas, e a taxa do Asaas entra no financeiro em 2.3. Para oferecer cartão, marque também
             &quot;Cartão de crédito (online)&quot; nas formas de pagamento da loja.
           </p>

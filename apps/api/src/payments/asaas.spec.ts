@@ -36,6 +36,37 @@ describe('Asaas', () => {
     expect(asaas.calls[2].body).toEqual({ customer: 'cus_1', billingType: 'PIX', value: 52.9, dueDate: todayInBrazil(), description: 'Pedido Pizzaria' });
   });
 
+  it('cartão transparente: aprovado devolve a taxa; em análise fica pendente; recusado vira erro; sem resposta consulta antes', async () => {
+    const input = {
+      card: { holderName: 'ANA', number: '4539656048392220', expiryMonth: '12', expiryYear: '2035', ccv: '123' },
+      holder: { name: 'ANA', email: 'a@b.com', cpfCnpj: '52998224725', postalCode: '01310100', addressNumber: '10', mobilePhone: '11987654321' },
+      remoteIp: '200.1.2.3',
+    };
+    let reply: [number, unknown] = [200, { id: 'pay_c', status: 'CONFIRMED', value: 50, netValue: 48.02, billingType: 'CREDIT_CARD' }];
+    const asaas = fakeAsaas({
+      'POST /payments/pay_c/payWithCreditCard': () => reply,
+      'GET /payments/pay_c': () => [200, { id: 'pay_c', status: 'CONFIRMED', value: 50, netValue: 48.02, billingType: 'CREDIT_CARD' }],
+    });
+    const gw = new AsaasGateway(new AsaasClient('k', true, asaas.fetchImpl));
+    expect(await gw.payCard('pay_c', input)).toEqual({ outcome: 'paid', feeCents: 198 });
+    expect(asaas.calls[0].body).toEqual({ creditCard: input.card, creditCardHolderInfo: input.holder, remoteIp: '200.1.2.3' });
+
+    reply = [200, { id: 'pay_c', status: 'AWAITING_RISK_ANALYSIS', value: 50, billingType: 'CREDIT_CARD' }];
+    expect(await gw.payCard('pay_c', input)).toEqual({ outcome: 'pending' });
+
+    reply = [400, { errors: [{ description: 'Transação não autorizada.' }] }];
+    await expect(gw.payCard('pay_c', input)).rejects.toThrow('Transação não autorizada.');
+
+    // Rede caiu no meio: consulta a cobrança e descobre que foi paga (não pede para pagar de novo).
+    const flaky = new AsaasGateway(
+      new AsaasClient('k', true, async (url, init) => {
+        if (init.method === 'POST') throw new Error('socket hang up');
+        return asaas.fetchImpl(url, init);
+      }),
+    );
+    expect(await flaky.payCard('pay_c', input)).toMatchObject({ outcome: 'paid' });
+  });
+
   it('cliente já conhecido não é cadastrado de novo; produção usa a URL de produção', async () => {
     const asaas = fakeAsaas({
       'POST /payments': () => [200, { id: 'pay_2', status: 'PENDING', value: 10, billingType: 'PIX' }],

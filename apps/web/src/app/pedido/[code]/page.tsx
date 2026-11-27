@@ -6,6 +6,7 @@ import { formatBRL, ORDER_STATUS_LABELS, parseBRL, PAYMENT_METHOD_LABELS, RATING
 import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
 import { LiveMap } from '@/components/live-map';
+import { CardFields, cardError, cardPayload, emptyCard, type CardState } from '@/components/card-form';
 
 const DELIVERY_STEPS: OrderStatus[] = ['PAID', 'IN_PREPARATION', 'OUT_FOR_DELIVERY', 'COMPLETED'];
 const PICKUP_STEPS: OrderStatus[] = ['PAID', 'IN_PREPARATION', 'READY', 'COMPLETED'];
@@ -17,6 +18,33 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [simulating, setSimulating] = useState(false);
+  // Cartão: só em memória. O erro do checkout (cartão recusado) chega pela URL.
+  const [cardData, setCardData] = useState<CardState>(() => emptyCard());
+  const [cardMsg, setCardMsg] = useState<string | null>(null);
+  const [paying, setPaying] = useState(false);
+
+  useEffect(() => {
+    const msg = new URLSearchParams(window.location.search).get('cartao');
+    if (msg) {
+      setCardMsg(msg);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
+  async function payCard() {
+    const bad = cardError(cardData);
+    if (bad) return setCardMsg(bad);
+    setPaying(true);
+    setCardMsg(null);
+    try {
+      setOrder(await api<OrderTracking>(`/public/orders/${encodeURIComponent(code)}/pay-card`, { method: 'POST', body: cardPayload(cardData) }));
+      setCardData(emptyCard());
+    } catch (e) {
+      setCardMsg((e as ApiError).message);
+    } finally {
+      setPaying(false);
+    }
+  }
 
   const load = useCallback(() => {
     api<OrderTracking>(`/public/orders/${encodeURIComponent(code)}`)
@@ -171,26 +199,20 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
         </section>
       )}
 
-      {card && order.status === 'AWAITING_PAYMENT' && (
+      {card && order.status === 'AWAITING_PAYMENT' && order.payment?.cardForm && (
         <section className="card space-y-3">
           <h2 className="font-semibold">Pague com cartão para confirmar</h2>
           <p className="text-sm text-zinc-600">
-            Você paga na página segura do Asaas, que recebe pela loja. A loja não vê os dados do seu cartão.
+            {cardMsg ? 'O pagamento não foi aprovado. Confira os dados ou use outro cartão.' : 'Digite os dados do cartão para concluir o pedido.'}
             {order.payment?.expiresAt && (
               <> O pagamento fica aberto até {new Date(order.payment.expiresAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</>
             )}
           </p>
-          {order.payment?.checkoutUrl && (
-            <a className="btn-primary block w-full text-center" href={order.payment.checkoutUrl} target="_blank" rel="noopener noreferrer">
-              Pagar com cartão
-            </a>
-          )}
-          <p className="text-xs text-zinc-500">Depois de pagar, volte aqui: esta página atualiza sozinha quando o pagamento for confirmado.</p>
-          {order.payment?.canSimulate && (
-            <button className="btn-ghost w-full" disabled={simulating} onClick={simulate}>
-              {simulating ? 'Confirmando...' : 'Simular pagamento (ambiente de teste)'}
-            </button>
-          )}
+          {cardMsg && <ErrorBox message={cardMsg} />}
+          <CardFields value={cardData} onChange={setCardData} idPrefix="order-card" />
+          <button className="btn-primary w-full" disabled={paying} onClick={payCard}>
+            {paying ? 'Processando pagamento...' : `Pagar ${formatBRL(order.totalCents)}`}
+          </button>
         </section>
       )}
 

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { AsaasClient, AsaasError } from './asaas.client';
+import { AsaasClient, AsaasError, type CardData, type CardHolder } from './asaas.client';
 
 export interface CreateChargeInput {
   amountCents: number;
@@ -20,7 +20,7 @@ export interface ChargeResult {
   pixCopyPaste?: string;
   /** PNG em base64. */
   pixQrImage?: string;
-  /** Cartão: página segura do gateway onde o cliente digita o cartão (os dados do cartão nunca passam pela Delivery360). */
+  /** Cartão: página do gateway (reserva; a loja usa o checkout transparente, veja payCard). */
   checkoutUrl?: string;
   expiresAt?: Date;
   gatewayCustomerId?: string;
@@ -36,7 +36,25 @@ export interface PaymentGateway {
   createCharge(input: CreateChargeInput): Promise<ChargeResult>;
   /** Cancela a cobrança que venceu sem pagamento, para ninguém pagar um pedido já cancelado. */
   cancelCharge(externalId: string): Promise<void>;
+  /**
+   * Checkout transparente: paga a cobrança de cartão com os dados digitados na loja.
+   * Os dados do cartão só passam pela memória do servidor a caminho do gateway: nunca são gravados nem logados.
+   */
+  payCard(externalId: string, input: PayCardInput): Promise<PayCardResult>;
 }
+
+export interface PayCardInput {
+  card: CardData;
+  holder: CardHolder;
+  remoteIp: string;
+}
+
+/** paid: aprovado na hora. pending: em análise no gateway (a confirmação chega pelo webhook). */
+export type PayCardResult = { outcome: 'paid' | 'pending'; feeCents?: number };
+
+/** Cartões de recusa do sandbox do Asaas; o gateway de teste recusa os mesmos. */
+export const TEST_DECLINED_CARDS = ['5184019740373151', '4916561358240741'];
+const PAID_STATUSES = ['CONFIRMED', 'RECEIVED'];
 
 export const PIX_EXPIRATION_MINUTES = 15;
 /** O cartão leva mais tempo (digitar os dados, autenticação do banco). */
@@ -65,6 +83,11 @@ export class FakePaymentGateway implements PaymentGateway {
   }
 
   async cancelCharge() {}
+
+  async payCard(_externalId: string, input: PayCardInput): Promise<PayCardResult> {
+    if (TEST_DECLINED_CARDS.includes(input.card.number)) throw new AsaasError('Transação não autorizada. Verifique os dados do cartão ou use outro cartão.', 400);
+    return { outcome: 'paid' };
+  }
 }
 
 /** Data de hoje em Brasília (AAAA-MM-DD), que é o vencimento da cobrança Pix. */
@@ -90,7 +113,7 @@ export class AsaasGateway implements PaymentGateway {
       description: input.description.slice(0, 500),
     });
     if (input.method === 'CREDIT_CARD') {
-      // O cliente digita o cartão na página segura do Asaas (fatura). A confirmação chega pelo webhook.
+      // A cobrança fica aberta e é paga pelo checkout transparente (payCard). A fatura do Asaas fica só de reserva.
       if (!payment.invoiceUrl) throw new AsaasError('O Asaas não devolveu a página de pagamento do cartão.', 502);
       return { externalId: payment.id, checkoutUrl: payment.invoiceUrl, expiresAt: expirationFor('CREDIT_CARD'), gatewayCustomerId: customer };
     }
@@ -107,5 +130,22 @@ export class AsaasGateway implements PaymentGateway {
 
   async cancelCharge(externalId: string) {
     await this.client.deletePayment(externalId);
+  }
+
+  async payCard(externalId: string, input: PayCardInput): Promise<PayCardResult> {
+    let payment;
+    try {
+      payment = await this.client.payWithCreditCard(externalId, { creditCard: input.card, creditCardHolderInfo: input.holder, remoteIp: input.remoteIp });
+    } catch (e) {
+      // Sem resposta (rede): a cobrança pode ter sido paga. Consulta antes de devolver erro, para o cliente não pagar duas vezes.
+      if (e instanceof AsaasError && e.status === 503) payment = await this.client.getPayment(externalId).catch(() => null);
+      if (!payment) throw e;
+    }
+    if (PAID_STATUSES.includes(payment.status)) {
+      const fee = payment.netValue != null ? Math.max(0, Math.round((payment.value - payment.netValue) * 100)) : 0;
+      return { outcome: 'paid', feeCents: fee };
+    }
+    if (payment.status === 'PENDING' || payment.status === 'AWAITING_RISK_ANALYSIS') return { outcome: 'pending' };
+    throw new AsaasError('Pagamento não aprovado. Verifique os dados do cartão ou use outro cartão.', 400);
   }
 }

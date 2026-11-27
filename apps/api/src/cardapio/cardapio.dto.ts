@@ -214,6 +214,23 @@ export class TipDto {
   @IsOptional() @IsString() @MaxLength(20) document?: string;
 }
 
+/**
+ * Cartão digitado no checkout da loja (checkout transparente). Vai direto para o gateway: nada disto é gravado.
+ * As mensagens de erro não repetem o valor enviado.
+ */
+export class PayCardDto {
+  @IsString() @MinLength(3, { message: 'Informe o nome impresso no cartão.' }) @MaxLength(80) holderName: string;
+  @IsString() @Matches(/^[\d ]{13,23}$/, { message: 'Número do cartão inválido.' }) number: string;
+  @IsString() @Matches(/^(0?[1-9]|1[0-2])$/, { message: 'Mês de validade inválido.' }) expiryMonth: string;
+  @IsString() @Matches(/^(\d{2}|\d{4})$/, { message: 'Ano de validade inválido.' }) expiryYear: string;
+  @IsString() @Matches(/^\d{3,4}$/, { message: 'Código de segurança (CVV) inválido.' }) ccv: string;
+  /** CPF/CNPJ do titular do cartão (se vazio, usa o do pedido). */
+  @IsOptional() @IsString() @MaxLength(20) document?: string;
+  @IsString() @Matches(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, { message: 'Informe um e-mail válido.' }) @MaxLength(120) email: string;
+  @IsString() @Matches(/^\d{5}-?\d{3}$/, { message: 'Informe um CEP válido.' }) postalCode: string;
+  @IsString() @MinLength(1, { message: 'Informe o número do endereço.' }) @MaxLength(10) addressNumber: string;
+}
+
 // ---------- Canais de venda (iFood, 99Food, Keeta) ----------
 
 export const MARKETPLACE_CODES = ['IFOOD', 'FOOD99', 'KEETA'] as const;

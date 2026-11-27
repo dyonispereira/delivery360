@@ -17,7 +17,7 @@ import { activeModuleCodes } from '../access/access.rules';
 import type { PaymentGateway } from '../payments/payment-gateway';
 import { PaymentAccountsService } from '../payments/payment-accounts.service';
 import { AsaasError } from '../payments/asaas.client';
-import { CreateOrderDto, QuoteOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
+import { CreateOrderDto, PayCardDto, QuoteOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
 import { CouponError, couponDiscount, couponLabel } from './coupon-rules';
 import { activePromoPrice, effectivePrice, unitCost, type CostItem } from '@delivery360/shared';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
@@ -683,9 +683,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
             status: payment.status,
             pixCopyPaste: payment.status === 'PENDING' ? payment.pixCopyPaste : null,
             pixQrImage: payment.status === 'PENDING' ? payment.pixQrImage : null,
-            checkoutUrl: payment.status === 'PENDING' ? payment.checkoutUrl : null,
+            // Checkout transparente: o cartão é digitado na própria loja, sem link para a página do gateway.
+            cardForm: payment.status === 'PENDING' && payment.method === 'CREDIT_CARD',
             expiresAt: payment.expiresAt,
-            canSimulate: payment.provider === 'fake' && payment.status === 'PENDING' && this.fakeEnabled(),
+            canSimulate: payment.provider === 'fake' && payment.method === 'PIX' && payment.status === 'PENDING' && this.fakeEnabled(),
           }
         : null,
       history: order.statusHistory,
@@ -849,6 +850,56 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       await tx.orderStatusHistory.create({ data: { orderId: payment.orderId, status: 'PAID', note: 'Pagamento confirmado' } });
       await this.publishReceived(tx, payment.orderId, payment.tenantId, payment.amountCents, payment.method);
     });
+  }
+
+  /**
+   * Checkout transparente do cartão: o cliente digita o cartão na página da loja e a cobrança é paga pelo gateway.
+   * Os dados do cartão não são gravados nem logados; só o resultado fica no pedido.
+   */
+  async payWithCard(code: string, dto: PayCardDto, remoteIp: string) {
+    await this.expireStale();
+    const order = await this.prisma.order.findUnique({
+      where: { trackingCode: code },
+      include: { payments: { where: { status: 'PENDING', method: 'CREDIT_CARD' }, take: 1 }, customer: true },
+    });
+    const payment = order?.payments[0];
+    if (!order || order.status !== 'AWAITING_PAYMENT' || !payment?.externalId) throw new NotFoundException('Nenhum pagamento com cartão pendente neste pedido.');
+    const gateway = await this.payments.gatewayFor(order.tenantId);
+    if (!gateway || gateway.name !== payment.provider) throw new BadRequestException('Esta loja não recebe mais cartão pelo site.');
+
+    const document = normalizeDocument(dto.document) ?? order.customer.document;
+    if (gateway.requiresDocument && !document) throw new BadRequestException('Informe o CPF do titular do cartão.');
+    const year = dto.expiryYear.length === 2 ? `20${dto.expiryYear}` : dto.expiryYear;
+    const month = dto.expiryMonth.padStart(2, '0');
+    const now = new Date();
+    if (Number(year) < now.getFullYear() || (Number(year) === now.getFullYear() && Number(month) < now.getMonth() + 1)) {
+      throw new BadRequestException('Cartão vencido. Confira a validade.');
+    }
+
+    let result;
+    try {
+      result = await gateway.payCard(payment.externalId, {
+        card: { holderName: dto.holderName.trim(), number: dto.number.replace(/\D/g, ''), expiryMonth: month, expiryYear: year, ccv: dto.ccv },
+        holder: {
+          name: dto.holderName.trim(),
+          email: dto.email.trim(),
+          cpfCnpj: document ?? '',
+          postalCode: dto.postalCode.replace(/\D/g, ''),
+          addressNumber: dto.addressNumber.trim(),
+          mobilePhone: order.customer.phone,
+        },
+        remoteIp,
+      });
+    } catch (e) {
+      if (e instanceof AsaasError) {
+        // Só a mensagem do gateway, nunca os dados enviados.
+        this.log.warn(`Cartão não aprovado no pedido ${order.id}: ${e.message}`);
+        throw new BadRequestException(e.status === 503 ? e.message : `Pagamento não aprovado: ${e.message}`);
+      }
+      throw e;
+    }
+    if (result.outcome === 'paid') await this.markPaid(payment.provider, payment.externalId, result.feeCents ?? 0);
+    return this.getTracking(code);
   }
 
   /** Só em desenvolvimento: simula o webhook do gateway de teste. */
