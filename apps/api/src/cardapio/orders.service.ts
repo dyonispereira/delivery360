@@ -913,7 +913,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     deliveryFeeCents: number;
     customer: { id: string; referralCode: string | null };
   }) {
-    if (order.channel !== 'LOJA' || order.type === 'DINE_IN') return null;
+    if (order.channel !== 'LOJA' || order.type === 'DINE_IN' || order.type === 'COUNTER') return null;
     const program = await loyaltyProgram(this.prisma, order.tenantId);
     if (!program.enabled && !program.referralEnabled) return null;
     const earned = await this.prisma.loyaltyTransaction.findUnique({ where: { orderId_kind: { orderId: order.id, kind: 'EARN' } }, select: { points: true } });

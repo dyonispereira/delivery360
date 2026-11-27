@@ -83,3 +83,23 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   }
   return data as T;
 }
+
+/** Baixa um arquivo da API com o login (ex.: cupom em PDF) e devolve um endereço local para abrir. */
+export async function apiBlobUrl(path: string): Promise<string> {
+  const headers: Record<string, string> = {};
+  const token = session.getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const tenantId = session.getTenantId();
+  if (tenantId) headers['x-tenant-id'] = tenantId;
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, { headers });
+  } catch {
+    throw new ApiError(0, 'Não foi possível conectar ao servidor.');
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(res.status, data?.message || 'Não foi possível abrir o arquivo.');
+  }
+  return URL.createObjectURL(await res.blob());
+}

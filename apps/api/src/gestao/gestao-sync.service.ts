@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { DomainEvent, EntryStatus, EntryType, Prisma, SalesChannel } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { allocateServiceFee, CHANNEL_LABELS, CHANNEL_REVENUE_ACCOUNT, paymentFeeBps, PAYMENT_METHOD_LABELS, TAB_PAYMENT_METHODS, type PaymentMethod } from '@delivery360/shared';
+import { allocateServiceFee, CHANNEL_LABELS, CHANNEL_REVENUE_ACCOUNT, paymentFeeBps, PAYMENT_METHOD_LABELS, pdvPayLabel, TAB_PAYMENT_METHODS, type PaymentMethod } from '@delivery360/shared';
 import { DEFAULT_ACCOUNTS, GROUPS, localDate, toDbDate } from './chart';
 
 type Tx = Prisma.TransactionClient;
@@ -21,6 +21,7 @@ const PAYMENT_METHOD_LABELS_SALAO: Partial<Record<PaymentMethod, string>> = Obje
  * - pedido.status → COMPLETED → baixa do a receber (dinheiro/maquininha recebidos na entrega)
  * - pedido.cancelado  → cancela o a receber e o imposto; se já estava pago, a pagar 2.5 (devolver ao cliente)
  * - entrega.concluida → a pagar 6.1 ao motoboy (valor por entrega)
+ * - pdv.venda_paga   → cada pagamento do balcão: 1.8 Balcão (já recebido) + taxa 2.3
  * - salao.conta_fechada → cada pagamento da mesa: 1.1 Salão + 11.3 taxa de serviço (fora da DRE) + taxa 2.3; a pagar 11.4 à equipe
  * - gorjeta.recebida  → entrada 11.1 + a pagar 11.2 ao motoboy (fora da DRE)
  * - gorjeta.repassada → baixa do 11.2
@@ -98,9 +99,10 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         if (!order) return;
         if (order.channel !== 'LOJA') return this.marketplaceSale(tx, t, day, order);
         // Salão: a venda só entra quando a conta da mesa fecha, já paga (aqui só imposto e descontos).
-        const dineIn = order.type === 'DINE_IN';
+        // Balcão (PDV): igual ao salão, o dinheiro entra pelos pagamentos (pdv.venda_paga), já recebido.
+        const dineIn = order.type === 'DINE_IN' || order.type === 'COUNTER';
         const online = ONLINE.includes(order.paymentMethod) || dineIn;
-        const revenueCode = dineIn ? '1.1' : '1.2';
+        const revenueCode = order.type === 'COUNTER' ? '1.8' : dineIn ? '1.1' : '1.2';
         const method = order.paymentMethod as PaymentMethod;
         const restaurantCoupon = order.discountCents - order.couponPlatformCents;
         // Venda pelo que o cliente pagou de fato: é o que entra no caixa e no extrato do gateway.
@@ -148,7 +150,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
               ...memo,
               type: 'PAYABLE',
               code: '2.4',
-              description: `Cupom ${order.couponCode ?? ''} · pedido #${order.number}`.replace(/ +/g, ' '),
+              description: order.type === 'COUNTER' && !order.couponCode ? `Desconto no balcão · pedido #${order.number}` : `Cupom ${order.couponCode ?? ''} · pedido #${order.number}`.replace(/ +/g, ' '),
               counterparty: order.customerName,
               amountCents: restaurantCoupon,
             });
@@ -234,6 +236,24 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         return;
       }
       case 'pedido.cancelado': {
+        // Venda de balcão cancelada: o dinheiro foi devolvido na hora, então os lançamentos somem (caixa bate).
+        const pdvPays = await tx.counterPayment.findMany({ where: { orderId: String(p.orderId) }, select: { id: true } });
+        if (pdvPays.length) {
+          await tx.financialEntry.updateMany({
+            where: {
+              tenantId: t,
+              status: { not: 'CANCELLED' },
+              externalKey: {
+                in: [
+                  ...pdvPays.flatMap((x) => [`pdvpay:${x.id}:sale`, `pdvpay:${x.id}:fee`]),
+                  ...['tax', 'gross', 'promo', 'coupon', 'loyalty'].map((k) => `order:${String(p.orderId)}:${k}`),
+                ],
+              },
+            },
+            data: { status: 'CANCELLED', notes: 'Venda do balcão cancelada' },
+          });
+          return;
+        }
         const key = `order:${String(p.orderId)}:sale`;
         const sale = await tx.financialEntry.findUnique({ where: { tenantId_externalKey: { tenantId: t, externalKey: key } } });
         if (!sale || sale.status === 'CANCELLED') return;
@@ -282,6 +302,31 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           status: 'OPEN',
           source: 'entregas',
         });
+        return;
+      }
+      case 'pdv.venda_paga': {
+        // Cada pagamento do balcão entra no caixa com a sua forma, pelo valor que ficou (sem o troco).
+        const order = await tx.order.findUnique({ where: { id: String(p.orderId) }, include: { counterPayments: { orderBy: { createdAt: 'asc' } } } });
+        if (!order || order.status === 'CANCELLED' || !order.counterPayments.length) return;
+        const rates = await this.rates(tx, t);
+        const many = order.counterPayments.length > 1;
+        for (const [i, pay] of order.counterPayments.entries()) {
+          const method = pay.method as PaymentMethod;
+          const label = `${pdvPayLabel(method, pay.cardKind)}${many ? ` ${i + 1}/${order.counterPayments.length}` : ''}`;
+          const base = { day, status: 'PAID' as EntryStatus, source: 'cardapio', paymentMethod: method, channel: 'LOJA' as const };
+          await this.upsert(tx, t, `pdvpay:${pay.id}:sale`, {
+            ...base,
+            type: 'RECEIVABLE',
+            code: '1.8',
+            description: `Balcão · pedido #${order.number} · ${label}`,
+            counterparty: order.customerName === 'Balcão' ? null : order.customerName,
+            amountCents: pay.amountCents,
+          });
+          const fee = Math.round((pay.amountCents * paymentFeeBps(rates, method)) / 10_000);
+          if (fee > 0) {
+            await this.upsert(tx, t, `pdvpay:${pay.id}:fee`, { ...base, type: 'PAYABLE', code: '2.3', description: `Taxa ${label} · balcão #${order.number}`, amountCents: fee });
+          }
+        }
         return;
       }
       case 'salao.conta_fechada': {

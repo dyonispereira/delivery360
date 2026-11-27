@@ -151,7 +151,7 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
       const rows = await this.prisma.orderStatusHistory.findMany({
         where: { notifiedAt: null, createdAt: { gte: since }, // Só pedidos da loja própria: quem pediu pelo iFood/99/Keeta é avisado pelo app de lá.
         // Mesa do salão também não: o cliente está ali, sem telefone.
-        order: { channel: 'LOJA', type: { not: 'DINE_IN' }, tenant: { whatsappAccount: { status: 'CONNECTED', notifyEnabled: true } } } },
+        order: { channel: 'LOJA', type: { notIn: ['DINE_IN', 'COUNTER'] }, tenant: { whatsappAccount: { status: 'CONNECTED', notifyEnabled: true } } } },
         orderBy: { createdAt: 'asc' },
         take: 50,
         include: {

@@ -52,6 +52,12 @@ export class UpdateStoreDto {
   @IsOptional() @IsInt() @Min(0) @Max(48 * 60) scheduleLeadMinutes?: number;
   @IsOptional() @IsInt() @Min(0, { message: 'Dias à frente: de 0 a 30.' }) @Max(30, { message: 'Dias à frente: de 0 a 30.' }) scheduleMaxDays?: number;
   @IsOptional() @IsIn([15, 20, 30, 60], { message: 'Intervalo: 15, 20, 30 ou 60 minutos.' }) scheduleSlotMinutes?: number;
+  /** Impressoras térmicas: papel de 58 ou 80 mm. */
+  @IsOptional() @IsIn([58, 80], { message: 'Papel: 58 ou 80 mm.' }) receiptWidthMm?: number;
+  @IsOptional() @IsIn([58, 80], { message: 'Papel: 58 ou 80 mm.' }) kitchenWidthMm?: number;
+  @IsOptional() @IsBoolean() receiptAutoPrint?: boolean;
+  @IsOptional() @IsInt() @Min(1, { message: 'Vias: de 1 a 3.' }) @Max(3, { message: 'Vias: de 1 a 3.' }) receiptCopies?: number;
+  @IsOptional() @IsString() @MaxLength(200) receiptFooter?: string;
 }
 
 export class ZoneDto {
@@ -102,6 +108,9 @@ export class ProductDto {
   /** Outras despesas variáveis do produto, em pontos-base (100 = 1%). */
   @IsOptional() @IsInt() @Min(0) @Max(5000) extraCostBps?: number;
   @IsOptional() @IsString() @Matches(PDV, PDV_MSG) pdvCode?: string;
+  /** Nota fiscal: NCM (8 números) e CFOP (4 números). Vazio = o padrão da loja. */
+  @IsOptional() @Matches(/^(\d{8})?$/, { message: 'NCM: 8 números (ex.: 21069090), ou deixe vazio para usar o padrão.' }) ncm?: string;
+  @IsOptional() @Matches(/^([5-7]\d{3})?$/, { message: 'CFOP: 4 números começando com 5, 6 ou 7 (ex.: 5102).' }) cfop?: string;
   @IsOptional() @ValidateNested() @Type(() => ChannelPricesDto) channelPrices?: ChannelPricesDto;
   /** Preço de/por (null tira a promoção). */
   @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) promoPriceCents?: number | null;
@@ -120,6 +129,9 @@ export class UpdateProductDto {
   @IsOptional() @IsArray() @ArrayMaxSize(40) @ValidateNested({ each: true }) @Type(() => CostItemDto) costItems?: CostItemDto[];
   @IsOptional() @IsInt() @Min(0) @Max(5000) extraCostBps?: number;
   @IsOptional() @IsString() @Matches(PDV, PDV_MSG) pdvCode?: string;
+  /** Nota fiscal: NCM (8 números) e CFOP (4 números). Vazio = o padrão da loja. */
+  @IsOptional() @Matches(/^(\d{8})?$/, { message: 'NCM: 8 números (ex.: 21069090), ou deixe vazio para usar o padrão.' }) ncm?: string;
+  @IsOptional() @Matches(/^([5-7]\d{3})?$/, { message: 'CFOP: 4 números começando com 5, 6 ou 7 (ex.: 5102).' }) cfop?: string;
   @IsOptional() @ValidateNested() @Type(() => ChannelPricesDto) channelPrices?: ChannelPricesDto;
   /** Preço de/por (null tira a promoção). */
   @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) promoPriceCents?: number | null;
@@ -515,4 +527,70 @@ export class ClubLevelDto {
 export class LoyaltyAdjustDto {
   @IsInt() @Min(-1_000_000) @Max(1_000_000) points: number;
   @IsString() @MinLength(2, { message: 'Diga o motivo do ajuste.' }) @MaxLength(120) note: string;
+}
+
+// ---------- PDV (balcão), caixa e nota fiscal ----------
+
+export class OpenCashDto {
+  @IsInt() @Min(0) @Max(MAX_CENTS) openingCents: number;
+}
+
+export class CashMovementDto {
+  @IsIn(['SANGRIA', 'SUPRIMENTO']) kind: 'SANGRIA' | 'SUPRIMENTO';
+  @IsInt() @Min(1, { message: 'Informe o valor.' }) @Max(MAX_CENTS) amountCents: number;
+  @IsOptional() @IsString() @MaxLength(120) reason?: string;
+}
+
+export class CloseCashDto {
+  /** Quanto tem de dinheiro na gaveta, contado na hora. */
+  @IsInt() @Min(0) @Max(MAX_CENTS) countedCents: number;
+  @IsOptional() @IsString() @MaxLength(300) notes?: string;
+}
+
+export class PdvPaymentDto {
+  @IsIn(['CASH', 'PIX', 'DEBIT', 'CREDIT']) key: 'CASH' | 'PIX' | 'DEBIT' | 'CREDIT';
+  @IsInt() @Min(1) @Max(MAX_CENTS) amountCents: number;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) receivedCents?: number;
+}
+
+export class PdvSaleDto {
+  @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => TabItemDto) items: TabItemDto[];
+  @IsArray() @ArrayMaxSize(6) @ValidateNested({ each: true }) @Type(() => PdvPaymentDto) payments: PdvPaymentDto[];
+  @IsOptional() @IsString() @MaxLength(60) customerName?: string;
+  /** CPF ou CNPJ na nota. */
+  @IsOptional() @IsString() @MaxLength(20) document?: string;
+  /** Desconto dado no balcão, em centavos. */
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) discountCents?: number;
+  @IsOptional() @IsString() @MaxLength(300) notes?: string;
+  /** Mandar para a cozinha (lanche feito na hora) ou entregar na hora (bebida, sobremesa pronta). */
+  @IsBoolean() kitchen: boolean;
+  /** Cupom não fiscal ou NFC-e. */
+  @IsIn(['NAO_FISCAL', 'NFCE']) receipt: 'NAO_FISCAL' | 'NFCE';
+}
+
+export class CancelSaleDto {
+  @IsString() @MinLength(15, { message: 'Explique o motivo com pelo menos 15 letras (vai para a SEFAZ se tiver nota).' }) @MaxLength(255) reason: string;
+}
+
+export class EmitNfceDto {
+  @IsOptional() @IsString() @MaxLength(20) document?: string;
+}
+
+export class FiscalSettingsDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsIn(['HOMOLOGACAO', 'PRODUCAO']) environment?: 'HOMOLOGACAO' | 'PRODUCAO';
+  @IsOptional() @Matches(/^\d{14}$/, { message: 'CNPJ: 14 números.' }) cnpj?: string;
+  @IsOptional() @Matches(/^(\d{2,14}|ISENTO)$/, { message: 'Inscrição estadual: só números (ou ISENTO).' }) stateRegistration?: string;
+  @IsOptional() @IsString() @MaxLength(120) legalName?: string;
+  @IsOptional() @IsIn(['RO', 'AC', 'AM', 'RR', 'PA', 'AP', 'TO', 'MA', 'PI', 'CE', 'RN', 'PB', 'PE', 'AL', 'SE', 'BA', 'MG', 'ES', 'RJ', 'SP', 'PR', 'SC', 'RS', 'MS', 'MT', 'GO', 'DF'], { message: 'UF inválida.' }) uf?: string;
+  @IsOptional() @IsIn([1, 2, 3]) taxRegime?: number;
+  @IsOptional() @Matches(/^\d{1,6}$/, { message: 'ID do CSC: só números (ex.: 000001).' }) cscId?: string;
+  /** Token do CSC (só se for trocar; guardado cifrado). */
+  @IsOptional() @IsString() @MinLength(16, { message: 'O CSC tem de 16 a 36 caracteres.' }) @MaxLength(36) cscToken?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(999) series?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(999_999_999) nextNumber?: number;
+  @IsOptional() @Matches(/^\d{8}$/, { message: 'NCM: 8 números.' }) defaultNcm?: string;
+  @IsOptional() @Matches(/^[5-7]\d{3}$/, { message: 'CFOP: 4 números (ex.: 5102).' }) defaultCfop?: string;
+  @IsOptional() @Matches(/^\d{2,3}$/, { message: 'CSOSN/CST: 2 ou 3 números (ex.: 102).' }) defaultCsosn?: string;
+  @IsOptional() @IsIn(['NAO_FISCAL', 'NFCE']) pdvReceipt?: 'NAO_FISCAL' | 'NFCE';
 }

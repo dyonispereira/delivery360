@@ -78,7 +78,7 @@ export async function awardOrderPoints(tx: Prisma.TransactionClient, orderId: st
     select: { id: true, number: true, tenantId: true, customerId: true, channel: true, type: true, totalCents: true, deliveryFeeCents: true, customer: { select: { referredById: true, name: true } } },
   });
   // Só pedidos da loja própria (delivery e retirada). App de delivery e salão não têm o cliente identificado.
-  if (!order || order.channel !== 'LOJA' || order.type === 'DINE_IN') return;
+  if (!order || order.channel !== 'LOJA' || order.type === 'DINE_IN' || order.type === 'COUNTER') return;
   const program = await loyaltyProgram(tx, order.tenantId);
   if (program.enabled) {
     const points = pointsFor(order.totalCents, order.deliveryFeeCents, program.pointsPerReal);

@@ -73,6 +73,10 @@ model Tenant {
   loyaltyRewards   LoyaltyReward[]
   clubLevels       ClubLevel[]
   loyaltyMoves     LoyaltyTransaction[]
+  cashSessions     CashSession[]
+  counterPayments  CounterPayment[]
+  fiscalSettings   FiscalSettings?
+  fiscalDocuments  FiscalDocument[]
 
   @@map("tenants")
 }
@@ -211,6 +215,8 @@ enum OrderType {
   PICKUP
   /// Pedido do salão, lançado pelo garçom na mesa.
   DINE_IN
+  /// Venda de balcão (PDV): o caixa lança e recebe na hora.
+  COUNTER
 }
 
 enum OrderStatus {
@@ -283,6 +289,14 @@ model Store {
   scheduleMaxDays     Int             @default(7) @map("schedule_max_days")
   /// Intervalo entre os horários oferecidos (minutos).
   scheduleSlotMinutes Int             @default(30) @map("schedule_slot_minutes")
+  /// Impressoras térmicas: largura do papel (58 ou 80 mm) do cupom do caixa e da comanda da cozinha.
+  receiptWidthMm      Int             @default(80) @map("receipt_width_mm")
+  kitchenWidthMm      Int             @default(80) @map("kitchen_width_mm")
+  /// PDV: imprimir o cupom sozinho ao finalizar a venda, e quantas vias.
+  receiptAutoPrint    Boolean         @default(true) @map("receipt_auto_print")
+  receiptCopies       Int             @default(1) @map("receipt_copies")
+  /// Mensagem no rodapé do cupom (ex.: "Obrigado! Volte sempre").
+  receiptFooter       String?         @map("receipt_footer")
   updatedAt           DateTime        @updatedAt @map("updated_at")
   tenant              Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -343,6 +357,9 @@ model Product {
   promoEndsAt     DateTime?     @map("promo_ends_at")
   /// Combo: as etapas são os grupos de opções e cada opção pode apontar para um produto do cardápio.
   isCombo         Boolean       @default(false) @map("is_combo")
+  /// Nota fiscal (NFC-e): NCM e CFOP do produto. Vazio = o padrão dos dados fiscais da loja.
+  ncm             String?
+  cfop            String?
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
   tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -517,6 +534,10 @@ model Order {
   payments              Payment[]
   deliveryAttempts      DeliveryAttempt[]
   tip                   Tip?
+  /// PDV: CPF ou CNPJ na nota (só números).
+  customerDocument      String?              @map("customer_document")
+  counterPayments       CounterPayment[]
+  fiscalDocuments       FiscalDocument[]
 
   @@unique([tenantId, number])
   @@unique([tenantId, channel, externalId])
@@ -1320,4 +1341,171 @@ model Upload {
 
   @@index([tenantId])
   @@map("uploads")
+}
+
+// =====================================================================
+// PDV (venda de balcão) e caixa
+// =====================================================================
+
+enum CashSessionStatus {
+  OPEN
+  CLOSED
+}
+
+/// Turno do caixa: abre com o fundo de troco e fecha com a contagem da gaveta.
+/// O esperado em dinheiro = fundo + vendas em dinheiro (PDV e salão) + suprimentos − sangrias.
+model CashSession {
+  id              String            @id @default(uuid()) @db.Uuid
+  tenantId        String            @map("tenant_id") @db.Uuid
+  /// Igual ao tenantId enquanto o caixa está aberto: um caixa aberto por restaurante.
+  openKey         String?           @unique @map("open_key") @db.Uuid
+  status          CashSessionStatus @default(OPEN)
+  openingCents    Int               @map("opening_cents")
+  openedById      String?           @map("opened_by_id") @db.Uuid
+  openedByName    String?           @map("opened_by_name")
+  openedAt        DateTime          @default(now()) @map("opened_at")
+  closedById      String?           @map("closed_by_id") @db.Uuid
+  closedByName    String?           @map("closed_by_name")
+  closedAt        DateTime?         @map("closed_at")
+  /// No fechamento: o que tinha na gaveta, o que deveria ter e a diferença (contado − esperado).
+  countedCents    Int?              @map("counted_cents")
+  expectedCents   Int?              @map("expected_cents")
+  differenceCents Int?              @map("difference_cents")
+  notes           String?
+  /// Resumo congelado no fechamento (vendas por forma de pagamento, sangrias...).
+  summary         Json?
+  createdAt       DateTime          @default(now()) @map("created_at")
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  movements       CashMovement[]
+  payments        CounterPayment[]
+
+  @@index([tenantId, openedAt])
+  @@map("cash_sessions")
+}
+
+enum CashMovementKind {
+  /// Retirada de dinheiro da gaveta (ex.: levar ao cofre, pagar um fornecedor).
+  SANGRIA
+  /// Dinheiro colocado na gaveta (ex.: mais troco).
+  SUPRIMENTO
+}
+
+model CashMovement {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String           @map("tenant_id") @db.Uuid
+  sessionId   String           @map("session_id") @db.Uuid
+  kind        CashMovementKind
+  amountCents Int              @map("amount_cents")
+  reason      String?
+  userId      String?          @map("user_id") @db.Uuid
+  userName    String?          @map("user_name")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  session     CashSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("cash_movements")
+}
+
+/// Pagamento de uma venda de balcão (uma venda pode ser paga com várias formas).
+model CounterPayment {
+  id            String        @id @default(uuid()) @db.Uuid
+  tenantId      String        @map("tenant_id") @db.Uuid
+  orderId       String        @map("order_id") @db.Uuid
+  sessionId     String?       @map("session_id") @db.Uuid
+  method        PaymentMethod
+  /// Cartão na maquininha: CREDIT ou DEBIT (para a nota fiscal).
+  cardKind      String?       @map("card_kind")
+  /// Valor abatido da venda.
+  amountCents   Int           @map("amount_cents")
+  /// Dinheiro: quanto o cliente entregou e o troco devolvido (recebido − valor).
+  receivedCents Int?          @map("received_cents")
+  changeCents   Int           @default(0) @map("change_cents")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  session       CashSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([sessionId])
+  @@map("counter_payments")
+}
+
+// =====================================================================
+// Nota fiscal de consumidor (NFC-e)
+// =====================================================================
+
+/// Dados fiscais do restaurante para emitir NFC-e (o emissor manda para a SEFAZ).
+model FiscalSettings {
+  tenantId          String   @id @map("tenant_id") @db.Uuid
+  enabled           Boolean  @default(false)
+  /// Emissor: "simulado" por enquanto (o emissor real entra depois).
+  provider          String   @default("simulado")
+  /// HOMOLOGACAO (teste, sem valor fiscal) ou PRODUCAO.
+  environment       String   @default("HOMOLOGACAO")
+  cnpj              String?
+  stateRegistration String?  @map("state_registration")
+  legalName         String?  @map("legal_name")
+  /// UF do restaurante (ex.: "SP"): entra na chave de acesso.
+  uf                String?
+  /// 1 = Simples Nacional, 2 = Simples (excesso de sublimite), 3 = Regime normal.
+  taxRegime         Int      @default(1) @map("tax_regime")
+  /// Código de Segurança do Contribuinte (CSC), dado pela SEFAZ para o QR Code.
+  cscId             String?  @map("csc_id")
+  cscTokenEncrypted String?  @map("csc_token_encrypted")
+  series            Int      @default(1)
+  nextNumber        Int      @default(1) @map("next_number")
+  /// Padrões dos produtos sem NCM/CFOP próprios.
+  defaultNcm        String   @default("21069090") @map("default_ncm")
+  defaultCfop       String   @default("5102") @map("default_cfop")
+  /// CSOSN (Simples) ou CST do ICMS.
+  defaultCsosn      String   @default("102") @map("default_csosn")
+  /// Cupom que já vem marcado no PDV: NAO_FISCAL (cupom não fiscal) ou NFCE. O caixa pode trocar em cada venda.
+  pdvReceipt        String   @default("NAO_FISCAL") @map("pdv_receipt")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("fiscal_settings")
+}
+
+enum FiscalStatus {
+  /// Mandada ao emissor, esperando a SEFAZ.
+  PROCESSING
+  AUTHORIZED
+  /// A SEFAZ recusou (ex.: NCM inválido): dá para corrigir e emitir de novo.
+  REJECTED
+  CANCELLED
+}
+
+model FiscalDocument {
+  id           String       @id @default(uuid()) @db.Uuid
+  tenantId     String       @map("tenant_id") @db.Uuid
+  orderId      String       @map("order_id") @db.Uuid
+  /// Referência única mandada ao emissor (evita nota em dobro se a chamada repetir).
+  ref          String       @unique
+  provider     String
+  environment  String
+  status       FiscalStatus
+  series       Int
+  number       Int
+  accessKey    String?      @map("access_key")
+  protocol     String?
+  qrCodeUrl    String?      @map("qr_code_url")
+  consultUrl   String?      @map("consult_url")
+  /// CPF/CNPJ do consumidor na nota.
+  document     String?
+  totalCents   Int          @map("total_cents")
+  message      String?
+  authorizedAt DateTime?    @map("authorized_at")
+  cancelledAt  DateTime?    @map("cancelled_at")
+  cancelReason String?      @map("cancel_reason")
+  /// O que foi mandado ao emissor (itens, pagamentos), para conferência.
+  payload      Json
+  createdAt    DateTime     @default(now()) @map("created_at")
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, environment, series, number])
+  @@index([orderId])
+  @@index([tenantId, createdAt])
+  @@map("fiscal_documents")
 }

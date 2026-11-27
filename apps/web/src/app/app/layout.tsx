@@ -74,6 +74,7 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
     '/app/pedidos': 'orders',
     '/app/cozinha': 'kitchen',
     '/app/salao': 'table',
+    '/app/pdv': 'register',
     '/app/fidelidade': 'star',
     '/app/gestao': 'wallet',
     '/app/cardapio': 'menu',
@@ -89,6 +90,7 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
       ? [
           { href: '/app/pedidos', label: 'Painel de pedidos' },
           { href: '/app/cozinha', label: 'Cozinha' },
+          { href: '/app/pdv', label: 'PDV (balcão)' },
           { href: '/app/salao', label: 'Salão (garçom)' },
           { href: '/app/fidelidade', label: 'Fidelidade' },
         ]

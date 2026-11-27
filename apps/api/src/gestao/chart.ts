@@ -26,6 +26,7 @@ export const DEFAULT_ACCOUNTS: [code: string, name: string][] = [
   ['1.5', 'Eventos'],
   ['1.6', '99Food'],
   ['1.7', 'Keeta'],
+  ['1.8', 'Balcão (PDV)'],
   ['2.1', 'Impostos sobre venda (Simples, ISS, ICMS)'],
   ['2.2', 'Comissão de apps'],
   ['2.3', 'Taxas de cartão e PIX'],
