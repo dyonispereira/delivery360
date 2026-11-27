@@ -2,7 +2,7 @@
 // Gera as imagens da loja modelo em apps/web/public/vitrine/fornalha/.
 // Uso (na raiz do repositório): node apps/web/scripts/vitrine/render.mjs [filtro]
 import { createRequire } from 'node:module';
-import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,13 +74,21 @@ function drinkArt(kind) {
     ${kind !== 'agua' ? Array.from({ length: 7 }, (_, i) => `<rect x="${130 + (i % 4) * 230}" y="${790 + (i % 2) * 70}" width="54" height="54" rx="8" fill="#DFF3FA" opacity="0.7" transform="rotate(${i * 17} ${157 + (i % 4) * 230} ${817 + (i % 2) * 70})"/>`).join('') : ''}`);
 }
 
+/** Combo Família: fotos reais das duas pizzas e do refrigerante, sobre fundo escuro com luz quente. */
 function comboArt() {
   const id = 'c';
-  return svgDoc(id, 1000, 1000, `${woodBG(id, 1000, 1000)}${flour(id, 1000, 1000, 4)}
-    <g transform="translate(330 380)">${pizzaSVG(id, 'calabresa', 290, 41)}</g>
-    <g transform="translate(560 640)">${pizzaSVG(id, 'frango', 290, 42)}</g>
-    ${bottleSVG(id, 'cola', 860, 420, 1.05)}
-    <g transform="translate(40 40)"><rect width="370" height="74" rx="14" fill="${BRAND.gold}"/><text x="185" y="50" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="36" fill="#1D1A17">COMBO FAMÍLIA</text></g>`);
+  return svgDoc(id, 1000, 1000, `
+    <defs>
+      <radialGradient id="cb-bg" cx="0.72" cy="0.22" r="0.95"><stop offset="0" stop-color="#5A3414"/><stop offset="0.45" stop-color="#22140B"/><stop offset="1" stop-color="#0B0705"/></radialGradient>
+      <radialGradient id="cb-glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#FFB547" stop-opacity="0.35"/><stop offset="1" stop-color="#FFB547" stop-opacity="0"/></radialGradient>
+      <filter id="cb-sh" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000" flood-opacity="0.7"/></filter>
+    </defs>
+    <rect width="1000" height="1000" fill="url(#cb-bg)"/>
+    <g fill="#FFD27A" opacity="0.5">${Array.from({ length: 46 }, (_, i) => `<circle cx="${(i * 211) % 1000}" cy="${(i * 137) % 1000}" r="${1 + (i % 3) * 0.8}"/>`).join('')}</g>
+    <circle cx="720" cy="300" r="380" fill="url(#cb-glow)"/>
+    <image href="${foto('combo-pizza-portuguesa-recorte')}" x="340" y="100" width="660" height="${Math.round(660 * 682 / 800)}" filter="url(#cb-sh)"/>
+    <image href="${foto('combo-pizza-presunto-recorte')}" x="0" y="360" width="720" height="${Math.round(720 * 729 / 900)}" filter="url(#cb-sh)"/>
+    <image href="${foto('coca-zero-2l-recorte')}" x="808" y="235" width="${Math.round(540 * 232 / 758)}" height="540" filter="url(#cb-sh)"/>`);
 }
 
 /* ---------- Capa, banners e cardápio ---------- */
@@ -105,14 +113,21 @@ function tape(w, y, rot, text) {
     <g>${items}</g></g>`;
 }
 
+/** Recorte de foto real (fundo transparente) embutido no SVG. */
+const foto = (name) => `data:image/webp;base64,${readFileSync(join(here, `fotos/${name}.webp`)).toString('base64')}`;
+
 function banner(kind) {
   const id = 'b';
   const W = 1600, H = 700;
   let art = '';
   if (kind === 'black') {
     art = `<rect width="${W}" height="${H}" fill="#0E0E0E"/>
-      ${tape(W, 70, -6, 'BLACK FRIDAY ★')}${tape(W, 600, 5, 'OFERTAS DA SEMANA ★')}
-      <g transform="translate(1110 390) rotate(-14) scale(0.52)">${longPizzaSVG(id, ['pepperoni', 'calabresa', 'frango'], 1500, 560, 12)}</g>
+      ${tape(W, 70, -6, 'BLACK FRIDAY ★ OFERTAS DA SEMANA ★')}
+      <defs><radialGradient id="bf-glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#FF7A1A" stop-opacity="0.6"/><stop offset="1" stop-color="#FF7A1A" stop-opacity="0"/></radialGradient>
+        <radialGradient id="bf-shadow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#000" stop-opacity="0.8"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient></defs>
+      <ellipse cx="1080" cy="390" rx="560" ry="280" fill="url(#bf-glow)"/>
+      <ellipse cx="1060" cy="560" rx="450" ry="46" fill="url(#bf-shadow)" transform="rotate(-6 1060 560)"/>
+      <image href="${foto('pizza-meio-metro-recorte')}" x="${1070 - 450}" y="${400 - 177}" width="900" height="354" transform="rotate(-2 1070 400)"/>
       <g transform="translate(1330 170) rotate(10)"><circle r="120" fill="${BRAND.red}" stroke="#fff" stroke-width="8"/>
         <text y="-20" text-anchor="middle" font-family="Inter" font-weight="800" font-size="30" fill="#fff">ATÉ</text>
         <text y="48" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="84" fill="#fff">40%</text>
@@ -124,10 +139,34 @@ function banner(kind) {
       <g transform="translate(1180 120) rotate(-6)"><rect x="-210" y="-58" width="420" height="116" rx="58" fill="${BRAND.gold}"/>
         <text y="22" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="64" fill="#1D1A17">TERÇA EM DOBRO</text></g>`;
   } else if (kind === 'frete') {
-    art = `<rect width="${W}" height="${H}" fill="${BRAND.red}"/>
-      <g opacity="0.12">${Array.from({ length: 40 }, (_, i) => `<circle cx="${(i * 173) % W}" cy="${(i * 97) % H}" r="${30 + (i % 5) * 12}" fill="#fff"/>`).join('')}</g>
-      <g transform="translate(1180 380)">${pizzaSVG(id, 'calabresa', 300, 51)}</g>
-      <g transform="translate(1180 380)"><rect x="-330" y="-330" width="660" height="660" rx="30" fill="none" stroke="#FFF4E0" stroke-width="10" stroke-dasharray="40 26" opacity="0.6"/></g>`;
+    // Foto real da pizza (recortada do fundo de estúdio) sobre degradê quente.
+    const pw = 800, ph = Math.round(800 * 733 / 1004); // proporção do recorte
+    const speed = [0, 1, 2].map((k) => `<rect x="${-200 + k * 30}" y="${36 + k * 26}" width="${170 - k * 30}" height="9" rx="4.5" fill="#FFF4E0" opacity="${0.55 - k * 0.15}"/>`).join('');
+    art = `<defs>
+        <linearGradient id="fr-bg" x1="0" y1="0" x2="1" y2="0.35"><stop offset="0" stop-color="#2A0806"/><stop offset="0.45" stop-color="#7A140F"/><stop offset="1" stop-color="#D2361E"/></linearGradient>
+        <radialGradient id="fr-glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#FFB81C" stop-opacity="0.55"/><stop offset="0.6" stop-color="#FF7A1A" stop-opacity="0.18"/><stop offset="1" stop-color="#FF7A1A" stop-opacity="0"/></radialGradient>
+        <radialGradient id="fr-shadow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#000" stop-opacity="0.65"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+      </defs>
+      <rect width="${W}" height="${H}" fill="url(#fr-bg)"/>
+      <g opacity="0.08" stroke="#FFF4E0" stroke-width="2" fill="none">${Array.from({ length: 8 }, (_, k) => `<circle cx="1180" cy="350" r="${200 + k * 80}"/>`).join('')}</g>
+      <circle cx="1180" cy="340" r="520" fill="url(#fr-glow)"/>
+      <ellipse cx="1190" cy="${350 + ph / 2 - 25}" rx="${pw / 2 + 10}" ry="44" fill="url(#fr-shadow)"/>
+      <image href="${foto('pizza-calabresa-cheddar-recorte')}" x="${1180 - pw / 2}" y="${350 - ph / 2}" width="${pw}" height="${ph}" transform="rotate(-6 1180 350)"/>
+      <g transform="translate(850 130) rotate(-12)">
+        <circle r="100" fill="#FFB81C" stroke="#FFF4E0" stroke-width="7"/>
+        <circle r="84" fill="none" stroke="#1D1A17" stroke-width="2" stroke-dasharray="5 7" opacity="0.45"/>
+        <text y="-28" text-anchor="middle" font-family="Inter" font-weight="800" font-size="21" letter-spacing="2" fill="#1D1A17">ENTREGA</text>
+        <text y="30" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="62" fill="#1D1A17">R$ 0</text>
+        <text y="60" text-anchor="middle" font-family="Inter" font-weight="800" font-size="16" letter-spacing="1" fill="#7A140F">ACIMA DE R$ 80</text>
+      </g>
+      <g transform="translate(330 120)">
+        ${speed}
+        <g fill="none" stroke="#FFF4E0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="-4" y="14" width="60" height="44" rx="10" fill="#FFB81C"/>
+          <circle cx="28" cy="96" r="24"/><circle cx="146" cy="96" r="24"/>
+          <path d="M28 96h54l28-46h24l12 46M68 50h42M116 28h24l8 22"/>
+        </g>
+      </g>`;
   } else if (kind === 'primeira') {
     art = `${woodBG(id, W, H)}
       <g transform="translate(1200 370)">${pizzaSVG(id, 'margherita', 320, 61)}</g>
