@@ -58,7 +58,10 @@ const CUSTOMERS = ['Ana Paula', 'Bruno Costa', 'Carla Mendes', 'Diego Rocha', 'E
 
 export async function seedShowcase(prisma: PrismaClient) {
   const existing = await prisma.store.findUnique({ where: { slug: SHOWCASE_SLUG } });
-  if (existing) return topUpOrders(prisma, existing.tenantId);
+  if (existing) {
+    await addExtras(prisma, existing.tenantId);
+    return topUpOrders(prisma, existing.tenantId);
+  }
 
   const plan = await prisma.plan.findUniqueOrThrow({ where: { name: 'Gestão 360' }, include: { modules: true } });
   const tenant = await prisma.tenant.create({
@@ -236,11 +239,39 @@ export async function seedShowcase(prisma: PrismaClient) {
     await prisma.campaign.create({ data: { title, subtitle, imageUrl: `${IMG}/${image}.webp`, tenantIds: [tenantId], position: 100 + i } });
   }
 
+  await addExtras(prisma, tenantId);
   await topUpOrders(prisma, tenantId);
   console.log(`Loja modelo criada: /loja/${SHOWCASE_SLUG} (dono: ${email})`);
 }
 
 /** Pedidos entregues e avaliados nos últimos dias, para a loja mostrar "Mais pedidos" e a nota. */
+/**
+ * Itens que chegaram depois da primeira versão da loja modelo. Roda em todo start e só cria o que falta,
+ * para a loja que já existe no site de teste também ganhar.
+ */
+async function addExtras(prisma: PrismaClient, tenantId: string) {
+  const bebidas = await prisma.menuCategory.findFirst({ where: { tenantId, name: '🥤 Bebidas' } });
+  if (bebidas) {
+    const extra: [string, string, number, string, number, string][] = [
+      ['Cola sem açúcar 1,5L', 'Gelada.', 1200, 'bebida-cola-zero', 560, 'BB-5'],
+      ['Guaraná Zero 2L', 'Gelado.', 1400, 'bebida-guarana-zero', 650, 'BB-6'],
+      ['Soda Limão 2L', 'Gelada.', 1400, 'bebida-limao', 650, 'BB-7'],
+    ];
+    for (const [i, [name, description, priceCents, image, cost, pdvCode]] of extra.entries()) {
+      if (await prisma.product.findFirst({ where: { tenantId, pdvCode } })) continue;
+      await prisma.product.create({
+        data: { tenantId, categoryId: bebidas.id, name, description, priceCents, position: 4 + i, imageUrl: `${IMG}/${image}.webp`, pdvCode, costItems: [{ name, kind: 'INGREDIENT', costCents: cost }] },
+      });
+    }
+  }
+  const banner = `${IMG}/banner-vantagens.webp`;
+  if (!(await prisma.campaign.findFirst({ where: { imageUrl: banner } }))) {
+    await prisma.campaign.create({
+      data: { title: 'Vantagens de pedir pelo site', subtitle: 'Cupons, Pix ou cartão e aviso no WhatsApp a cada etapa', imageUrl: banner, tenantIds: [tenantId], position: 99 },
+    });
+  }
+}
+
 async function topUpOrders(prisma: PrismaClient, tenantId: string) {
   const since = new Date(Date.now() - 20 * DAY);
   const recent = await prisma.order.count({ where: { tenantId, createdAt: { gte: since } } });
