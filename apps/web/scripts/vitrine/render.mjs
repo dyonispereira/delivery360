@@ -74,13 +74,21 @@ function drinkArt(kind) {
     ${kind !== 'agua' ? Array.from({ length: 7 }, (_, i) => `<rect x="${130 + (i % 4) * 230}" y="${790 + (i % 2) * 70}" width="54" height="54" rx="8" fill="#DFF3FA" opacity="0.7" transform="rotate(${i * 17} ${157 + (i % 4) * 230} ${817 + (i % 2) * 70})"/>`).join('') : ''}`);
 }
 
+/** Combo Família: fotos reais das duas pizzas e do refrigerante, sobre fundo escuro com luz quente. */
 function comboArt() {
   const id = 'c';
-  return svgDoc(id, 1000, 1000, `${woodBG(id, 1000, 1000)}${flour(id, 1000, 1000, 4)}
-    <g transform="translate(330 380)">${pizzaSVG(id, 'calabresa', 290, 41)}</g>
-    <g transform="translate(560 640)">${pizzaSVG(id, 'frango', 290, 42)}</g>
-    ${bottleSVG(id, 'cola', 860, 420, 1.05)}
-    <g transform="translate(40 40)"><rect width="370" height="74" rx="14" fill="${BRAND.gold}"/><text x="185" y="50" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="36" fill="#1D1A17">COMBO FAMÍLIA</text></g>`);
+  return svgDoc(id, 1000, 1000, `
+    <defs>
+      <radialGradient id="cb-bg" cx="0.72" cy="0.22" r="0.95"><stop offset="0" stop-color="#5A3414"/><stop offset="0.45" stop-color="#22140B"/><stop offset="1" stop-color="#0B0705"/></radialGradient>
+      <radialGradient id="cb-glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#FFB547" stop-opacity="0.35"/><stop offset="1" stop-color="#FFB547" stop-opacity="0"/></radialGradient>
+      <filter id="cb-sh" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000" flood-opacity="0.7"/></filter>
+    </defs>
+    <rect width="1000" height="1000" fill="url(#cb-bg)"/>
+    <g fill="#FFD27A" opacity="0.5">${Array.from({ length: 46 }, (_, i) => `<circle cx="${(i * 211) % 1000}" cy="${(i * 137) % 1000}" r="${1 + (i % 3) * 0.8}"/>`).join('')}</g>
+    <circle cx="720" cy="300" r="380" fill="url(#cb-glow)"/>
+    <image href="${foto('combo-pizza-portuguesa-recorte')}" x="340" y="100" width="660" height="${Math.round(660 * 682 / 800)}" filter="url(#cb-sh)"/>
+    <image href="${foto('combo-pizza-presunto-recorte')}" x="0" y="360" width="720" height="${Math.round(720 * 729 / 900)}" filter="url(#cb-sh)"/>
+    <image href="${foto('coca-zero-2l-recorte')}" x="808" y="235" width="${Math.round(540 * 232 / 758)}" height="540" filter="url(#cb-sh)"/>`);
 }
 
 /* ---------- Capa, banners e cardápio ---------- */
