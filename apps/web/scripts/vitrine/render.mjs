@@ -167,6 +167,8 @@ jobs.push(['promo-metro.webp', 1000, 1000, () => promoArt(promoLong(['pepperoni'
 jobs.push(['combo-familia.webp', 1000, 1000, comboArt]);
 for (const k of ['cola', 'guarana', 'agua', 'laranja']) jobs.push([`bebida-${k}.webp`, 1000, 1000, () => drinkArt(k)]);
 jobs.push(['logo.png', 512, 512, () => logoSVG(512)]);
+// Logo da Pizzaria Demo (loja de teste), no mesmo estilo.
+jobs.push(['logo-demo.png', 512, 512, () => logoSVG(512, 'Demo', 260)]);
 jobs.push(['capa.webp', 1800, 600, cover]);
 for (const k of ['black', 'terca', 'frete', 'primeira']) jobs.push([`banner-${k}.webp`, 1600, 700, () => banner(k)]);
 jobs.push(['cardapio-instagram.png', 1080, 1350, () => menuPoster([

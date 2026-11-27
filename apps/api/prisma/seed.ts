@@ -59,6 +59,7 @@ async function seedDemo() {
   const slug = 'pizzaria-demo';
   const existing = await prisma.store.findUnique({ where: { slug } });
   if (existing) {
+    await seedDemoVisuals(existing.tenantId);
     await seedDemoCourier(existing.tenantId);
     await seedDemoCosts(existing.tenantId);
     await seedDemoChannels(existing.tenantId);
@@ -127,12 +128,32 @@ async function seedDemo() {
       { tenantId: tenant.id, categoryId: bebidas.id, name: 'Suco natural 500ml', priceCents: 1000, position: 1 },
     ],
   });
+  await seedDemoVisuals(tenant.id);
   await seedDemoCourier(tenant.id);
   await seedDemoCosts(tenant.id);
   await seedDemoChannels(tenant.id);
   await seedDemoPeople(tenant.id);
   await seedDemoFinance(tenant.id);
   console.log(`Restaurante demo criado: /loja/${slug} (dono: ${email})`);
+}
+
+/** Logo, capa e fotos da Pizzaria Demo (as artes da loja modelo). Só preenche o que está vazio. */
+async function seedDemoVisuals(tenantId: string) {
+  const img = '/vitrine/fornalha';
+  await prisma.store.updateMany({ where: { tenantId, logoUrl: null }, data: { logoUrl: `${img}/logo-demo.png` } });
+  await prisma.store.updateMany({ where: { tenantId, coverUrl: null }, data: { coverUrl: `${img}/capa.webp` } });
+  const photos: Record<string, string> = {
+    Calabresa: 'pizza-calabresa',
+    Margherita: 'pizza-margherita',
+    'Frango com Catupiry': 'pizza-frango',
+    'Refrigerante 2L': 'bebida-cola',
+    'Suco natural 500ml': 'bebida-laranja',
+    'Pizza Meio Metro': 'meio-metro',
+    'Combo Família': 'combo-familia',
+  };
+  for (const [name, file] of Object.entries(photos)) {
+    await prisma.product.updateMany({ where: { tenantId, name, imageUrl: null }, data: { imageUrl: `${img}/${file}.webp` } });
+  }
 }
 
 /** Motoboy de demonstração (criado também em demos antigas, que não tinham). */
