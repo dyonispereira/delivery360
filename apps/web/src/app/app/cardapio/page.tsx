@@ -12,6 +12,7 @@ import { CampaignsPanel } from './campaigns-panel';
 import { PaymentAccount } from './payment-account';
 import { WhatsappAccount } from './whatsapp-account';
 import { CouponsEditor } from './coupons-editor';
+import { SchedulingSettings } from './scheduling-settings';
 
 const TABS = [
   { id: 'menu', label: 'Cardápio' },
@@ -56,6 +57,7 @@ export default function CardapioPage() {
       {tab === 'loja' && (
         <div className="space-y-4">
           <StoreSettings canEdit={canEdit} />
+          <SchedulingSettings canEdit={canEdit} />
           {canEdit && <PaymentAccount canConnect={tenant.role === null || tenant.role === 'OWNER'} />}
           {canEdit && <WhatsappAccount canDisconnect={tenant.role === null || tenant.role === 'OWNER'} />}
         </div>

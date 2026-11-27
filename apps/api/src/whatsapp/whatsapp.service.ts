@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../core/audit.service';
 import { publicWebUrl, statusMessage, whatsappNumber } from './order-messages';
 import { EvolutionProvider, FakeWhatsapp, WhatsappError, type WhatsappProvider } from './whatsapp.provider';
+import { scheduleLabel } from '../cardapio/schedule';
 
 /** Avisos mais velhos que isso não saem mais (ex.: WhatsApp ficou desconectado por horas). */
 const MAX_AGE_MS = 2 * 60 * 60_000;
@@ -162,6 +163,7 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
               customerName: true,
               customerPhone: true,
               trackingCode: true,
+              scheduledFor: true,
               batch: { select: { courier: { select: { name: true } } } },
               tenant: { select: { whatsappAccount: true, store: { select: { displayName: true, estimatedMinutes: true } } } },
             },
@@ -187,6 +189,7 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
           trackingUrl: web ? `${web}/pedido/${o.trackingCode}` : null,
           courierName: o.batch?.courier.name,
           estimatedMinutes: o.tenant.store?.estimatedMinutes,
+          scheduledLabel: o.scheduledFor ? scheduleLabel(o.scheduledFor) : null,
         });
         if (!number || !text) continue;
         try {

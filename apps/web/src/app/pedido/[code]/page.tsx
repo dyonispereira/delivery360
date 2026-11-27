@@ -142,8 +142,16 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
         {order.status === 'OUT_FOR_DELIVERY' && order.courierName && (
           <p className="mt-4 text-sm font-medium">🛵 {order.courierName} está levando seu pedido.</p>
         )}
-        {order.store && !FINAL.includes(order.status) && order.status !== 'AWAITING_PAYMENT' && (
-          <p className="mt-4 text-sm text-zinc-500">Tempo estimado: cerca de {order.store.estimatedMinutes} minutos.</p>
+        {order.scheduledFor && !FINAL.includes(order.status) ? (
+          <p className="mt-4 rounded-xl bg-sky-50 px-3 py-2 text-sm font-medium text-sky-900">
+            🗓️ {order.type === 'PICKUP' ? 'Retirada' : 'Entrega'} agendada para{' '}
+            {new Date(order.scheduledFor).toLocaleString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })}.
+            {order.status === 'PAID' && ' A cozinha começa perto do horário.'}
+          </p>
+        ) : (
+          order.store &&
+          !FINAL.includes(order.status) &&
+          order.status !== 'AWAITING_PAYMENT' && <p className="mt-4 text-sm text-zinc-500">Tempo estimado: cerca de {order.store.estimatedMinutes} minutos.</p>
         )}
       </section>
 

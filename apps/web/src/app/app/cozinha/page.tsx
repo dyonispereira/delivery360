@@ -29,7 +29,8 @@ export default function CozinhaPage() {
   }
   if (!orders) return error ? <ErrorBox message={error} /> : <Spinner />;
 
-  const list = orders.filter((o) => KITCHEN.includes(o.status));
+  // Agendados só entram na cozinha perto da hora (o painel mostra antes, em "Agendados").
+  const list = orders.filter((o) => KITCHEN.includes(o.status) && !o.held);
 
   return (
     <div className="-m-4 min-h-[calc(100vh-4rem)] bg-zinc-900 p-4 text-white md:-m-6 md:p-6">

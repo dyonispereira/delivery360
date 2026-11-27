@@ -192,7 +192,9 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
         .map((c) => ({ ...c, products: c.products.filter((p) => `${p.name} ${p.description ?? ''}`.toLowerCase().includes(q)) }))
         .filter((c) => c.products.length > 0)
     : data.categories;
-  const canOrder = store.isOpen;
+  const canSchedule = !!store.schedule?.days.length;
+  // Loja fechada que agenda: o cliente monta o pedido e escolhe o horário no carrinho.
+  const canOrder = store.isOpen || canSchedule;
   const offerFor = (id: string) => data.offers.find((o) => o.productIds.includes(id));
   const combos = data.categories.flatMap((c) => c.products).filter((p) => p.isCombo && p.available);
   const storeWide = data.offers.filter((o) => o.productIds.length === 0);
@@ -680,6 +682,11 @@ function StoreHeader({ store }: { store: PublicStore['store'] }) {
           <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />
           {store.isOpen ? 'Aberto agora' : 'Fechado no momento'}
         </p>
+        {!!store.schedule?.days.length && (
+          <p className="ml-2 mt-2 inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1 text-sm font-semibold text-sky-700">
+            🗓️ {store.isOpen ? 'Também agenda pedidos' : `Agende para ${store.schedule.days[0].label.toLowerCase()} a partir das ${hourLabel(store.schedule.days[0].slots[0])}`}
+          </p>
+        )}
       </div>
     </header>
   );
@@ -1025,11 +1032,17 @@ function Checkout({
   const [couponError, setCouponError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [rewardId, setRewardId] = useState<string | null>(null);
+  // Quando: o quanto antes (loja aberta) ou um horário agendado.
+  const days = store.schedule?.days ?? [];
+  const [when, setWhen] = useState<'now' | 'later'>(store.isOpen || !days.length ? 'now' : 'later');
+  const [day, setDay] = useState(days[0]?.date ?? '');
+  const [slot, setSlot] = useState('');
+  const scheduledFor = when === 'later' && slot ? slot : undefined;
   const [rewardError, setRewardError] = useState<string | null>(null);
   const phoneOk = phone.replace(/\D/g, '').length >= 10 ? phone : '';
   const cartSig = JSON.stringify(cart.map((i) => [i.productId, i.quantity, i.optionIds]));
   // Com cupom ou com desconto especial na loja, quem calcula a conta é o servidor.
-  const needsQuote = !!coupon || data.offers.length > 0 || !!loyalty;
+  const needsQuote = !!coupon || data.offers.length > 0 || !!loyalty || !!scheduledFor;
   useEffect(() => {
     if (!needsQuote) {
       setQuote(null);
@@ -1050,6 +1063,7 @@ function Checkout({
           couponCode: couponCode ?? undefined,
           rewardId: rewardId ?? undefined,
           referralCode: referral ?? undefined,
+          scheduledFor,
         },
       });
     const t = setTimeout(async () => {
@@ -1079,7 +1093,7 @@ function Checkout({
       alive = false;
       clearTimeout(t);
     };
-  }, [needsQuote, coupon, type, zoneId, phoneOk, method, cartSig, slug, rewardId, referral]);
+  }, [needsQuote, coupon, type, zoneId, phoneOk, method, cartSig, slug, rewardId, referral, scheduledFor]);
 
   const discount = quote?.coupon ? quote.discountCents : 0;
   const special = quote?.platformDiscountCents ?? 0;
@@ -1104,6 +1118,7 @@ function Checkout({
     if (type === 'DELIVERY' && (!zoneId || street.trim().length < 2 || !number.trim())) {
       return setError('Preencha bairro, rua e número para a entrega.');
     }
+    if (when === 'later' && !scheduledFor) return setError('Escolha o dia e o horário do agendamento.');
     if (!method) return setError('Escolha a forma de pagamento.');
     const needsDoc = (method === 'PIX' || method === 'CREDIT_CARD') && !!store.pixNeedsDocument;
     if (needsDoc && ![11, 14].includes(doc.replace(/\D/g, '').length)) return setError(`Informe seu CPF para pagar com ${method === 'PIX' ? 'Pix' : 'cartão'}.`);
@@ -1134,6 +1149,7 @@ function Checkout({
           couponCode: quote?.coupon ? coupon : undefined,
           rewardId: fid?.reward ? rewardId : undefined,
           referralCode: referral ?? undefined,
+          scheduledFor,
           utmSource: utm.source ?? undefined,
           utmCampaign: utm.campaign ?? undefined,
         },
@@ -1167,7 +1183,7 @@ function Checkout({
       onClose={onClose}
       footer={
         <button className="btn-primary flex w-full justify-between py-3" disabled={sending || belowMin} onClick={submit}>
-          <span>{sending ? 'Enviando...' : belowMin ? `Mínimo ${formatBRL(store.minOrderCents)}` : 'Fazer pedido'}</span>
+          <span>{sending ? 'Enviando...' : belowMin ? `Mínimo ${formatBRL(store.minOrderCents)}` : scheduledFor ? `Agendar para ${hourLabel(scheduledFor)}` : 'Fazer pedido'}</span>
           <span>{formatBRL(total)}</span>
         </button>
       }
@@ -1254,6 +1270,56 @@ function Checkout({
           </>
         )}
 
+        {days.length > 0 && (
+          <div>
+            <span className="label">Quando?</span>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" className={when === 'now' ? 'btn-primary' : 'btn-ghost'} disabled={!store.isOpen} onClick={() => setWhen('now')}>
+                {store.isOpen ? `Agora (~${store.estimatedMinutes} min)` : 'Agora (fechado)'}
+              </button>
+              <button type="button" className={when === 'later' ? 'btn-primary' : 'btn-ghost'} onClick={() => setWhen('later')}>
+                🗓️ Agendar
+              </button>
+            </div>
+            {when === 'later' && (
+              <div className="mt-2 space-y-2 rounded-xl border border-sky-200 bg-sky-50/60 p-3">
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {days.map((d) => (
+                    <button
+                      key={d.date}
+                      type="button"
+                      onClick={() => {
+                        setDay(d.date);
+                        setSlot('');
+                      }}
+                      className={`shrink-0 rounded-full border px-3 py-1.5 text-sm ${day === d.date ? 'border-sky-600 bg-sky-600 font-semibold text-white' : 'border-sky-200 bg-white'}`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {(days.find((d) => d.date === day)?.slots ?? []).map((iso) => (
+                    <button
+                      key={iso}
+                      type="button"
+                      onClick={() => setSlot(iso)}
+                      className={`rounded-lg border py-2 text-sm ${slot === iso ? 'border-sky-600 bg-sky-600 font-semibold text-white' : 'border-zinc-200 bg-white'}`}
+                    >
+                      {hourLabel(iso)}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-sky-900">
+                  {slot
+                    ? `${type === 'DELIVERY' ? 'Entrega' : 'Retirada'} agendada para ${days.find((d) => d.date === day)?.label.toLowerCase()} às ${hourLabel(slot)}.`
+                    : `Escolha o horário em que quer ${type === 'DELIVERY' ? 'receber' : 'retirar'}.`}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
         <div>
           <span className="label">Pagamento</span>
           <div className="space-y-1">
@@ -1337,6 +1403,11 @@ function Checkout({
       </div>
     </Sheet>
   );
+}
+
+/** "20:30" no horário de Brasília. */
+function hourLabel(iso: string) {
+  return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 }
 
 const WEEKDAY_SHORT = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];

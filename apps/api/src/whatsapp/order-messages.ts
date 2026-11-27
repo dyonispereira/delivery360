@@ -10,6 +10,8 @@ export interface StatusMessageInput {
   trackingUrl: string | null;
   courierName?: string | null;
   estimatedMinutes?: number | null;
+  /** Pedido agendado: "sáb 29/11 às 20:00". */
+  scheduledLabel?: string | null;
 }
 
 const firstName = (n: string) => n.trim().split(/\s+/)[0] || '';
@@ -25,6 +27,13 @@ export function statusMessage(m: StatusMessageInput): string | null {
   const delivery = m.type === 'DELIVERY';
   switch (m.status) {
     case 'PAID':
+      if (m.scheduledLabel) {
+        return (
+          `🗓️ *Pedido ${n} agendado!*\n\n${hi ? `Oi, ${hi}! ` : ''}A *${m.storeName}* recebeu seu pedido para *${m.scheduledLabel}*. ` +
+          `Vamos começar a preparar perto do horário${delivery ? ' para chegar na hora certa' : ''}.` +
+          link
+        );
+      }
       return (
         `✅ *Pedido ${n} aprovado!*\n\n${hi ? `Oi, ${hi}! ` : ''}A *${m.storeName}* recebeu seu pedido e já vai começar a preparar.` +
         (m.estimatedMinutes ? ` Tempo estimado: cerca de ${m.estimatedMinutes} minutos.` : '') +

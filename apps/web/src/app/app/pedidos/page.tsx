@@ -9,6 +9,7 @@ import { useCurrentTenant } from '../tenant-context';
 import {
   autoPrint,
   minutesSince,
+  scheduleText,
   playAlert,
   primaryAction,
   printOrder,
@@ -45,7 +46,8 @@ export default function PainelPedidosPage() {
 
   const { orders, error, move } = useBoard(5000, (fresh) => {
     if (sound) playAlert();
-    if (auto) fresh.forEach((o) => void autoPrint(o, tenant.name));
+    // Agendado imprime na hora de começar, não quando chega.
+    if (auto) fresh.filter((o) => !o.held).forEach((o) => void autoPrint(o, tenant.name));
     setFlash((cur) => new Set([...cur, ...fresh.map((o) => o.id)]));
     if (typeof document !== 'undefined') document.title = `(${fresh.length}) Novo pedido!`;
   });
@@ -65,6 +67,11 @@ export default function PainelPedidosPage() {
   const withCouriers = tenant.activeModules.includes('entregas');
   const canCancel = tenant.role === null || tenant.role === 'OWNER' || tenant.role === 'MANAGER';
   const done = orders.filter((o) => o.status === 'COMPLETED' || o.status === 'CANCELLED').reverse();
+  const scheduled = orders.filter((o) => o.held).sort((a, b) => (a.scheduledFor ?? '').localeCompare(b.scheduledFor ?? ''));
+  const columns = [
+    ...(scheduled.length ? [{ title: 'Agendados', list: scheduled, tone: 'border-t-violet-500' }] : []),
+    ...COLUMNS.map((c) => ({ title: c.title, tone: c.tone, list: orders.filter((o) => c.statuses.includes(o.status) && !o.held) })),
+  ];
   const needsUnlock = sound && !soundUnlocked();
 
   return (
@@ -98,9 +105,9 @@ export default function PainelPedidosPage() {
       )}
       <ErrorBox message={error} />
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        {COLUMNS.map((col) => {
-          const list = orders.filter((o) => col.statuses.includes(o.status));
+      <div className={`grid gap-4 ${columns.length === 4 ? 'lg:grid-cols-2 xl:grid-cols-4' : 'lg:grid-cols-3'}`}>
+        {columns.map((col) => {
+          const list = col.list;
           return (
             <section key={col.title} className={`rounded-xl border-t-4 bg-zinc-100/70 p-3 ${col.tone}`}>
               <h2 className="mb-3 flex items-center justify-between font-semibold">
@@ -210,11 +217,18 @@ function OrderCard({
           <div className="text-sm font-medium">{o.customerName}</div>
         </div>
         <div className="text-right text-xs">
-          <div className={late ? 'font-semibold text-red-600' : 'text-zinc-500'}>{mins} min</div>
+          {!o.held && <div className={late ? 'font-semibold text-red-600' : 'text-zinc-500'}>{mins} min</div>}
           <div className="mt-1 rounded bg-zinc-100 px-1.5 py-0.5 font-medium">{o.type === 'DELIVERY' ? `Entrega · ${o.deliveryZoneName}` : o.type === 'DINE_IN' ? `Salão${o.waiterName ? ` · ${o.waiterName}` : ''}` : 'Retirada'}</div>
           {o.status !== 'PAID' && o.status !== 'IN_PREPARATION' && <div className="mt-1 text-sky-700">{ORDER_STATUS_LABELS[o.status]}</div>}
         </div>
       </header>
+
+      {o.scheduledFor && (
+        <div className={`mt-2 rounded-lg px-2 py-1.5 text-xs ${o.held ? 'bg-violet-50 text-violet-900' : 'bg-violet-600 font-semibold text-white'}`}>
+          🗓️ Agendado: {o.type === 'PICKUP' ? 'retirada' : 'entrega'} {scheduleText(o.scheduledFor)}
+          {o.held && o.releaseAt && <> · vai para a cozinha às {new Date(o.releaseAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })}</>}
+        </div>
+      )}
 
       {o.deliveryIssue && o.status === 'READY' && (
         <div className="mt-2 rounded-lg bg-red-50 px-2 py-1.5 text-xs text-red-800">
@@ -243,8 +257,8 @@ function OrderCard({
 
       <div className="mt-2 flex flex-wrap gap-2">
         {action && (
-          <button className="btn-primary flex-1 py-1.5" onClick={() => onMove(action.to)}>
-            {action.label}
+          <button className={`${o.held ? 'btn-ghost' : 'btn-primary'} flex-1 py-1.5`} onClick={() => onMove(action.to)}>
+            {o.held ? 'Começar agora' : action.label}
           </button>
         )}
         {awaitingCourier && (

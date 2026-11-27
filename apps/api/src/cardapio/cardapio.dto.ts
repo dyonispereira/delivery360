@@ -27,6 +27,7 @@ export const PAYMENT_METHODS = ['PIX', 'CREDIT_CARD', 'CASH_ON_DELIVERY', 'CARD_
 const PDV = /^[A-Za-z0-9._-]{0,40}$/;
 const PDV_MSG = { message: 'Código PDV: use até 40 letras, números, ponto, hífen ou sublinhado.' };
 const MAX_CENTS = 10_000_000; // R$ 100 mil
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export class UpdateStoreDto {
   @IsOptional() @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, { message: 'Link da loja: use só letras minúsculas, números e hífen (ex.: pizzaria-do-ze).' }) @MinLength(3, { message: 'Link da loja: use pelo menos 3 caracteres.' }) @MaxLength(60, { message: 'Link da loja: use no máximo 60 caracteres.' })
@@ -43,6 +44,14 @@ export class UpdateStoreDto {
   @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) minOrderCents?: number;
   @IsOptional() @IsArray() @IsIn(PAYMENT_METHODS, { each: true }) paymentMethods?: (typeof PAYMENT_METHODS)[number][];
   @IsOptional() @IsInt() @Min(5) @Max(240) estimatedMinutes?: number;
+  // Pedido agendado
+  @IsOptional() @IsBoolean() schedulingEnabled?: boolean;
+  @IsOptional() @Matches(HHMM, { message: 'Horário: use HH:MM (ex.: 18:00).' }) scheduleOpensAt?: string;
+  @IsOptional() @Matches(HHMM, { message: 'Horário: use HH:MM (ex.: 23:00).' }) scheduleClosesAt?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(7) @IsInt({ each: true }) @Min(0, { each: true }) @Max(6, { each: true }) scheduleWeekdays?: number[];
+  @IsOptional() @IsInt() @Min(0) @Max(48 * 60) scheduleLeadMinutes?: number;
+  @IsOptional() @IsInt() @Min(0, { message: 'Dias à frente: de 0 a 30.' }) @Max(30, { message: 'Dias à frente: de 0 a 30.' }) scheduleMaxDays?: number;
+  @IsOptional() @IsIn([15, 20, 30, 60], { message: 'Intervalo: 15, 20, 30 ou 60 minutos.' }) scheduleSlotMinutes?: number;
 }
 
 export class ZoneDto {
@@ -183,6 +192,8 @@ export class CreateOrderDto {
   @IsOptional() @IsString() @MaxLength(100) utmSource?: string;
   @IsOptional() @IsString() @MaxLength(100) utmCampaign?: string;
   @IsOptional() @IsString() @MaxLength(40) couponCode?: string;
+  /** Pedido agendado: horário escolhido (ISO). Vazio = o quanto antes. */
+  @IsOptional() @IsISO8601() scheduledFor?: string;
   /** Prêmio da fidelidade trocado por pontos. */
   @IsOptional() @IsUUID() rewardId?: string;
   /** Indique e Ganhe: código de quem indicou (vem do link ?indicacao=). */
@@ -199,6 +210,7 @@ export class QuoteOrderDto {
   @IsOptional() @IsString() @MaxLength(40) couponCode?: string;
   @IsOptional() @IsUUID() rewardId?: string;
   @IsOptional() @IsString() @MaxLength(20) referralCode?: string;
+  @IsOptional() @IsISO8601() scheduledFor?: string;
 }
 
 export class UpdateOrderStatusDto {

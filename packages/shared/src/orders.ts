@@ -89,6 +89,8 @@ export interface PublicStore {
     /** O Pix desta loja pede CPF (exigência do Asaas). */
     pixNeedsDocument?: boolean;
     estimatedMinutes: number;
+    /** Pedido agendado: dias e horários (ISO) que o cliente pode escolher agora. null = loja não agenda. */
+    schedule?: { days: { date: string; label: string; slots: string[] }[] } | null;
     /** Nota média das avaliações (null com menos de 3 avaliações). */
     rating: { average: number; count: number } | null;
   };
@@ -204,6 +206,8 @@ export interface OrderTracking {
   status: OrderStatus;
   type: OrderType;
   createdAt: string;
+  /** Pedido agendado: quando o cliente quer receber/retirar. */
+  scheduledFor?: string | null;
   customerName: string;
   address: { street: string; number: string; complement: string | null; zone: string } | null;
   items: {
