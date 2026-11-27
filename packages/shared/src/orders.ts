@@ -115,6 +115,8 @@ export interface PublicBanner {
   label: string | null;
   /** true = divulgação da Delivery360 em todas as lojas. */
   network: boolean;
+  /** A arte já tem o texto: mostrar a imagem inteira, sem título por cima. */
+  fullArt?: boolean;
 }
 
 export interface PublicOffer {

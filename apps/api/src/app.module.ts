@@ -1,3 +1,4 @@
+import { UploadsModule } from './uploads/uploads.module';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -28,6 +29,7 @@ import { TenantModule } from './tenant/tenant.module';
     BusinessModulesModule,
     PaymentsModule,
     WhatsappModule,
+    UploadsModule,
     CardapioModule,
     EntregasModule,
     GestaoModule,

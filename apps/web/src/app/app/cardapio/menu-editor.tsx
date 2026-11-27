@@ -7,6 +7,7 @@ import { ComboEditor } from './combo-editor';
 import { Badge, ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { Category, Group, Product } from './types';
+import { ImageField } from '@/components/image-field';
 
 const toMoney = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
 /** ISO → valor do campo datetime-local (hora local). */
@@ -378,8 +379,8 @@ function ProductEditor({
           </div>
         )}
         <div>
-          <label className="label">Foto (link da imagem)</label>
-          <input className="input" disabled={!canEdit} placeholder="https://..." value={form.imageUrl} onChange={(e) => setForm({ ...form, imageUrl: e.target.value })} />
+          <label className="label">Foto do produto</label>
+          <ImageField value={form.imageUrl} disabled={!canEdit} onChange={(imageUrl) => setForm({ ...form, imageUrl })} hint="Foto quadrada fica melhor. JPG, PNG ou WebP." />
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" disabled={!canEdit} checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />

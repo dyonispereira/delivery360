@@ -384,6 +384,8 @@ export class CampaignDto {
   @IsOptional() @IsISO8601() endsAt?: string | null;
   @IsOptional() @IsBoolean() active?: boolean;
   @IsOptional() @IsInt() @Min(0) @Max(1000) position?: number;
+  /** A arte já tem o texto: a loja mostra a imagem inteira, sem título por cima. */
+  @IsOptional() @IsBoolean() fullArt?: boolean;
   /** Sem código = só banner. */
   @IsOptional() @IsString() @Matches(COUPON_CODE, { message: 'Código: de 3 a 20 letras ou números, sem espaços.' }) couponCode?: string | null;
   @IsOptional() @IsIn(['PERCENT', 'FIXED', 'FREE_DELIVERY']) type?: 'PERCENT' | 'FIXED' | 'FREE_DELIVERY';

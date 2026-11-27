@@ -6,7 +6,7 @@ import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pizzaSVG, longPizzaSVG, woodBG, flour, garnish, svgDoc, bottleSVG, juiceSVG, logoSVG, flame, BRAND, studioPizza, petBottle, drinkCard, perksBanner } from './art.mjs';
+import { pizzaSVG, longPizzaSVG, woodBG, flour, garnish, svgDoc, bottleSVG, juiceSVG, logoSVG, flame, BRAND, studioPizza, petBottle, drinkCard } from './art.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
@@ -175,18 +175,12 @@ jobs.push(['combo-familia.webp', 1000, 1000, comboArt]);
 /* Bebidas no padrão "faixa colorida + garrafa": rótulos genéricos, sem marca de fabricante. */
 const PET = {
   cola: { liquid: '#3A1A0E', liquidDark: '#140804', cap: '#C8102E', label: '#D21F2B', labelDark: '#8E0F18', text: 'COLA', sub: 'REFRIGERANTE' },
-  'cola-zero': { liquid: '#3A1A0E', liquidDark: '#140804', cap: '#111', label: '#1B1B1B', labelDark: '#000', text: 'COLA', sub: 'ZERO AÇÚCAR', size: '1,5L', textColor: '#F24B3E' },
   guarana: { liquid: '#B8661A', liquidDark: '#6E3608', cap: '#1F6B3A', label: '#1E4D33', labelDark: '#0F2A1B', text: 'GUARANÁ', sub: 'REFRIGERANTE', textColor: '#F6D35B' },
-  'guarana-zero': { liquid: '#B8661A', liquidDark: '#6E3608', cap: '#123B26', label: '#123B26', labelDark: '#071A10', text: 'GUARANÁ', sub: 'ZERO AÇÚCAR', textColor: '#8EE07A' },
-  limao: { liquid: '#D9F0C4', liquidDark: '#A6CF84', cap: '#2E8B3E', label: '#2E7D3A', labelDark: '#174A20', text: 'LIMÃO', sub: 'SODA LIMONADA', textColor: '#FFF6B0' },
   agua: { liquid: '#E9F4F8', liquidDark: '#C9E2EC', cap: '#1F7BC0', label: '#2B8BD0', labelDark: '#155A8C', text: 'ÁGUA', sub: 'MINERAL SEM GÁS', size: '500ml', clear: true },
 };
 const DRINKS = [
   ['bebida-cola', 'REFRIGERANTE\nCOLA', '2L', '#D21F2B', '#14110F', 'cola'],
-  ['bebida-cola-zero', 'COLA SEM\nAÇÚCAR', '1,5L', '#14110F', '#14110F', 'cola-zero'],
   ['bebida-guarana', 'GUARANÁ', '2L', '#1E5C3B', '#123B26', 'guarana'],
-  ['bebida-guarana-zero', 'GUARANÁ\nZERO', '2L', '#1E5C3B', '#123B26', 'guarana-zero'],
-  ['bebida-limao', 'SODA', '2L', '#46B04A', '#14110F', 'limao'],
   ['bebida-agua', 'ÁGUA\nMINERAL', '500ml', '#2B8BD0', '#155A8C', 'agua'],
 ];
 for (const [file, name, size, band, bandDark, kind] of DRINKS) {
@@ -195,16 +189,7 @@ for (const [file, name, size, band, bandDark, kind] of DRINKS) {
   jobs.push([`${file}.webp`, 1000, 1000, () => drinkCard('d', { band, bandDark, name, size, bottle: (id, x, y) => petBottle(id, { size, ...cfg }, x, y, s) })]);
 }
 jobs.push(['bebida-laranja.webp', 1000, 1000, () => drinkCard('d', { band: '#F28C18', bandDark: '#B55E05', name: 'SUCO DE\nLARANJA', size: '500ml', bottle: (id, x, y) => juiceSVG(id, x - 20, y + 90, 1.55) })]);
-const PERKS = [
-  ['cupom', 'CUPONS DE DESCONTO'],
-  ['combo', 'COMBOS ESPECIAIS'],
-  ['pix', 'PAGUE COM PIX OU CARTÃO'],
-  ['whats', 'ACOMPANHE NO WHATSAPP'],
-  ['moto', 'FRETE GRÁTIS ACIMA DE R$ 80'],
-];
-// Faixa larga (topo do cardápio) e versão 16:7 para o carrossel de banners da loja.
-jobs.push(['faixa-vantagens.webp', 2000, 430, () => perksBanner('k', PERKS)]);
-jobs.push(['banner-vantagens.webp', 1600, 700, () => perksBanner('k', [PERKS[0], PERKS[2], PERKS[3]], 1600, 700)]);
+// As fotos reais da loja modelo (foto-*.webp e faixa-vantagens.webp) vêm do restaurante e não são geradas aqui.
 jobs.push(['logo.png', 512, 512, () => logoSVG(512)]);
 // Logo da Pizzaria Demo (loja de teste), no mesmo estilo.
 jobs.push(['logo-demo.png', 512, 512, () => logoSVG(512, 'Demo', 260)]);

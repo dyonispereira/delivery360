@@ -250,26 +250,60 @@ export async function seedShowcase(prisma: PrismaClient) {
  * para a loja que já existe no site de teste também ganhar.
  */
 async function addExtras(prisma: PrismaClient, tenantId: string) {
+  // Fotos reais enviadas pelo restaurante: duas pizzas e três bebidas.
+  const trad = await prisma.menuCategory.findFirst({ where: { tenantId, name: '🍕 Pizzas tradicionais' } });
+  if (trad) {
+    const pizzas: [string, string, number, string, number, string][] = [
+      ['Calabresa com Cheddar', 'Calabresa moída, mussarela, cheddar cremoso e azeitona verde.', 6490, 'foto-pizza-calabresa-cheddar', 1850, 'PZ-T8'],
+      ['Presunto', 'Molho de tomate, mussarela e fatias de presunto gratinadas.', 5790, 'foto-pizza-presunto', 1600, 'PZ-T9'],
+    ];
+    for (const [i, [name, description, priceCents, image, cost, pdvCode]] of pizzas.entries()) {
+      if (await prisma.product.findFirst({ where: { tenantId, pdvCode } })) continue;
+      // Mesmas opções das outras pizzas tradicionais (borda e adicionais), copiadas da Calabresa.
+      const model = await prisma.product.findFirst({ where: { tenantId, pdvCode: 'PZ-T1' }, include: { optionGroups: { include: { options: true } } } });
+      const p = await prisma.product.create({
+        data: {
+          tenantId, categoryId: trad.id, name, description, priceCents, position: 10 + i, imageUrl: `${IMG}/${image}.webp`, pdvCode,
+          costItems: [
+            { name: 'Massa de fermentação natural', kind: 'INGREDIENT', costCents: 380 },
+            { name: 'Molho e coberturas', kind: 'INGREDIENT', costCents: cost - 660 },
+            { name: 'Caixa de pizza', kind: 'PACKAGING', costCents: 280 },
+          ],
+          channelPrices: { IFOOD: Math.ceil((priceCents * 1.15) / 100) * 100 - 10 },
+        },
+      });
+      for (const g of model?.optionGroups ?? []) {
+        await prisma.optionGroup.create({
+          data: {
+            tenantId, productId: p.id, name: g.name, minSelect: g.minSelect, maxSelect: g.maxSelect, position: g.position,
+            options: { create: g.options.map((o) => ({ tenantId, name: o.name, priceCents: o.priceCents, costCents: o.costCents, position: o.position })) },
+          },
+        });
+      }
+    }
+  }
   const bebidas = await prisma.menuCategory.findFirst({ where: { tenantId, name: '🥤 Bebidas' } });
   if (bebidas) {
     const extra: [string, string, number, string, number, string][] = [
-      ['Cola sem açúcar 1,5L', 'Gelada.', 1200, 'bebida-cola-zero', 560, 'BB-5'],
-      ['Guaraná Zero 2L', 'Gelado.', 1400, 'bebida-guarana-zero', 650, 'BB-6'],
-      ['Soda Limão 2L', 'Gelada.', 1400, 'bebida-limao', 650, 'BB-7'],
+      ['Coca-Cola sem açúcar 1,5L', 'Gelada.', 1200, 'foto-coca-zero', 560, 'BB-5'],
+      ['Guaraná Antarctica Zero 2L', 'Gelado.', 1400, 'foto-guarana-zero', 650, 'BB-6'],
+      ['Soda Limonada Antarctica 2L', 'Gelada.', 1400, 'foto-soda-limonada', 650, 'BB-7'],
     ];
     for (const [i, [name, description, priceCents, image, cost, pdvCode]] of extra.entries()) {
-      if (await prisma.product.findFirst({ where: { tenantId, pdvCode } })) continue;
-      await prisma.product.create({
-        data: { tenantId, categoryId: bebidas.id, name, description, priceCents, position: 4 + i, imageUrl: `${IMG}/${image}.webp`, pdvCode, costItems: [{ name, kind: 'INGREDIENT', costCents: cost }] },
-      });
+      const data = { name, description, priceCents, imageUrl: `${IMG}/${image}.webp`, costItems: [{ name, kind: 'INGREDIENT', costCents: cost }] };
+      const found = await prisma.product.findFirst({ where: { tenantId, pdvCode } });
+      if (found) {
+        if (found.imageUrl !== data.imageUrl) await prisma.product.update({ where: { id: found.id }, data });
+        continue;
+      }
+      await prisma.product.create({ data: { tenantId, categoryId: bebidas.id, position: 4 + i, pdvCode, ...data } });
     }
   }
-  const banner = `${IMG}/banner-vantagens.webp`;
-  if (!(await prisma.campaign.findFirst({ where: { imageUrl: banner } }))) {
-    await prisma.campaign.create({
-      data: { title: 'Vantagens de pedir pelo site', subtitle: 'Cupons, Pix ou cartão e aviso no WhatsApp a cada etapa', imageUrl: banner, tenantIds: [tenantId], position: 99 },
-    });
-  }
+  // Faixa "vantagens exclusivas" do restaurante: a arte já tem o texto, então a loja mostra a imagem inteira.
+  const faixa = { title: 'Vantagens de pedir pelo site', subtitle: null, imageUrl: `${IMG}/faixa-vantagens.webp`, fullArt: true };
+  const banner = await prisma.campaign.findFirst({ where: { title: faixa.title, tenantIds: { has: tenantId } } });
+  if (!banner) await prisma.campaign.create({ data: { ...faixa, tenantIds: [tenantId], position: 99 } });
+  else if (!banner.fullArt) await prisma.campaign.update({ where: { id: banner.id }, data: faixa });
 }
 
 async function topUpOrders(prisma: PrismaClient, tenantId: string) {

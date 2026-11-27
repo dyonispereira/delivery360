@@ -5,6 +5,7 @@ import { PAYMENT_METHOD_LABELS, formatBRL, parseBRL, type PaymentMethod } from '
 import { ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { Store } from './types';
+import { ImageField } from '@/components/image-field';
 
 const METHODS: PaymentMethod[] = ['PIX', 'CASH_ON_DELIVERY', 'CARD_ON_DELIVERY'];
 
@@ -109,12 +110,12 @@ export function StoreSettings({ canEdit }: { canEdit: boolean }) {
             <input className="input" disabled={!canEdit} value={form.whatsapp ?? ''} onChange={(e) => set('whatsapp', e.target.value)} placeholder="11987654321" />
           </div>
           <div>
-            <label className="label">Logo (link da imagem)</label>
-            <input className="input" disabled={!canEdit} value={form.logoUrl ?? ''} onChange={(e) => set('logoUrl', e.target.value)} placeholder="https://..." />
+            <label className="label">Logo</label>
+            <ImageField value={form.logoUrl ?? ''} disabled={!canEdit} onChange={(v) => set('logoUrl', v)} max={800} hint="Quadrado, de preferência com fundo." />
           </div>
           <div>
-            <label className="label">Foto de capa (link da imagem)</label>
-            <input className="input" disabled={!canEdit} value={form.coverUrl ?? ''} onChange={(e) => set('coverUrl', e.target.value)} placeholder="https://... (horizontal, 1200 × 400)" />
+            <label className="label">Foto de capa</label>
+            <ImageField value={form.coverUrl ?? ''} disabled={!canEdit} onChange={(v) => set('coverUrl', v)} aspect="aspect-[3/1]" max={2000} hint="Horizontal, cerca de 1200 × 400." />
           </div>
           <div>
             <label className="label">Pedido mínimo (R$)</label>

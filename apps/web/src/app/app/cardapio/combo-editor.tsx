@@ -6,6 +6,7 @@ import { ErrorBox } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { RatesInfo } from './cost-sheet';
 import type { Category, Product } from './types';
+import { ImageField } from '@/components/image-field';
 
 const toMoney = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
 
@@ -184,8 +185,8 @@ export function ComboEditor({
             </select>
           </div>
           <div>
-            <label className="label" htmlFor="combo-img">Foto (link)</label>
-            <input id="combo-img" className="input" placeholder="https://..." value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
+            <label className="label" htmlFor="combo-img">Foto do combo</label>
+            <ImageField id="combo-img" value={imageUrl} onChange={setImageUrl} />
           </div>
         </div>
 
