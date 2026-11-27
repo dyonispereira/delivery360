@@ -50,6 +50,7 @@ model Tenant {
 
   store            Store?
   paymentAccount   PaymentAccount?
+  whatsappAccount  WhatsappAccount?
   deliveryZones    DeliveryZone[]
   menuCategories   MenuCategory[]
   products         Product[]
@@ -291,39 +292,39 @@ model MenuCategory {
 }
 
 model Product {
-  id            String        @id @default(uuid()) @db.Uuid
-  tenantId      String        @map("tenant_id") @db.Uuid
-  categoryId    String        @map("category_id") @db.Uuid
-  name          String
-  description   String?
-  priceCents    Int           @map("price_cents")
-  imageUrl      String?       @map("image_url")
-  position      Int           @default(0)
+  id              String        @id @default(uuid()) @db.Uuid
+  tenantId        String        @map("tenant_id") @db.Uuid
+  categoryId      String        @map("category_id") @db.Uuid
+  name            String
+  description     String?
+  priceCents      Int           @map("price_cents")
+  imageUrl        String?       @map("image_url")
+  position        Int           @default(0)
   /// Some da loja (ex.: fora do cardápio).
-  active        Boolean       @default(true)
+  active          Boolean       @default(true)
   /// Esgotado no momento: aparece, mas não pode ser pedido.
-  available     Boolean       @default(true)
+  available       Boolean       @default(true)
   /// Código PDV: o mesmo em todos os canais (loja, iFood, 99Food, Keeta) para reconhecer o item.
-  pdvCode       String?       @map("pdv_code")
+  pdvCode         String?       @map("pdv_code")
   /// Preço em cada app, em centavos ({ "IFOOD": 3290 }). Sem preço = mesmo da loja.
-  channelPrices Json          @default("{}") @map("channel_prices")
+  channelPrices   Json          @default("{}") @map("channel_prices")
   /// Ficha técnica: [{ name, kind: INGREDIENT|PACKAGING|OTHER, costCents }] por unidade.
-  costItems     Json          @default("[]") @map("cost_items")
+  costItems       Json          @default("[]") @map("cost_items")
   /// Outras despesas variáveis só deste produto (pontos-base, 100 = 1%).
-  extraCostBps  Int           @default(0) @map("extra_cost_bps")
+  extraCostBps    Int           @default(0) @map("extra_cost_bps")
   /// Preço de/por: preço promocional e período (vazio = sem promoção; sem datas = vale até tirar).
-  promoPriceCents Int?        @map("promo_price_cents")
-  promoStartsAt   DateTime?   @map("promo_starts_at")
-  promoEndsAt     DateTime?   @map("promo_ends_at")
+  promoPriceCents Int?          @map("promo_price_cents")
+  promoStartsAt   DateTime?     @map("promo_starts_at")
+  promoEndsAt     DateTime?     @map("promo_ends_at")
   /// Combo: as etapas são os grupos de opções e cada opção pode apontar para um produto do cardápio.
-  isCombo       Boolean       @default(false) @map("is_combo")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
-  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  category      MenuCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  optionGroups  OptionGroup[]
+  isCombo         Boolean       @default(false) @map("is_combo")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category        MenuCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  optionGroups    OptionGroup[]
   /// Opções de combos que apontam para este produto.
-  comboOptions  Option[]      @relation("ComboOptionProduct")
+  comboOptions    Option[]      @relation("ComboOptionProduct")
 
   @@unique([tenantId, pdvCode])
   @@index([tenantId, categoryId, position])
@@ -346,124 +347,123 @@ model OptionGroup {
 }
 
 model Option {
-  id         String      @id @default(uuid()) @db.Uuid
-  tenantId   String      @map("tenant_id") @db.Uuid
-  groupId    String      @map("group_id") @db.Uuid
-  name       String
-  priceCents Int         @default(0) @map("price_cents")
+  id              String      @id @default(uuid()) @db.Uuid
+  tenantId        String      @map("tenant_id") @db.Uuid
+  groupId         String      @map("group_id") @db.Uuid
+  name            String
+  priceCents      Int         @default(0) @map("price_cents")
   /// Custo do adicional (ex.: bacon extra R$ 1,50), soma no CMV da venda.
-  costCents  Int         @default(0) @map("cost_cents")
+  costCents       Int         @default(0) @map("cost_cents")
   /// Código PDV do adicional (pode repetir em produtos diferentes).
-  pdvCode    String?     @map("pdv_code")
-  available  Boolean     @default(true)
-  position   Int         @default(0)
+  pdvCode         String?     @map("pdv_code")
+  available       Boolean     @default(true)
+  position        Int         @default(0)
   /// No combo: o produto do cardápio que esta opção representa (segue a disponibilidade e o custo dele).
-  linkedProductId String?  @map("linked_product_id") @db.Uuid
-  linkedProduct   Product? @relation("ComboOptionProduct", fields: [linkedProductId], references: [id], onDelete: Cascade)
-  group      OptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  linkedProductId String?     @map("linked_product_id") @db.Uuid
+  linkedProduct   Product?    @relation("ComboOptionProduct", fields: [linkedProductId], references: [id], onDelete: Cascade)
+  group           OptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   @@index([linkedProductId])
-
   @@map("options")
 }
 
 /// Cliente final que pediu pela loja online (por restaurante, identificado pelo telefone).
 model Customer {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @map("tenant_id") @db.Uuid
-  name      String
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @map("tenant_id") @db.Uuid
+  name              String
   /// Só dígitos, com DDD (ex.: 11987654321).
-  phone     String
+  phone             String
   /// CPF ou CNPJ, só dígitos (o Asaas exige para gerar o Pix).
-  document  String?
+  document          String?
   /// Id do cliente na conta Asaas do restaurante (para não cadastrar de novo).
-  gatewayCustomerId String? @map("gateway_customer_id")
-  createdAt DateTime @default(now()) @map("created_at")
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  orders    Order[]
+  gatewayCustomerId String?  @map("gateway_customer_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders            Order[]
 
   @@unique([tenantId, phone])
   @@map("customers")
 }
 
 model Order {
-  id                String               @id @default(uuid()) @db.Uuid
-  tenantId          String               @map("tenant_id") @db.Uuid
+  id                    String               @id @default(uuid()) @db.Uuid
+  tenantId              String               @map("tenant_id") @db.Uuid
   /// Número curto por restaurante, para falar com o cliente e imprimir.
-  number            Int
+  number                Int
   /// Código secreto da página de acompanhamento (/pedido/<trackingCode>).
-  trackingCode      String               @unique @map("tracking_code")
-  customerId        String               @map("customer_id") @db.Uuid
-  type              OrderType
-  status            OrderStatus
-  customerName      String               @map("customer_name")
-  customerPhone     String               @map("customer_phone")
-  addressStreet     String?              @map("address_street")
-  addressNumber     String?              @map("address_number")
-  addressComplement String?              @map("address_complement")
-  addressReference  String?              @map("address_reference")
-  deliveryZoneId    String?              @map("delivery_zone_id") @db.Uuid
-  deliveryZoneName  String?              @map("delivery_zone_name")
-  notes             String?
-  subtotalCents     Int                  @map("subtotal_cents")
-  deliveryFeeCents  Int                  @map("delivery_fee_cents")
-  discountCents     Int                  @default(0) @map("discount_cents")
+  trackingCode          String               @unique @map("tracking_code")
+  customerId            String               @map("customer_id") @db.Uuid
+  type                  OrderType
+  status                OrderStatus
+  customerName          String               @map("customer_name")
+  customerPhone         String               @map("customer_phone")
+  addressStreet         String?              @map("address_street")
+  addressNumber         String?              @map("address_number")
+  addressComplement     String?              @map("address_complement")
+  addressReference      String?              @map("address_reference")
+  deliveryZoneId        String?              @map("delivery_zone_id") @db.Uuid
+  deliveryZoneName      String?              @map("delivery_zone_name")
+  notes                 String?
+  subtotalCents         Int                  @map("subtotal_cents")
+  deliveryFeeCents      Int                  @map("delivery_fee_cents")
+  discountCents         Int                  @default(0) @map("discount_cents")
   /// Cupom usado (loja própria). O desconto do cupom fica em discountCents.
-  couponId          String?              @map("coupon_id") @db.Uuid
-  couponCode        String?              @map("coupon_code")
+  couponId              String?              @map("coupon_id") @db.Uuid
+  couponCode            String?              @map("coupon_code")
   /// Quem pagou o desconto do cupom (congelado no pedido). RESTAURANT no cupom da loja; na campanha da rede, conforme a divisão.
-  couponFundedBy    CouponFunding?       @map("coupon_funded_by")
-  coupon            Coupon?              @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  couponFundedBy        CouponFunding?       @map("coupon_funded_by")
+  coupon                Coupon?              @relation(fields: [couponId], references: [id], onDelete: SetNull)
   /// Cupom de campanha da rede (o código fica em couponCode e o desconto inteiro em discountCents).
-  campaignId        String?              @map("campaign_id") @db.Uuid
-  campaign          Campaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignId            String?              @map("campaign_id") @db.Uuid
+  campaign              Campaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   /// Parte de discountCents bancada pela Delivery360 (campanha mista ou 100% nossa).
-  couponPlatformCents Int                @default(0) @map("coupon_platform_cents")
+  couponPlatformCents   Int                  @default(0) @map("coupon_platform_cents")
   /// Impulso Delivery360: desconto automático bancado pela Delivery360 (soma com o cupom do restaurante).
-  platformDiscountCents Int              @default(0) @map("platform_discount_cents")
-  platformCouponId  String?              @map("platform_coupon_id") @db.Uuid
-  platformCoupon    Coupon?              @relation("PlatformBoost", fields: [platformCouponId], references: [id], onDelete: SetNull)
+  platformDiscountCents Int                  @default(0) @map("platform_discount_cents")
+  platformCouponId      String?              @map("platform_coupon_id") @db.Uuid
+  platformCoupon        Coupon?              @relation("PlatformBoost", fields: [platformCouponId], references: [id], onDelete: SetNull)
   /// Quanto o cliente economizou com preço de/por (já fora do subtotal). Vai para "Descontos e cupons" no DRE.
-  promoDiscountCents Int                 @default(0) @map("promo_discount_cents")
-  totalCents        Int                  @map("total_cents")
-  paymentMethod     PaymentMethod        @map("payment_method")
+  promoDiscountCents    Int                  @default(0) @map("promo_discount_cents")
+  totalCents            Int                  @map("total_cents")
+  paymentMethod         PaymentMethod        @map("payment_method")
   /// De onde veio o pedido (loja própria ou app de delivery).
-  channel           SalesChannel         @default(LOJA)
+  channel               SalesChannel         @default(LOJA)
   /// Id do pedido no app de delivery (evita importar duas vezes).
-  externalId        String?              @map("external_id")
+  externalId            String?              @map("external_id")
   /// Número do pedido mostrado pelo app (ex.: "#4821" no iFood).
-  externalCode      String?              @map("external_code")
+  externalCode          String?              @map("external_code")
   /// Código de entrega informado pelo app (no lugar dos 4 últimos dígitos do telefone).
-  deliveryCode      String?              @map("delivery_code")
+  deliveryCode          String?              @map("delivery_code")
   /// Troco para quanto (dinheiro na entrega).
-  changeForCents    Int?                 @map("change_for_cents")
-  utmSource         String?              @map("utm_source")
-  utmCampaign       String?              @map("utm_campaign")
+  changeForCents        Int?                 @map("change_for_cents")
+  utmSource             String?              @map("utm_source")
+  utmCampaign           String?              @map("utm_campaign")
   /// Primeira impressão do pedido (evita imprimir de novo em outra tela).
-  printedAt         DateTime?            @map("printed_at")
+  printedAt             DateTime?            @map("printed_at")
   /// Lote de entrega (motoboy) em que o pedido saiu.
-  batchId           String?              @map("batch_id") @db.Uuid
-  batch             DeliveryBatch?       @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  deliveredAt       DateTime?            @map("delivered_at")
+  batchId               String?              @map("batch_id") @db.Uuid
+  batch                 DeliveryBatch?       @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  deliveredAt           DateTime?            @map("delivered_at")
   /// Tentativas erradas do código de 4 dígitos (trava em 5).
-  deliveryCodeFails Int                  @default(0) @map("delivery_code_fails")
+  deliveryCodeFails     Int                  @default(0) @map("delivery_code_fails")
   /// Última ocorrência ainda não resolvida (o motoboy não conseguiu entregar). Some quando o pedido sai de novo.
-  deliveryIssue     DeliveryFailReason?  @map("delivery_issue")
-  deliveryIssueAt   DateTime?            @map("delivery_issue_at")
+  deliveryIssue         DeliveryFailReason?  @map("delivery_issue")
+  deliveryIssueAt       DateTime?            @map("delivery_issue_at")
   /// Avaliação do cliente depois de receber (1 a 5 estrelas; 5 = excelente). Uma vez só.
-  ratingStore       Int?                 @map("rating_store")
-  ratingDelivery    Int?                 @map("rating_delivery")
-  ratingComment     String?              @map("rating_comment")
-  ratedAt           DateTime?            @map("rated_at")
-  createdAt         DateTime             @default(now()) @map("created_at")
-  updatedAt         DateTime             @updatedAt @map("updated_at")
-  tenant            Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer          Customer             @relation(fields: [customerId], references: [id])
-  items             OrderItem[]
-  statusHistory     OrderStatusHistory[]
-  payments          Payment[]
-  deliveryAttempts  DeliveryAttempt[]
-  tip               Tip?
+  ratingStore           Int?                 @map("rating_store")
+  ratingDelivery        Int?                 @map("rating_delivery")
+  ratingComment         String?              @map("rating_comment")
+  ratedAt               DateTime?            @map("rated_at")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
+  tenant                Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer              Customer             @relation(fields: [customerId], references: [id])
+  items                 OrderItem[]
+  statusHistory         OrderStatusHistory[]
+  payments              Payment[]
+  deliveryAttempts      DeliveryAttempt[]
+  tip                   Tip?
 
   @@unique([tenantId, number])
   @@unique([tenantId, channel, externalId])
@@ -477,20 +477,20 @@ model Order {
 
 /// Item do pedido com nome e preço copiados no momento da compra (o cardápio pode mudar depois).
 model OrderItem {
-  id             String            @id @default(uuid()) @db.Uuid
-  orderId        String            @map("order_id") @db.Uuid
-  productId      String?           @map("product_id") @db.Uuid
-  name           String
-  unitPriceCents Int               @map("unit_price_cents")
-  quantity       Int
-  notes          String?
-  totalCents     Int               @map("total_cents")
+  id                 String            @id @default(uuid()) @db.Uuid
+  orderId            String            @map("order_id") @db.Uuid
+  productId          String?           @map("product_id") @db.Uuid
+  name               String
+  unitPriceCents     Int               @map("unit_price_cents")
+  quantity           Int
+  notes              String?
+  totalCents         Int               @map("total_cents")
   /// Custo unitário pela ficha técnica no momento da venda (CMV teórico).
-  unitCostCents  Int               @default(0) @map("unit_cost_cents")
+  unitCostCents      Int               @default(0) @map("unit_cost_cents")
   /// Preço unitário sem a promoção (igual ao unitPriceCents quando não havia promoção).
-  listUnitPriceCents Int?          @map("list_unit_price_cents")
-  order          Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  options        OrderItemOption[]
+  listUnitPriceCents Int?              @map("list_unit_price_cents")
+  order              Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  options            OrderItemOption[]
 
   @@map("order_items")
 }
@@ -508,16 +508,19 @@ model OrderItemOption {
 }
 
 model OrderStatusHistory {
-  id        String      @id @default(uuid()) @db.Uuid
-  orderId   String      @map("order_id") @db.Uuid
-  status    OrderStatus
+  id         String      @id @default(uuid()) @db.Uuid
+  orderId    String      @map("order_id") @db.Uuid
+  status     OrderStatus
   /// null = sistema (ex.: webhook do pagamento).
-  userId    String?     @map("user_id") @db.Uuid
-  note      String?
-  createdAt DateTime    @default(now()) @map("created_at")
-  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId     String?     @map("user_id") @db.Uuid
+  note       String?
+  createdAt  DateTime    @default(now()) @map("created_at")
+  /// Quando o aviso deste status saiu (ou foi descartado) no WhatsApp do cliente.
+  notifiedAt DateTime?   @map("notified_at")
+  order      Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId, createdAt])
+  @@index([notifiedAt, createdAt])
   @@map("order_status_history")
 }
 
@@ -567,6 +570,24 @@ model PaymentAccount {
   tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@map("payment_accounts")
+}
+
+/// WhatsApp do próprio restaurante, conectado por QR Code (instância no servidor de WhatsApp).
+model WhatsappAccount {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @unique @map("tenant_id") @db.Uuid
+  instanceName  String    @unique @map("instance_name")
+  /// PENDING (esperando ler o QR), CONNECTED, DISCONNECTED.
+  status        String    @default("PENDING")
+  phone         String?
+  /// Mandar o status do pedido para o cliente.
+  notifyEnabled Boolean   @default(true) @map("notify_enabled")
+  connectedAt   DateTime? @map("connected_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_accounts")
 }
 
 // ---------- Entregas ----------
@@ -999,39 +1020,39 @@ enum CouponType {
 
 /// Cupom de desconto da loja própria.
 model Coupon {
-  id                 String     @id @default(uuid()) @db.Uuid
-  tenantId           String     @map("tenant_id") @db.Uuid
+  id                 String        @id @default(uuid()) @db.Uuid
+  tenantId           String        @map("tenant_id") @db.Uuid
   /// Sempre em maiúsculas, sem espaços (ex.: VOLTEI15).
   code               String
   description        String?
   type               CouponType
   /// PERCENT: pontos-base (1000 = 10%). FIXED: centavos. FREE_DELIVERY: 0.
-  value              Int        @default(0)
+  value              Int           @default(0)
   /// Teto do desconto (só no percentual).
-  maxDiscountCents   Int?       @map("max_discount_cents")
-  minOrderCents      Int        @default(0) @map("min_order_cents")
-  startsAt           DateTime?  @map("starts_at")
-  endsAt             DateTime?  @map("ends_at")
+  maxDiscountCents   Int?          @map("max_discount_cents")
+  minOrderCents      Int           @default(0) @map("min_order_cents")
+  startsAt           DateTime?     @map("starts_at")
+  endsAt             DateTime?     @map("ends_at")
   /// Dias da semana em que vale (0 = domingo). Vazio = todos.
-  weekdays           Int[]      @default([])
-  maxUses            Int?       @map("max_uses")
-  maxUsesPerCustomer Int?       @default(1) @map("max_uses_per_customer")
-  firstOrderOnly     Boolean    @default(false) @map("first_order_only")
+  weekdays           Int[]         @default([])
+  maxUses            Int?          @map("max_uses")
+  maxUsesPerCustomer Int?          @default(1) @map("max_uses_per_customer")
+  firstOrderOnly     Boolean       @default(false) @map("first_order_only")
   /// Vale também sobre produtos em preço de/por.
-  combinesWithPromo  Boolean    @default(false) @map("combines_with_promo")
+  combinesWithPromo  Boolean       @default(false) @map("combines_with_promo")
   /// Só vale para estes produtos ou combos (vazio = pedido inteiro).
-  productIds         String[]   @default([]) @map("product_ids")
+  productIds         String[]      @default([]) @map("product_ids")
   /// Quem paga o desconto. PLATFORM = impulso Delivery360: criado pela nossa equipe, entra sozinho
   /// (sem código) nos pedidos que se encaixam e soma com o cupom do restaurante. O restaurante
   /// recebe o valor da Delivery360 e não pode alterar o impulso.
   fundedBy           CouponFunding @default(RESTAURANT) @map("funded_by")
   /// Aparece na faixa de cupons da loja (falso = só quem tem o código).
-  public             Boolean    @default(false)
-  active             Boolean    @default(true)
-  createdAt          DateTime   @default(now()) @map("created_at")
-  tenant             Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  public             Boolean       @default(false)
+  active             Boolean       @default(true)
+  createdAt          DateTime      @default(now()) @map("created_at")
+  tenant             Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   orders             Order[]
-  boostedOrders      Order[]    @relation("PlatformBoost")
+  boostedOrders      Order[]       @relation("PlatformBoost")
 
   @@unique([tenantId, code])
   @@map("coupons")

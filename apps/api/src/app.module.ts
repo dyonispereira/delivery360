@@ -11,6 +11,7 @@ import { CardapioModule } from './cardapio/cardapio.module';
 import { EntregasModule } from './entregas/entregas.module';
 import { GestaoModule } from './gestao/gestao.module';
 import { PaymentsModule } from './payments/payments.module';
+import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { BusinessModulesModule } from './modules/business-modules.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { TenantModule } from './tenant/tenant.module';
@@ -26,6 +27,7 @@ import { TenantModule } from './tenant/tenant.module';
     TenantModule,
     BusinessModulesModule,
     PaymentsModule,
+    WhatsappModule,
     CardapioModule,
     EntregasModule,
     GestaoModule,
