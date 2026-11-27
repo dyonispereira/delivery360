@@ -1,10 +1,11 @@
 import { Controller, Get } from '@nestjs/common';
-import { CurrentTenant, TenantScoped } from '../access/access.decorators';
+import { CurrentTenant, TenantScoped, WaiterAllowed } from '../access/access.decorators';
 import type { TenantContext } from '../access/access.types';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Dados do restaurante atual (cabeçalho x-tenant-id), usados para montar o menu da web e dos apps. */
 @TenantScoped()
+@WaiterAllowed()
 @Controller('tenant')
 export class TenantController {
   constructor(private readonly prisma: PrismaService) {}

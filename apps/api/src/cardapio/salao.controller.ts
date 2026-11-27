@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Put } from '@nestjs/common';
-import { CurrentTenant, CurrentUser, RequireModule, TenantRoles } from '../access/access.decorators';
+import { CurrentTenant, CurrentUser, RequireModule, TenantRoles, WaiterAllowed } from '../access/access.decorators';
 import type { AuthUser, TenantContext } from '../access/access.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkTablesDto, CloseTabDto, ServiceFeeDto, TabPaymentDto, TableDto, TableOrderDto, UpdateTabDto, UpdateTableDto } from './cardapio.dto';
@@ -13,6 +13,7 @@ const UUID = new ParseUUIDPipe();
  * Cadastrar mesas e mudar a taxa de serviço: dono e gerente.
  */
 @RequireModule('cardapio')
+@WaiterAllowed()
 @Controller('cardapio/salao')
 export class SalaoController {
   constructor(
@@ -69,6 +70,12 @@ export class SalaoController {
     if (!store) throw new NotFoundException('Configure a loja em Cardápio e pedidos antes de usar o salão.');
     const menu = await this.orders.getPublicMenu(store.slug);
     return { categories: menu.categories, topProductIds: menu.topProductIds };
+  }
+
+  /** Pratos prontos na cozinha esperando o garçom levar, de todas as mesas (o mais antigo primeiro). */
+  @Get('ready')
+  ready(@CurrentTenant() t: TenantContext) {
+    return this.salao.readyRounds(t.tenantId);
   }
 
   @Get('tables/:id/tab')

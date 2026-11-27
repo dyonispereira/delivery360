@@ -202,6 +202,29 @@ export class SalaoService {
     return { orderId: order.id, number: order.number, tab: await this.tabDetail(tenantId, order.tabId!) };
   }
 
+  /** Rodadas prontas na cozinha, de todas as mesas abertas: o painel "prontos para servir" do garçom. */
+  async readyRounds(tenantId: string) {
+    const orders = await this.prisma.order.findMany({
+      where: { tenantId, type: 'DINE_IN', status: 'READY', tab: { status: 'OPEN' } },
+      orderBy: { updatedAt: 'asc' },
+      take: 50,
+      include: {
+        items: { select: { id: true, name: true, quantity: true, notes: true, options: { select: { name: true } } } },
+        statusHistory: { where: { status: 'READY' }, orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } },
+        tab: { select: { tableId: true } },
+      },
+    });
+    return orders.map((o) => ({
+      id: o.id,
+      number: o.number,
+      tableId: o.tab?.tableId ?? null,
+      tableName: o.tableName,
+      waiterName: o.waiterName,
+      readyAt: (o.statusHistory[0]?.createdAt ?? o.updatedAt).toISOString(),
+      items: o.items.map((i) => ({ id: i.id, name: i.name, quantity: i.quantity, notes: i.notes, options: i.options.map((x) => x.name) })),
+    }));
+  }
+
   /** O garçom levou à mesa: a rodada sai da tela (pronto → servido). */
   async markServed(tenantId: string, userId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({ where: { id: orderId, tenantId, type: 'DINE_IN' }, select: { status: true } });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   formatBRL,
   ORDER_STATUS_LABELS,
@@ -9,6 +9,7 @@ import {
   TAB_PAYMENT_METHODS,
   type PaymentMethod,
   type PublicProduct,
+  type ReadyRound,
   type SalaoTable,
   type TabDetail,
   type TabRound,
@@ -16,6 +17,7 @@ import {
 import { ErrorBox, Spinner } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useCurrentTenant } from '../tenant-context';
+import { playAlert, soundUnlocked, unlockSound } from '../pedidos/board';
 import { lineOptions, lineUnit, MenuPicker, type CartLine } from './menu-picker';
 import { TablesSetup } from './tables-setup';
 
@@ -33,7 +35,11 @@ const sinceLabel = (iso: string) => {
  */
 export default function SalaoPage() {
   const tenant = useCurrentTenant();
-  const canManage = tenant.role !== 'STAFF';
+  // Cadastro de mesas e taxa: dono, gerente e a nossa equipe (sem papel no restaurante).
+  const canManage = tenant.role === 'OWNER' || tenant.role === 'MANAGER' || tenant.role === null;
+  const [ready, setReady] = useState<ReadyRound[]>([]);
+  const seenReady = useRef<Set<string> | null>(null);
+  const [, force] = useState(0);
   const [view, setView] = useState<View>({ kind: 'tables' });
   const [tables, setTables] = useState<SalaoTable[] | null>(null);
   const [feeBps, setFeeBps] = useState(0);
@@ -42,7 +48,23 @@ export default function SalaoPage() {
 
   const loadTables = useCallback(async () => {
     try {
-      const res = await api<{ tables: SalaoTable[]; serviceFeeBps: number }>('/cardapio/salao/tables', { tenant: true });
+      const [res, readyNow] = await Promise.all([
+        api<{ tables: SalaoTable[]; serviceFeeBps: number }>('/cardapio/salao/tables', { tenant: true }),
+        api<ReadyRound[]>('/cardapio/salao/ready', { tenant: true }),
+      ]);
+      // Alerta: prato novo pronto na cozinha (som + vibração). Na primeira leitura não avisa.
+      const fresh = seenReady.current ? readyNow.filter((r) => !seenReady.current!.has(r.id)) : [];
+      seenReady.current = new Set(readyNow.map((r) => r.id));
+      if (fresh.length) {
+        playAlert();
+        try {
+          navigator.vibrate?.([200, 100, 200]);
+        } catch {
+          /* sem vibração */
+        }
+        setToast(fresh.length === 1 ? `🔔 Pronto para servir: ${fresh[0].tableName ?? 'mesa'} (#${fresh[0].number})` : `🔔 ${fresh.length} pedidos prontos para servir`);
+      }
+      setReady(readyNow);
       setTables(res.tables);
       setFeeBps(res.serviceFeeBps);
       setError(null);
@@ -53,7 +75,7 @@ export default function SalaoPage() {
 
   useEffect(() => {
     void loadTables();
-    const t = setInterval(loadTables, 10_000);
+    const t = setInterval(loadTables, 6_000);
     return () => clearInterval(t);
   }, [loadTables]);
 
@@ -81,6 +103,17 @@ export default function SalaoPage() {
       )}
       {view.kind === 'tables' && (
         <TablesGrid
+          ready={ready}
+          soundOn={soundUnlocked()}
+          onSound={() => void unlockSound().then(() => { playAlert(); force((n) => n + 1); })}
+          onServed={async (id) => {
+            try {
+              await api(`/cardapio/salao/orders/${id}/served`, { method: 'POST', tenant: true });
+            } catch (e) {
+              setError((e as Error).message);
+            }
+            await loadTables();
+          }}
           tables={tables}
           error={error}
           canManage={canManage}
@@ -127,6 +160,10 @@ export default function SalaoPage() {
 // ---------- Mesas ----------
 
 function TablesGrid({
+  ready,
+  soundOn,
+  onSound,
+  onServed,
   tables,
   error,
   canManage,
@@ -136,11 +173,15 @@ function TablesGrid({
   tables: SalaoTable[] | null;
   error: string | null;
   canManage: boolean;
+  ready: ReadyRound[];
+  soundOn: boolean;
+  onSound: () => void;
+  onServed: (orderId: string) => Promise<void>;
   onOpen: (t: SalaoTable) => void;
   onSetup: () => void;
 }) {
   const busy = tables?.filter((t) => t.tab) ?? [];
-  const ready = busy.reduce((s, t) => s + (t.tab?.readyCount ?? 0), 0);
+  const readyCount = ready.length;
   return (
     <>
       <div className="mb-5 flex flex-wrap items-end gap-3">
@@ -148,7 +189,7 @@ function TablesGrid({
           <h1 className="text-2xl font-bold">Salão</h1>
           <p className="text-sm text-zinc-500">
             {tables ? `${busy.length} de ${tables.length} mesas ocupadas` : 'Toque na mesa para lançar o pedido'}
-            {ready > 0 && <span className="ml-2 font-semibold text-emerald-700">· {ready} pronto{ready > 1 ? 's' : ''} para servir</span>}
+            {readyCount > 0 && <span className="ml-2 font-semibold text-emerald-700">· {readyCount} pronto{readyCount > 1 ? 's' : ''} para servir</span>}
           </p>
         </div>
         {canManage && (
@@ -157,6 +198,12 @@ function TablesGrid({
           </button>
         )}
       </div>
+      {!soundOn && (
+        <button className="mb-3 w-full rounded-xl bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900" onClick={onSound}>
+          🔔 Ativar som dos avisos de prato pronto
+        </button>
+      )}
+      <ReadyPanel ready={ready} onServed={onServed} />
       <ErrorBox message={error} />
       {!tables ? (
         <Spinner />
@@ -203,6 +250,54 @@ function TablesGrid({
         </div>
       )}
     </>
+  );
+}
+
+/** Painel "prontos para servir": o que a cozinha já deixou pronto, de todas as mesas. */
+function ReadyPanel({ ready, onServed }: { ready: ReadyRound[]; onServed: (orderId: string) => Promise<void> }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  return (
+    <section className={`mb-5 rounded-2xl border p-4 ${ready.length ? 'border-emerald-300 bg-emerald-50' : 'border-zinc-200 bg-white'}`}>
+      <h2 className="mb-2 flex items-center gap-2 font-bold">
+        Prontos para servir
+        <span className={`rounded-full px-2 py-0.5 text-xs ${ready.length ? 'bg-emerald-600 text-white' : 'bg-zinc-100 text-zinc-500'}`}>{ready.length}</span>
+      </h2>
+      {ready.length === 0 ? (
+        <p className="text-sm text-zinc-500">Nada esperando na cozinha. Quando um prato ficar pronto, aparece aqui com aviso.</p>
+      ) : (
+        <ul className="space-y-2">
+          {ready.map((r) => (
+            <li key={r.id} className="rounded-xl bg-white p-3 shadow-sm">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="text-lg font-black">{r.tableName}</span>
+                <span className="text-sm text-zinc-500">
+                  #{r.number} · pronto há {sinceLabel(r.readyAt)}
+                </span>
+              </div>
+              <ul className="mb-2 text-sm">
+                {r.items.map((i) => (
+                  <li key={i.id}>
+                    <b>{i.quantity}x</b> {i.name}
+                    {i.options.length > 0 && <span className="text-zinc-500"> ({i.options.join(', ')})</span>}
+                    {i.notes && <span className="font-medium text-amber-700"> · {i.notes}</span>}
+                  </li>
+                ))}
+              </ul>
+              <button
+                className="btn w-full bg-emerald-600 py-2.5 text-white"
+                disabled={busy === r.id}
+                onClick={() => {
+                  setBusy(r.id);
+                  void onServed(r.id).finally(() => setBusy(null));
+                }}
+              >
+                Levei à mesa
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
