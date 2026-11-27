@@ -537,6 +537,8 @@ model Payment {
   pixCopyPaste String?       @map("pix_copy_paste")
   /// QR Code do Pix em PNG (base64), quando o gateway manda a imagem.
   pixQrImage   String?       @map("pix_qr_image")
+  /// Cartão: página segura do gateway onde o cliente paga.
+  checkoutUrl  String?       @map("checkout_url")
   expiresAt    DateTime?     @map("expires_at")
   paidAt       DateTime?     @map("paid_at")
   createdAt    DateTime      @default(now()) @map("created_at")

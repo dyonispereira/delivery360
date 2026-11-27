@@ -957,7 +957,7 @@ function Checkout({
   const [number, setNumber] = useState(saved.number);
   const [complement, setComplement] = useState(saved.complement);
   const [doc, setDoc] = useState(saved.document ?? '');
-  const methods = store.paymentMethods.filter((m) => m !== 'CREDIT_CARD');
+  const methods = store.paymentMethods;
   const [method, setMethod] = useState<PaymentMethod | ''>(methods[0] ?? '');
   const [change, setChange] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -1046,8 +1046,8 @@ function Checkout({
       return setError('Preencha bairro, rua e número para a entrega.');
     }
     if (!method) return setError('Escolha a forma de pagamento.');
-    const needsDoc = method === 'PIX' && !!store.pixNeedsDocument;
-    if (needsDoc && ![11, 14].includes(doc.replace(/\D/g, '').length)) return setError('Informe seu CPF para pagar com Pix.');
+    const needsDoc = (method === 'PIX' || method === 'CREDIT_CARD') && !!store.pixNeedsDocument;
+    if (needsDoc && ![11, 14].includes(doc.replace(/\D/g, '').length)) return setError(`Informe seu CPF para pagar com ${method === 'PIX' ? 'Pix' : 'cartão'}.`);
     let changeForCents: number | undefined;
     if (method === 'CASH_ON_DELIVERY' && change.trim()) {
       const c = parseBRL(change);
@@ -1187,11 +1187,14 @@ function Checkout({
             ))}
           </div>
         </div>
-        {method === 'PIX' && store.pixNeedsDocument && (
+        {(method === 'PIX' || method === 'CREDIT_CARD') && store.pixNeedsDocument && (
           <div>
-            <label className="label" htmlFor="c-doc">CPF (o banco exige no Pix)</label>
+            <label className="label" htmlFor="c-doc">{method === 'PIX' ? 'CPF (o banco exige no Pix)' : 'CPF do titular do cartão'}</label>
             <input id="c-doc" className="input" inputMode="numeric" autoComplete="off" placeholder="000.000.000-00" value={doc} onChange={(e) => setDoc(e.target.value)} />
           </div>
+        )}
+        {method === 'CREDIT_CARD' && (
+          <p className="text-xs text-zinc-500">Depois de fazer o pedido, você digita o cartão na página segura do Asaas. A loja não vê os dados do cartão.</p>
         )}
         {method === 'CASH_ON_DELIVERY' && (
           <div>

@@ -17,7 +17,7 @@ interface AccountStatus {
 }
 
 /**
- * Pix pelo site com a conta Asaas do próprio restaurante: o dinheiro cai direto nela.
+ * Pix e cartão pelo site com a conta Asaas do próprio restaurante: o dinheiro cai direto nela.
  * Só o dono conecta (a chave da API dá acesso à conta dele).
  */
 export function PaymentAccount({ canConnect }: { canConnect: boolean }) {
@@ -55,10 +55,11 @@ export function PaymentAccount({ canConnect }: { canConnect: boolean }) {
     <div className="card max-w-3xl space-y-4">
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex-1">
-          <h2 className="font-semibold">Pagamento online (Pix)</h2>
+          <h2 className="font-semibold">Pagamento online (Pix e cartão)</h2>
           <p className="text-sm text-zinc-500">
-            O cliente paga o Pix na hora, pelo QR Code ou copia e cola, e o pedido entra sozinho quando o banco confirma. O dinheiro cai direto na sua conta
-            Asaas, e a taxa do Asaas entra no financeiro em 2.3.
+            O cliente paga o Pix pelo QR Code ou copia e cola, ou o cartão de crédito na página segura do Asaas. O pedido entra sozinho quando o pagamento
+            é confirmado. O dinheiro cai direto na sua conta Asaas, e a taxa do Asaas entra no financeiro em 2.3. Para oferecer cartão, marque também
+            &quot;Cartão de crédito (online)&quot; nas formas de pagamento da loja.
           </p>
         </div>
         {status.connected ? (
@@ -89,7 +90,7 @@ export function PaymentAccount({ canConnect }: { canConnect: boolean }) {
         <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
           {status.testPixAvailable
             ? 'Sem conta conectada, a loja usa um Pix de teste, que não recebe dinheiro de verdade.'
-            : 'Sem conta conectada, a loja não oferece Pix pelo site, só pagamento na entrega.'}
+            : 'Sem conta conectada, a loja não oferece Pix nem cartão pelo site, só pagamento na entrega.'}
         </p>
       )}
 
@@ -151,7 +152,7 @@ export function PaymentAccount({ canConnect }: { canConnect: boolean }) {
             className="text-red-600"
             disabled={busy}
             onClick={() => {
-              if (window.confirm('Desconectar o Asaas? A loja deixa de receber Pix pelo site até você conectar de novo.')) {
+              if (window.confirm('Desconectar o Asaas? A loja deixa de receber Pix e cartão pelo site até você conectar de novo.')) {
                 void run(() => api<AccountStatus>('/cardapio/payments/account', { method: 'DELETE', tenant: true }));
               }
             }}

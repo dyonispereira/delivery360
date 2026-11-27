@@ -65,6 +65,7 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
   const steps = order.type === 'DELIVERY' ? DELIVERY_STEPS : PICKUP_STEPS;
   const current = steps.indexOf(order.status);
   const pix = order.paymentMethod === 'PIX' && order.payment;
+  const card = order.paymentMethod === 'CREDIT_CARD' && order.payment;
   const expired = order.payment?.status === 'EXPIRED';
 
   return (
@@ -162,6 +163,29 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
             {copied ? 'Copiado!' : 'Copiar código PIX'}
           </button>
           <p className="text-xs text-zinc-500">Esta página atualiza sozinha quando o pagamento for confirmado.</p>
+          {order.payment?.canSimulate && (
+            <button className="btn-ghost w-full" disabled={simulating} onClick={simulate}>
+              {simulating ? 'Confirmando...' : 'Simular pagamento (ambiente de teste)'}
+            </button>
+          )}
+        </section>
+      )}
+
+      {card && order.status === 'AWAITING_PAYMENT' && (
+        <section className="card space-y-3">
+          <h2 className="font-semibold">Pague com cartão para confirmar</h2>
+          <p className="text-sm text-zinc-600">
+            Você paga na página segura do Asaas, que recebe pela loja. A loja não vê os dados do seu cartão.
+            {order.payment?.expiresAt && (
+              <> O pagamento fica aberto até {new Date(order.payment.expiresAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</>
+            )}
+          </p>
+          {order.payment?.checkoutUrl && (
+            <a className="btn-primary block w-full text-center" href={order.payment.checkoutUrl} target="_blank" rel="noopener noreferrer">
+              Pagar com cartão
+            </a>
+          )}
+          <p className="text-xs text-zinc-500">Depois de pagar, volte aqui: esta página atualiza sozinha quando o pagamento for confirmado.</p>
           {order.payment?.canSimulate && (
             <button className="btn-ghost w-full" disabled={simulating} onClick={simulate}>
               {simulating ? 'Confirmando...' : 'Simular pagamento (ambiente de teste)'}

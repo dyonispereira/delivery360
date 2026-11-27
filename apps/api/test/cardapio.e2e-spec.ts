@@ -645,6 +645,89 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     delete process.env.PUBLIC_API_URL;
   });
 
+  it('cartão online: só aparece com o cartão ligado na loja; com o Asaas o cliente paga na página segura e o webhook confirma', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { PaymentAccountsService } = require('../src/payments/payment-accounts.service');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { OrdersService } = require('../src/cardapio/orders.service');
+    process.env.PUBLIC_API_URL = 'https://loja.delivery360.test/api';
+
+    // Cartão desligado na loja: não aparece e o pedido é recusado.
+    expect((await http().get(`/public/stores/${slug}`)).body.store.paymentMethods).not.toContain('CREDIT_CARD');
+    expect((await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CREDIT_CARD' }))).status).toBe(400);
+    await owner().put('/cardapio/store').send({ paymentMethods: ['PIX', 'CREDIT_CARD', 'CASH_ON_DELIVERY'] });
+    expect((await http().get(`/public/stores/${slug}`)).body.store.paymentMethods).toContain('CREDIT_CARD');
+
+    // Sem conta conectada: cartão de teste, pago pelo "simular pagamento".
+    const test = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CREDIT_CARD' }));
+    expect(test.status).toBe(201);
+    expect(test.body).toMatchObject({ status: 'AWAITING_PAYMENT', paymentMethod: 'CREDIT_CARD', payment: { status: 'PENDING', pixCopyPaste: null, checkoutUrl: null, canSimulate: true } });
+    expect((await http().post(`/public/orders/${test.body.trackingCode}/simulate-payment`)).body.status).toBe('PAID');
+
+    const calls: { method: string; path: string; body?: Record<string, unknown> }[] = [];
+    let n = 100;
+    app.get(PaymentAccountsService).fetchImpl = async (url: string, init: { method: string; body?: string }) => {
+      const path = url.replace(/^https:\/\/[^/]+\/v3/, '');
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      calls.push({ method: init.method, path, body });
+      const reply = (status: number, json: unknown) => ({ ok: status < 300, status, text: async () => JSON.stringify(json) });
+      if (path === '/myAccount/commercialInfo/') return reply(200, { tradingName: 'Bella' });
+      if (init.method === 'POST' && path === '/webhooks') return reply(200, { id: `wh_${++n}` });
+      if (init.method === 'DELETE') return reply(200, { deleted: true });
+      if (path.startsWith('/customers?')) return reply(200, { data: [{ id: 'cus_card' }] });
+      if (init.method === 'POST' && path === '/payments') {
+        const id = `pay_${++n}`;
+        return reply(200, { id, status: 'PENDING', value: body.value, billingType: body.billingType, invoiceUrl: `https://sandbox.asaas.com/i/${id}` });
+      }
+      return reply(404, { errors: [{ description: 'rota desconhecida' }] });
+    };
+    await owner().put('/cardapio/payments/account/asaas').send({ apiKey: '$aact_cartao_000000000000000000000000', sandbox: true });
+    const stored = await prisma.paymentAccount.findUniqueOrThrow({ where: { tenantId } });
+
+    const noDoc = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CREDIT_CARD' }));
+    expect(noDoc.status).toBe(400);
+    expect(noDoc.body.message).toContain('CPF válido para pagar com cartão');
+    const order = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CREDIT_CARD', customer: { name: 'Rui', phone: '(11) 96666-0000', document: '52998224725' } }));
+    expect(order.status).toBe(201);
+    const pay = await prisma.payment.findFirstOrThrow({ where: { order: { trackingCode: order.body.trackingCode } } });
+    expect(order.body.payment).toMatchObject({ status: 'PENDING', pixCopyPaste: null, checkoutUrl: `https://sandbox.asaas.com/i/${pay.externalId}`, canSimulate: false });
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/payments')!.body).toMatchObject({ billingType: 'CREDIT_CARD', customer: 'cus_card' });
+    expect(calls.some((c) => c.path.endsWith('/pixQrCode'))).toBe(false);
+    expect(pay.expiresAt!.getTime() - Date.now()).toBeGreaterThan(29 * 60_000);
+    // Ainda não pago: não aparece para a cozinha.
+    expect((await owner().get('/cardapio/orders')).body.some((o: { trackingCode: string }) => o.trackingCode === order.body.trackingCode)).toBe(false);
+
+    // Cartão aprovado (PAYMENT_CONFIRMED) e depois o dinheiro cai (PAYMENT_RECEIVED): entra uma vez só, com a taxa.
+    const hookUrl = `/public/webhooks/asaas/${tenantId}`;
+    const total = order.body.totalCents / 100;
+    const event = { event: 'PAYMENT_CONFIRMED', payment: { id: pay.externalId, value: total, netValue: Math.round((total * 0.9701 - 0.49) * 100) / 100 } };
+    expect((await http().post(hookUrl).set('asaas-access-token', stored.webhookToken).send(event)).status).toBe(200);
+    expect((await http().post(hookUrl).set('asaas-access-token', stored.webhookToken).send({ ...event, event: 'PAYMENT_RECEIVED' })).status).toBe(200);
+    expect((await http().get(`/public/orders/${order.body.trackingCode}`)).body).toMatchObject({ status: 'PAID', payment: { status: 'PAID', checkoutUrl: null } });
+    const paid = await prisma.payment.findUniqueOrThrow({ where: { id: pay.id } });
+    expect(paid.feeCents).toBe(Math.round((total - event.payment.netValue) * 100));
+    const orderId = (await prisma.order.findUniqueOrThrow({ where: { trackingCode: order.body.trackingCode } })).id;
+    expect(await prisma.domainEvent.count({ where: { tenantId, type: 'pedido.recebido', payload: { path: ['orderId'], equals: orderId } } })).toBe(1);
+
+    // Cartão não pago no prazo: pedido cancelado e cobrança apagada no Asaas.
+    const late = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CREDIT_CARD', customer: { name: 'Rui', phone: '(11) 96666-0000', document: '52998224725' } }));
+    const latePay = await prisma.payment.findFirstOrThrow({ where: { order: { trackingCode: late.body.trackingCode } } });
+    await prisma.payment.update({ where: { id: latePay.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    await app.get(OrdersService).expireStale();
+    const lateOrder = (await http().get(`/public/orders/${late.body.trackingCode}`)).body;
+    expect(lateOrder.status).toBe('CANCELLED');
+    expect(calls).toContainEqual(expect.objectContaining({ method: 'DELETE', path: `/payments/${latePay.externalId}` }));
+    expect(await prisma.orderStatusHistory.findFirst({ where: { order: { trackingCode: late.body.trackingCode }, status: 'CANCELLED' } })).toMatchObject({ note: 'Cartão não pago no prazo' });
+
+    await owner().delete('/cardapio/payments/account');
+    await owner().put('/cardapio/store').send({ paymentMethods: ['PIX', 'CASH_ON_DELIVERY'] });
+    delete process.env.PUBLIC_API_URL;
+  });
+
   it('cancelar: só dono ou gerente; pedido de outro restaurante dá 404', async () => {
     const created = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CASH_ON_DELIVERY' }));
     const id = (await prisma.order.findUniqueOrThrow({ where: { trackingCode: created.body.trackingCode } })).id;
