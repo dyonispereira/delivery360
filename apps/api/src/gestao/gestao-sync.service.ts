@@ -1,13 +1,15 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { DomainEvent, EntryStatus, EntryType, Prisma, SalesChannel } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CHANNEL_LABELS, CHANNEL_REVENUE_ACCOUNT, paymentFeeBps, PAYMENT_METHOD_LABELS, type PaymentMethod } from '@delivery360/shared';
+import { allocateServiceFee, CHANNEL_LABELS, CHANNEL_REVENUE_ACCOUNT, paymentFeeBps, PAYMENT_METHOD_LABELS, TAB_PAYMENT_METHODS, type PaymentMethod } from '@delivery360/shared';
 import { DEFAULT_ACCOUNTS, GROUPS, localDate, toDbDate } from './chart';
 
 type Tx = Prisma.TransactionClient;
 type Payload = Record<string, unknown>;
 
 const ONLINE = ['PIX', 'CREDIT_CARD'];
+/** Nomes do salão ("Cartão (maquininha)", não "na entrega"). */
+const PAYMENT_METHOD_LABELS_SALAO: Partial<Record<PaymentMethod, string>> = Object.fromEntries(TAB_PAYMENT_METHODS.map((m) => [m.method, m.label]));
 
 /**
  * Liga os módulos à Gestão: lê a fila de eventos (domain_events) e gera os lançamentos
@@ -19,6 +21,7 @@ const ONLINE = ['PIX', 'CREDIT_CARD'];
  * - pedido.status → COMPLETED → baixa do a receber (dinheiro/maquininha recebidos na entrega)
  * - pedido.cancelado  → cancela o a receber e o imposto; se já estava pago, a pagar 2.5 (devolver ao cliente)
  * - entrega.concluida → a pagar 6.1 ao motoboy (valor por entrega)
+ * - salao.conta_fechada → cada pagamento da mesa: 1.1 Salão + 11.3 taxa de serviço (fora da DRE) + taxa 2.3; a pagar 11.4 à equipe
  * - gorjeta.recebida  → entrada 11.1 + a pagar 11.2 ao motoboy (fora da DRE)
  * - gorjeta.repassada → baixa do 11.2
  */
@@ -94,14 +97,20 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         const order = await this.order(tx, String(p.orderId));
         if (!order) return;
         if (order.channel !== 'LOJA') return this.marketplaceSale(tx, t, day, order);
-        const online = ONLINE.includes(order.paymentMethod);
+        // Salão: a venda só entra quando a conta da mesa fecha, já paga (aqui só imposto e descontos).
+        const dineIn = order.type === 'DINE_IN';
+        const online = ONLINE.includes(order.paymentMethod) || dineIn;
+        const revenueCode = dineIn ? '1.1' : '1.2';
         const method = order.paymentMethod as PaymentMethod;
         const restaurantCoupon = order.discountCents - order.couponPlatformCents;
         // Venda pelo que o cliente pagou de fato: é o que entra no caixa e no extrato do gateway.
-        await this.upsert(tx, t, `order:${order.id}:sale`, {
+        // Salão: o dinheiro entra pelos pagamentos da conta da mesa (salao.conta_fechada), um por forma de pagamento.
+        if (!dineIn) await this.upsert(tx, t, `order:${order.id}:sale`, {
           type: 'RECEIVABLE',
-          code: '1.2',
-          description: `Pedido #${order.number}${order.type === 'PICKUP' ? ' (retirada)' : ''}`,
+          code: revenueCode,
+          description: dineIn
+            ? `${order.tableName ?? 'Salão'} · pedido #${order.number}`
+            : `Pedido #${order.number}${order.type === 'PICKUP' ? ' (retirada)' : ''}`,
           counterparty: order.customerName,
           amountCents: order.totalCents,
           day,
@@ -118,7 +127,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           await this.upsert(tx, t, `order:${order.id}:gross`, {
             ...memo,
             type: 'RECEIVABLE',
-            code: '1.2',
+            code: revenueCode,
             description: `Preço cheio (antes dos descontos) · pedido #${order.number}`,
             counterparty: order.customerName,
             amountCents: discountCents,
@@ -163,7 +172,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         // Taxa: a que o gateway informou; se não veio, a configurada para a forma de pagamento.
         const gatewayFee = order.payments.reduce((s, x) => s + x.feeCents, 0);
         const fee = gatewayFee || Math.round((order.totalCents * paymentFeeBps(rates, method)) / 10_000);
-        if (fee > 0) {
+        if (fee > 0 && !dineIn) {
           await this.upsert(tx, t, `order:${order.id}:fee`, {
             type: 'PAYABLE',
             code: '2.3',
@@ -259,6 +268,46 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      case 'salao.conta_fechada': {
+        // Cada pagamento da mesa entra no caixa com a sua forma (cartão 1, cartão 2, Pix, dinheiro):
+        // a parte do consumo em 1.1 Salão e a parte da taxa de serviço em 11.3 (da equipe, fora da DRE).
+        const tab = await tx.tableTab.findUnique({ where: { id: String(p.tabId) }, include: { payments: { orderBy: { createdAt: 'asc' } } } });
+        if (!tab || tab.status !== 'CLOSED' || !tab.payments.length) return;
+        const rates = await this.rates(tx, t);
+        const shares = allocateServiceFee(tab.payments.map((x) => x.amountCents), tab.serviceFeeCents);
+        const many = tab.payments.length > 1;
+        for (const [i, pay] of tab.payments.entries()) {
+          const method = pay.method as PaymentMethod;
+          const label = `${tab.tableName} · ${PAYMENT_METHOD_LABELS_SALAO[method] ?? PAYMENT_METHOD_LABELS[method]}${many ? ` ${i + 1}/${tab.payments.length}` : ''}${pay.label ? ` (${pay.label})` : ''}`;
+          const service = shares[i];
+          const sale = pay.amountCents - service;
+          const base = { day, status: 'PAID' as EntryStatus, source: 'cardapio', paymentMethod: method, channel: 'LOJA' as const };
+          if (sale > 0) {
+            await this.upsert(tx, t, `tabpay:${pay.id}:sale`, { ...base, type: 'RECEIVABLE', code: '1.1', description: label, counterparty: pay.label, amountCents: sale });
+          }
+          if (service > 0) {
+            await this.upsert(tx, t, `tabpay:${pay.id}:service`, { ...base, type: 'RECEIVABLE', code: '11.3', description: `Taxa de serviço · ${label}`, counterparty: pay.label, amountCents: service });
+          }
+          // A maquininha/Pix cobra sobre o valor inteiro passado.
+          const fee = Math.round((pay.amountCents * paymentFeeBps(rates, method)) / 10_000);
+          if (fee > 0) {
+            await this.upsert(tx, t, `tabpay:${pay.id}:fee`, { ...base, type: 'PAYABLE', code: '2.3', description: `Taxa ${PAYMENT_METHOD_LABELS_SALAO[method] ?? method} · ${tab.tableName}`, amountCents: fee });
+          }
+        }
+        if (tab.serviceFeeCents > 0) {
+          await this.upsert(tx, t, `tab:${tab.id}:service-out`, {
+            type: 'PAYABLE',
+            code: '11.4',
+            description: `Repassar taxa de serviço · ${tab.tableName}`,
+            counterparty: 'Equipe do salão',
+            amountCents: tab.serviceFeeCents,
+            day,
+            status: 'OPEN',
+            source: 'cardapio',
+          });
+        }
+        return;
+      }
       case 'gorjeta.recebida': {
         const [order, courier] = await Promise.all([
           this.order(tx, String(p.orderId)),
@@ -311,6 +360,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         number: true,
         type: true,
         customerName: true,
+        tableName: true,
         totalCents: true,
         promoDiscountCents: true,
         discountCents: true,

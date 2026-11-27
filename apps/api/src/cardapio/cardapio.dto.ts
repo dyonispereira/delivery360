@@ -404,3 +404,61 @@ export class CampaignDto {
 export class CampaignParticipationDto {
   @IsBoolean() participating: boolean;
 }
+
+// ---------- Salão (mesas e conta da mesa) ----------
+
+export class TableDto {
+  @IsString() @MinLength(1) @MaxLength(40) name: string;
+  @IsOptional() @IsInt() @Min(0) @Max(10_000) position?: number;
+}
+
+export class UpdateTableDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(40) name?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(10_000) position?: number;
+  @IsOptional() @IsBoolean() active?: boolean;
+}
+
+/** Cria várias mesas de uma vez: "Mesa 1" até "Mesa N" (as que já existem ficam como estão). */
+export class BulkTablesDto {
+  @IsInt() @Min(1) @Max(200) count: number;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(20) prefix?: string;
+}
+
+export class TabItemDto {
+  @IsUUID() productId: string;
+  @IsInt() @Min(1) @Max(50) quantity: number;
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) optionIds?: string[];
+  @IsOptional() @IsString() @MaxLength(300) notes?: string;
+}
+
+/** Uma rodada lançada pelo garçom: vai direto para a cozinha e soma na conta da mesa. */
+export class TableOrderDto {
+  @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => TabItemDto) items: TabItemDto[];
+  @IsOptional() @IsString() @MaxLength(300) notes?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(99) people?: number;
+}
+
+const TAB_METHODS = ['PIX', 'CASH_ON_DELIVERY', 'CARD_ON_DELIVERY'] as const;
+type TabMethod = (typeof TAB_METHODS)[number];
+
+export class CloseTabDto {
+  /** Atalho: sem pagamentos ainda, registra o total de uma vez nesta forma. */
+  @IsOptional() @IsIn(TAB_METHODS) paymentMethod?: TabMethod;
+  /** Cobrar a taxa de serviço da loja (o cliente pode recusar). */
+  @IsOptional() @IsBoolean() serviceFee?: boolean;
+}
+
+/** Um pagamento da conta da mesa (um cartão, um Pix, dinheiro). */
+export class TabPaymentDto {
+  @IsIn(TAB_METHODS) method: TabMethod;
+  @IsInt() @Min(1) @Max(MAX_CENTS) amountCents: number;
+  @IsOptional() @IsString() @MaxLength(40) label?: string;
+}
+
+export class UpdateTabDto {
+  @IsBoolean() serviceFee: boolean;
+}
+
+export class ServiceFeeDto {
+  @IsInt() @Min(0) @Max(2000) serviceFeeBps: number;
+}

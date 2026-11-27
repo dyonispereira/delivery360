@@ -64,7 +64,7 @@ interface PublicMenuProduct {
   }[];
 }
 
-function trackingCode(): string {
+export function trackingCode(): string {
   // 12 caracteres sem ambiguidade (sem 0/O/1/l): difícil de adivinhar, fácil de ditar.
   const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
   const bytes = randomBytes(12);
@@ -311,38 +311,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       .map((x) => x.id);
   }
 
-  /**
-   * Preço do pedido como o servidor calcula (o que vale é isto, nunca o navegador):
-   * cardápio de hoje, promoções, taxa do bairro e o cupom, se veio.
-   */
-  private async quoteFor(
-    store: Awaited<ReturnType<OrdersService['findPublicStore']>>,
-    input: {
-      type: 'DELIVERY' | 'PICKUP';
-      zoneId?: string;
-      paymentMethod?: PaymentMethod;
-      changeForCents?: number;
-      items: CreateOrderDto['items'];
-      couponCode?: string;
-    },
-    phone: string | null,
-    /** Entrega sem bairro escolhido ainda: calcula sem taxa (só na prévia). */
-    zoneless = false,
-  ) {
-    const tenantId = store.tenantId;
-    const productIds = [...new Set(input.items.map((i) => i.productId))];
-    const [products, zones] = await Promise.all([
-      this.prisma.product.findMany({
-        where: { tenantId, id: { in: productIds } },
-        include: {
-          category: { select: { active: true } },
-          optionGroups: {
-            include: { options: { include: { linkedProduct: { select: { active: true, available: true, costItems: true } } } } },
-          },
+  /** Cardápio de hoje (promoções e disponibilidade) dos produtos pedidos, e o custo pela ficha técnica. */
+  private async loadMenu(tenantId: string, ids: string[]) {
+    const productIds = [...new Set(ids)];
+    const products = await this.prisma.product.findMany({
+      where: { tenantId, id: { in: productIds } },
+      include: {
+        category: { select: { active: true } },
+        optionGroups: {
+          include: { options: { include: { linkedProduct: { select: { active: true, available: true, costItems: true } } } } },
         },
-      }),
-      this.prisma.deliveryZone.findMany({ where: { tenantId } }),
-    ]);
+      },
+    });
     const costOf = (productId: string, optionIds: string[]) => {
       const p = products.find((x) => x.id === productId);
       if (!p) return 0;
@@ -379,6 +359,53 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         },
       ]),
     );
+    return { menu, costOf };
+  }
+
+  /**
+   * Itens lançados pela equipe (salão): mesmo cardápio, preços e adicionais obrigatórios da loja online,
+   * mas sem as regras da loja (aberta, pedido mínimo, forma de pagamento): a conta fecha depois, na mesa.
+   */
+  async priceStaffItems(tenantId: string, items: { productId: string; quantity: number; optionIds?: string[]; notes?: string }[]) {
+    const { menu, costOf } = await this.loadMenu(tenantId, items.map((i) => i.productId));
+    try {
+      const priced = priceOrder(
+        { type: 'PICKUP', paymentMethod: 'CASH_ON_DELIVERY', items },
+        { isOpen: true, acceptsDelivery: false, acceptsPickup: true, minOrderCents: 0, paymentMethods: ['CASH_ON_DELIVERY'] },
+        menu,
+        [],
+      );
+      return { priced, costOf };
+    } catch (err) {
+      if (err instanceof OrderValidationError) throw new BadRequestException(err.message);
+      throw err;
+    }
+  }
+
+  /**
+   * Preço do pedido como o servidor calcula (o que vale é isto, nunca o navegador):
+   * cardápio de hoje, promoções, taxa do bairro e o cupom, se veio.
+   */
+  private async quoteFor(
+    store: Awaited<ReturnType<OrdersService['findPublicStore']>>,
+    input: {
+      type: 'DELIVERY' | 'PICKUP';
+      zoneId?: string;
+      paymentMethod?: PaymentMethod;
+      changeForCents?: number;
+      items: CreateOrderDto['items'];
+      couponCode?: string;
+    },
+    phone: string | null,
+    /** Entrega sem bairro escolhido ainda: calcula sem taxa (só na prévia). */
+    zoneless = false,
+  ) {
+    const tenantId = store.tenantId;
+    const [{ menu, costOf }, zones] = await Promise.all([
+      this.loadMenu(tenantId, input.items.map((i) => i.productId)),
+      this.prisma.deliveryZone.findMany({ where: { tenantId } }),
+    ]);
+    const now = new Date();
 
     let priced;
     try {

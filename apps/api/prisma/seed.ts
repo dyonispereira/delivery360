@@ -51,7 +51,18 @@ async function main() {
   if (process.env.SEED_DEMO === 'true') {
     await seedDemo();
     await seedShowcase(prisma);
+    for (const slug of ['pizzaria-demo', 'fornalha']) await seedDemoTables(slug);
   }
+}
+
+/** Salão das lojas de demonstração: 10 mesas, só se a loja ainda não tem nenhuma (não recria as que o dono apagou). */
+async function seedDemoTables(slug: string) {
+  const store = await prisma.store.findUnique({ where: { slug } });
+  if (!store || (await prisma.diningTable.count({ where: { tenantId: store.tenantId } }))) return;
+  await prisma.diningTable.createMany({
+    data: Array.from({ length: 10 }, (_, i) => ({ tenantId: store.tenantId, name: `Mesa ${i + 1}`, position: i })),
+    skipDuplicates: true,
+  });
 }
 
 /** Restaurante de demonstração para o link de teste (só roda com SEED_DEMO=true e só uma vez). */
