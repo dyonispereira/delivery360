@@ -96,35 +96,53 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         if (order.channel !== 'LOJA') return this.marketplaceSale(tx, t, day, order);
         const online = ONLINE.includes(order.paymentMethod);
         const method = order.paymentMethod as PaymentMethod;
+        const restaurantCoupon = order.discountCents - order.couponPlatformCents;
+        // Venda pelo que o cliente pagou de fato: é o que entra no caixa e no extrato do gateway.
         await this.upsert(tx, t, `order:${order.id}:sale`, {
           type: 'RECEIVABLE',
           code: '1.2',
           description: `Pedido #${order.number}${order.type === 'PICKUP' ? ' (retirada)' : ''}`,
           counterparty: order.customerName,
-          // Receita pelo preço normal; preço de/por e a parte do cupom que é do restaurante entram logo abaixo
-          // como desconto (2.4). O que a Delivery360 banca (impulso e sua parte no cupom de campanha) não é
-          // desconto do restaurante: vira um valor a receber da Delivery360 (abaixo).
-          amountCents: order.totalCents + order.promoDiscountCents + order.discountCents - order.couponPlatformCents,
+          amountCents: order.totalCents,
           day,
           status: online ? 'PAID' : 'OPEN',
           source: 'cardapio',
           paymentMethod: method,
           channel: 'LOJA',
         });
-        if (order.promoDiscountCents > 0) {
-          await this.upsert(tx, t, `order:${order.id}:promo`, {
-            type: 'PAYABLE',
-            code: '2.4',
-            description: `Preço promocional · pedido #${order.number}`,
+        // Preço de/por e cupom do restaurante: só no DRE (receita pelo preço cheio − desconto = o que foi pago).
+        // Não é dinheiro, então não aparece em contas a pagar/receber nem no caixa.
+        const discountCents = order.promoDiscountCents + Math.max(0, restaurantCoupon);
+        if (discountCents > 0) {
+          const memo = { day, status: (online ? 'PAID' : 'OPEN') as EntryStatus, source: 'cardapio', paymentMethod: method, channel: 'LOJA' as const, memo: true };
+          await this.upsert(tx, t, `order:${order.id}:gross`, {
+            ...memo,
+            type: 'RECEIVABLE',
+            code: '1.2',
+            description: `Preço cheio (antes dos descontos) · pedido #${order.number}`,
             counterparty: order.customerName,
-            amountCents: order.promoDiscountCents,
-            day,
-            // Nunca sai dinheiro: o desconto se acerta junto com o recebimento da venda.
-            status: online ? 'PAID' : 'OPEN',
-            source: 'cardapio',
-            paymentMethod: method,
-            channel: 'LOJA',
+            amountCents: discountCents,
           });
+          if (order.promoDiscountCents > 0) {
+            await this.upsert(tx, t, `order:${order.id}:promo`, {
+              ...memo,
+              type: 'PAYABLE',
+              code: '2.4',
+              description: `Preço promocional · pedido #${order.number}`,
+              counterparty: order.customerName,
+              amountCents: order.promoDiscountCents,
+            });
+          }
+          if (restaurantCoupon > 0) {
+            await this.upsert(tx, t, `order:${order.id}:coupon`, {
+              ...memo,
+              type: 'PAYABLE',
+              code: '2.4',
+              description: `Cupom ${order.couponCode ?? ''} · pedido #${order.number}`.replace(/ +/g, ' '),
+              counterparty: order.customerName,
+              amountCents: restaurantCoupon,
+            });
+          }
         }
         const from360 = order.platformDiscountCents + order.couponPlatformCents;
         if (from360 > 0) {
@@ -138,21 +156,6 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
             // A Delivery360 repassa depois: fica em aberto até o repasse.
             status: 'OPEN',
             source: 'cardapio',
-            channel: 'LOJA',
-          });
-        }
-        const restaurantCoupon = order.discountCents - order.couponPlatformCents;
-        if (restaurantCoupon > 0) {
-          await this.upsert(tx, t, `order:${order.id}:coupon`, {
-            type: 'PAYABLE',
-            code: '2.4',
-            description: `Cupom ${order.couponCode ?? ''} · pedido #${order.number}`.replace(/ +/g, ' '),
-            counterparty: order.customerName,
-            amountCents: restaurantCoupon,
-            day,
-            status: online ? 'PAID' : 'OPEN',
-            source: 'cardapio',
-            paymentMethod: method,
             channel: 'LOJA',
           });
         }
@@ -197,7 +200,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         await tx.financialEntry.updateMany({
           where: {
             tenantId: t,
-            externalKey: { in: ['sale', 'fee', 'promo', 'coupon'].map((k) => `order:${String(p.orderId)}:${k}`) },
+            externalKey: { in: ['sale', 'fee', 'gross', 'promo', 'coupon'].map((k) => `order:${String(p.orderId)}:${k}`) },
             status: 'OPEN',
             paymentMethod: { not: 'APP_ONLINE' },
           },
@@ -213,7 +216,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         await tx.financialEntry.updateMany({
           where: {
             tenantId: t,
-            externalKey: { in: ['tax', 'fee', 'commission', 'promo', 'coupon', 'coupon360'].map((k) => `order:${String(p.orderId)}:${k}`) },
+            externalKey: { in: ['tax', 'fee', 'commission', 'gross', 'promo', 'coupon', 'coupon360'].map((k) => `order:${String(p.orderId)}:${k}`) },
             status: 'OPEN',
           },
           data: { status: 'CANCELLED', notes: 'Pedido cancelado' },
@@ -222,12 +225,8 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           await tx.financialEntry.update({ where: { id: sale.id }, data: { status: 'CANCELLED', notes: 'Pedido cancelado' } });
           return;
         }
-        // Já recebido (PIX): fica a devolução ao cliente como conta a pagar, do que ele pagou de fato.
-        const discounts = await tx.financialEntry.findMany({
-          where: { tenantId: t, externalKey: { in: ['promo', 'coupon'].map((k) => `order:${String(p.orderId)}:${k}`) }, status: { not: 'CANCELLED' } },
-          select: { amountCents: true },
-        });
-        const paidByCustomer = sale.amountCents - discounts.reduce((s, d) => s + d.amountCents, 0);
+        // Já recebido (PIX/cartão): fica a devolução ao cliente como conta a pagar, do que ele pagou de fato.
+        const paidByCustomer = sale.amountCents;
         await this.upsert(tx, t, `order:${String(p.orderId)}:refund`, {
           type: 'PAYABLE',
           code: '2.5',
@@ -413,6 +412,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
       source: string;
       paymentMethod?: string;
       channel?: SalesChannel;
+      memo?: boolean;
     },
   ) {
     await this.ensureChart(tenantId, tx);
@@ -436,6 +436,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         paidAt: e.status === 'PAID' ? date : null,
         source: e.source,
         channel: e.channel ?? null,
+        memo: e.memo ?? false,
       },
     });
   }

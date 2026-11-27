@@ -790,6 +790,9 @@ model FinancialEntry {
   source         String        @default("manual")
   /// Chave do lançamento automático (evita duplicar se o evento for processado de novo).
   externalKey    String?       @map("external_key")
+  /// Só de resultado (DRE), sem dinheiro: preço cheio e desconto de promoção/cupom.
+  /// Não aparece em contas a pagar/receber nem no caixa, para o financeiro bater com o que entrou de fato.
+  memo           Boolean       @default(false)
   createdBy      String?       @map("created_by") @db.Uuid
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
