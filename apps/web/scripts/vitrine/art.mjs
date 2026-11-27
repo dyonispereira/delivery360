@@ -297,14 +297,16 @@ function baseCheese(id, r, R, golden) {
 }
 
 /** Pizza redonda vista de cima, centrada em (0,0), raio externo R. */
-export function pizzaSVG(id, flavor, R = 400, seed = 1) {
+export function pizzaSVG(id, flavor, R = 400, seed = 1, opts = {}) {
   const recipe = RECIPES[flavor];
   const r = rng(seed * 7919 + flavor.length * 31);
   const inner = R * 0.885;
   const parts = [];
-  // tábua de madeira por baixo
-  parts.push(`<circle r="${f(R * 1.07)}" fill="#9A6A3C"/><circle r="${f(R * 1.07)}" fill="#000" filter="url(#${id}-wood)" opacity="0.35"/><circle r="${f(R * 1.07)}" fill="none" stroke="#5A3A1E" stroke-width="${f(R * 0.012)}"/>`);
-  parts.push(`<circle r="${f(R * 1.02)}" fill="#000" opacity="0.35" filter="url(#${id}-blur8)"/>`);
+  // tábua de madeira por baixo (a foto de estúdio usa a pá de metal no lugar)
+  if (opts.board !== false) {
+    parts.push(`<circle r="${f(R * 1.07)}" fill="#9A6A3C"/><circle r="${f(R * 1.07)}" fill="#000" filter="url(#${id}-wood)" opacity="0.35"/><circle r="${f(R * 1.07)}" fill="none" stroke="#5A3A1E" stroke-width="${f(R * 0.012)}"/>`);
+    parts.push(`<circle r="${f(R * 1.02)}" fill="#000" opacity="0.35" filter="url(#${id}-blur8)"/>`);
+  }
   // massa (borda)
   parts.push(`<circle r="${R}" fill="url(#${id}-crust)"/>`);
   parts.push(`<circle r="${R}" fill="#000" filter="url(#${id}-char)" opacity="0.7"/>`);
@@ -346,8 +348,8 @@ export function pizzaSVG(id, flavor, R = 400, seed = 1) {
   }).join('');
   parts.push(`<g filter="url(#${id}-soft)">${cuts}</g>`);
   parts.push(`<circle r="${R}" fill="url(#${id}-light)"/>`);
-  parts.push(`<circle r="${f(R * 1.07)}" fill="#000" filter="url(#${id}-photo)"/>`);
-  return `<g filter="url(#${id}-bigshadow)">${parts.join('')}</g>`;
+  parts.push(`<circle r="${f(R * (opts.board === false ? 1 : 1.07))}" fill="#000" filter="url(#${id}-photo)"/>`);
+  return opts.board === false ? `<g>${parts.join('')}</g>` : `<g filter="url(#${id}-bigshadow)">${parts.join('')}</g>`;
 }
 
 /** Pizza retangular (meio metro / metro) com até 4 sabores lado a lado, centrada em (0,0). */
@@ -464,4 +466,94 @@ export function logoSVG(size = 1024, name = 'Fornalha', fontSize = 210) {
     <rect x="262" y="774" width="500" height="92" rx="46" fill="#B3261E"/>
     <text x="512" y="838" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="60" letter-spacing="14" fill="#FFF4E0">PIZZARIA</text>
   </svg>`;
+}
+
+
+/* ---------- Estilo "foto de estúdio" (fundo claro, pá de metal, perspectiva) ---------- */
+
+/** Fundo branco-acinzentado de estúdio, com a mesa um pouco mais clara. */
+export function studioBG(id, w, h) {
+  return `<defs>
+      <linearGradient id="${id}-wall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E9EDF3"/><stop offset="1" stop-color="#DDE3EB"/></linearGradient>
+      <linearGradient id="${id}-table" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F4F6F9"/><stop offset="1" stop-color="#FFFFFF"/></linearGradient>
+      <radialGradient id="${id}-spot" cx="45%" cy="40%" r="70%"><stop offset="0" stop-color="#fff" stop-opacity="0.7"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    </defs>
+    <rect width="${w}" height="${h}" fill="url(#${id}-wall)"/>
+    <path d="M0 ${h * 0.3} L${w} ${h * 0.27} L${w} ${h} L0 ${h} Z" fill="url(#${id}-table)"/>
+    <rect width="${w}" height="${h}" fill="url(#${id}-spot)"/>`;
+}
+
+/** Pizza redonda em cima da pá de metal, vista de lado (como foto de cardápio). */
+export function studioPizza(id, flavor, seed, w = 1000, h = 1000) {
+  const cx = w * 0.47, cy = h * 0.53, R = w * 0.4, k = 0.74;
+  return `${studioBG(id, w, h)}
+    <defs>
+      <linearGradient id="${id}-steel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F2F4F7"/><stop offset=".45" stop-color="#B9C0C9"/><stop offset=".7" stop-color="#E6E9ED"/><stop offset="1" stop-color="#9AA3AE"/></linearGradient>
+      <linearGradient id="${id}-handle" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#EEF1F4"/><stop offset=".5" stop-color="#A9B1BB"/><stop offset="1" stop-color="#7D8691"/></linearGradient>
+      <linearGradient id="${id}-side" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E2A25A"/><stop offset=".6" stop-color="#C47F3A"/><stop offset="1" stop-color="#9A5C26"/></linearGradient>
+    </defs>
+    <ellipse cx="${cx}" cy="${cy + R * k * 0.28}" rx="${R * 1.12}" ry="${R * k * 0.95}" fill="#5C6670" opacity="0.28" filter="url(#${id}-blur20)"/>
+    <g transform="rotate(-12 ${cx + R} ${cy - R * 0.2})">
+      <rect x="${cx + R * 0.85}" y="${cy - R * 0.32}" width="${w}" height="${R * 0.16}" rx="${R * 0.08}" fill="url(#${id}-handle)"/>
+    </g>
+    <ellipse cx="${cx}" cy="${cy + 10}" rx="${R * 1.06}" ry="${R * k * 1.06}" fill="url(#${id}-steel)"/>
+    <ellipse cx="${cx}" cy="${cy + R * 0.09}" rx="${R}" ry="${R * k}" fill="url(#${id}-side)"/>
+    <ellipse cx="${cx}" cy="${cy + R * 0.09}" rx="${R}" ry="${R * k}" fill="#000" filter="url(#${id}-char)" opacity="0.45"/>
+    <g transform="translate(${cx} ${cy}) scale(1 ${k})">${pizzaSVG(id, flavor, R, seed, { board: false })}</g>`;
+}
+
+/** Garrafa PET genérica (sem marca), centrada em (x, y). */
+export function petBottle(id, { liquid, liquidDark, cap, label, labelDark, text, sub, textColor = '#fff', size = '2L', clear = false }, x, y, s = 1) {
+  const W = 230 * s, H = 760 * s, k = `${id}${text.replace(/\W/g, '')}`;
+  const body = `M${-W * 0.13} ${-H / 2 + 40 * s} L${-W * 0.13} ${-H * 0.34} C${-W * 0.52} ${-H * 0.24} ${-W * 0.5} ${-H * 0.18} ${-W * 0.5} ${-H * 0.08}
+    L${-W * 0.5} ${H * 0.36} C${-W * 0.5} ${H * 0.42} ${-W * 0.46} ${H * 0.44} ${-W * 0.42} ${H * 0.46} L${-W * 0.36} ${H / 2} L${-W * 0.12} ${H * 0.47} L0 ${H / 2} L${W * 0.12} ${H * 0.47} L${W * 0.36} ${H / 2} L${W * 0.42} ${H * 0.46}
+    C${W * 0.46} ${H * 0.44} ${W * 0.5} ${H * 0.42} ${W * 0.5} ${H * 0.36} L${W * 0.5} ${-H * 0.08} C${W * 0.5} ${-H * 0.18} ${W * 0.52} ${-H * 0.24} ${W * 0.13} ${-H * 0.34} L${W * 0.13} ${-H / 2 + 40 * s} Z`;
+  const drops = Array.from({ length: 70 }, (_, i) => {
+    const a = (i * 97) % 100 / 100, b = (i * 61) % 100 / 100;
+    const px = (-0.46 + a * 0.92) * W, py = (-0.28 + b * 0.74) * H, r0 = (2 + (i % 4) * 1.6) * s;
+    return `<g opacity="${0.35 + (i % 3) * 0.15}"><circle cx="${f(px)}" cy="${f(py)}" r="${f(r0)}" fill="#fff" opacity="0.35"/><circle cx="${f(px - r0 * 0.3)}" cy="${f(py - r0 * 0.3)}" r="${f(r0 * 0.35)}" fill="#fff"/></g>`;
+  }).join('');
+  return `<g transform="translate(${x} ${y})">
+    <defs>
+      <linearGradient id="${k}-liq" x1="0" x2="1"><stop offset="0" stop-color="${liquidDark}"/><stop offset=".35" stop-color="${liquid}"/><stop offset=".65" stop-color="${liquid}"/><stop offset="1" stop-color="${liquidDark}"/></linearGradient>
+      <linearGradient id="${k}-lab" x1="0" x2="1"><stop offset="0" stop-color="${labelDark}"/><stop offset=".3" stop-color="${label}"/><stop offset=".7" stop-color="${label}"/><stop offset="1" stop-color="${labelDark}"/></linearGradient>
+      <linearGradient id="${k}-gloss" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".22" stop-color="#fff" stop-opacity=".55"/><stop offset=".3" stop-color="#fff" stop-opacity="0"/><stop offset=".78" stop-color="#fff" stop-opacity="0"/><stop offset=".86" stop-color="#fff" stop-opacity=".25"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+      <clipPath id="${k}-clip"><path d="${body}"/></clipPath>
+    </defs>
+    <ellipse cx="0" cy="${H / 2 + 6 * s}" rx="${W * 0.6}" ry="${16 * s}" fill="#000" opacity="0.22" filter="url(#${id}-blur8)"/>
+    <rect x="${-W * 0.17}" y="${-H / 2 - 4 * s}" width="${W * 0.34}" height="${48 * s}" rx="${8 * s}" fill="${cap}"/>
+    ${Array.from({ length: 7 }, (_, i) => `<rect x="${f(-W * 0.15 + i * W * 0.05)}" y="${-H / 2}" width="${f(W * 0.02)}" height="${40 * s}" fill="#000" opacity=".15"/>`).join('')}
+    <rect x="${-W * 0.19}" y="${-H / 2 + 42 * s}" width="${W * 0.38}" height="${10 * s}" rx="${4 * s}" fill="${cap}" opacity=".8"/>
+    <g clip-path="url(#${k}-clip)">
+      <rect x="${-W}" y="${-H}" width="${W * 2}" height="${H * 2}" fill="${clear ? '#E9F4F8' : `url(#${k}-liq)`}" opacity="${clear ? 0.65 : 0.97}"/>
+      ${clear ? '' : `<rect x="${-W}" y="${-H}" width="${W * 2}" height="${H * 0.62}" fill="#fff" opacity="0.18"/>`}
+      ${Array.from({ length: 5 }, (_, i) => `<path d="M${-W * 0.5} ${f(-H * 0.2 + i * H * 0.08)} Q0 ${f(-H * 0.17 + i * H * 0.08)} ${W * 0.5} ${f(-H * 0.2 + i * H * 0.08)}" stroke="#000" stroke-opacity=".12" stroke-width="${3 * s}" fill="none"/>`).join('')}
+      ${Array.from({ length: 4 }, (_, i) => `<path d="M${-W * 0.5} ${f(H * 0.28 + i * H * 0.04)} Q0 ${f(H * 0.31 + i * H * 0.04)} ${W * 0.5} ${f(H * 0.28 + i * H * 0.04)}" stroke="#000" stroke-opacity=".12" stroke-width="${3 * s}" fill="none"/>`).join('')}
+      <rect x="${-W}" y="${-H * 0.02}" width="${W * 2}" height="${H * 0.26}" fill="url(#${k}-lab)"/>
+      <rect x="${-W}" y="${-H * 0.02}" width="${W * 2}" height="${6 * s}" fill="#fff" opacity=".35"/>
+      <rect x="${-W}" y="${H * 0.24 - 6 * s}" width="${W * 2}" height="${6 * s}" fill="#000" opacity=".2"/>
+      <text x="0" y="${H * 0.085}" text-anchor="middle" font-family="Inter" font-weight="700" font-size="${15 * s}" letter-spacing="${3 * s}" fill="${textColor}" opacity=".85">${sub}</text>
+      <text x="0" y="${H * 0.165}" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="${(text.length > 5 ? 36 : 46) * s}" fill="${textColor}">${text}</text>
+      <text x="0" y="${H * 0.215}" text-anchor="middle" font-family="Inter" font-weight="800" font-size="${17 * s}" fill="${textColor}" opacity=".9">${size}</text>
+      ${drops}
+      <rect x="${-W / 2}" y="${-H}" width="${W}" height="${H * 2}" fill="url(#${k}-gloss)"/>
+    </g>
+  </g>`;
+}
+
+/** Card de bebida: faixa colorida com o nome na vertical, tamanho embaixo e a garrafa no fundo branco. */
+export function drinkCard(id, { band, bandDark, name, size, bottle }) {
+  const W = 1000, H = 1000, bw = 230;
+  const lines = name.split('\n');
+  const fs = lines.length > 1 ? 74 : 92;
+  return svgDoc(id, W, H, `<rect width="${W}" height="${H}" fill="#fff"/>
+    <radialGradient id="${id}-wb" cx="62%" cy="50%" r="60%"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#F1F3F5"/></radialGradient>
+    <rect x="${bw}" width="${W - bw}" height="${H}" fill="url(#${id}-wb)"/>
+    <rect width="${bw}" height="${H * 0.76}" fill="${band}"/>
+    <rect y="${H * 0.76 + 14}" width="${bw}" height="${H * 0.24 - 14}" fill="${bandDark}"/>
+    <g transform="translate(${bw / 2 + (lines.length > 1 ? fs * 0.45 : fs * 0.36)} ${H * 0.38}) rotate(-90)">
+      ${lines.map((l, i) => `<text x="0" y="${i * fs * 1.02 - (lines.length - 1) * fs * 0.51}" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="${fs}" fill="#fff" transform="scale(0.82 1)" letter-spacing="1">${l}</text>`).join('')}
+    </g>
+    <text x="${bw / 2}" y="${H * 0.905}" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="${size.length > 4 ? 62 : size.length > 3 ? 78 : 96}" fill="#fff">${size}</text>
+    ${bottle(id, 615, 505)}`);
 }

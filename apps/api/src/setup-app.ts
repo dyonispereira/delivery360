@@ -12,6 +12,8 @@ function collect(errors: ValidationError[], parent = ''): string[] {
 
 /** Configuração comum ao servidor e aos testes e2e. */
 export function setupApp(app: INestApplication) {
+  // Fotos do cardápio chegam em base64 no JSON (até 3 MB de imagem, ~4 MB em texto).
+  (app as unknown as { useBodyParser?: (type: string, opts: { limit: string }) => void }).useBodyParser?.('json', { limit: '5mb' });
   app.useGlobalPipes(new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,

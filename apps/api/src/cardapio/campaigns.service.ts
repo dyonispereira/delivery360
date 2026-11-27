@@ -184,6 +184,7 @@ export class CampaignsService {
       couponCode: c.couponCode,
       label: c.couponCode ? couponLabel(c) : null,
       network: c.tenantIds.length === 0,
+      fullArt: c.fullArt,
     }));
   }
 
@@ -235,6 +236,7 @@ export class CampaignsService {
       endsAt: date(dto.endsAt),
       active: dto.active ?? true,
       position: dto.position ?? 0,
+      fullArt: dto.fullArt ?? false,
       couponCode: code,
       type,
       value,

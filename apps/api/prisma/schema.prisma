@@ -990,6 +990,8 @@ model Campaign {
   endsAt             DateTime?  @map("ends_at")
   active             Boolean    @default(true)
   position           Int        @default(0)
+  /// A arte já traz o texto: a loja mostra a imagem inteira, sem escrever título por cima.
+  fullArt            Boolean    @default(false) @map("full_art")
   /// Código do cupom da campanha. Sem código = só banner.
   couponCode         String?    @unique @map("coupon_code")
   type               CouponType @default(PERCENT)
@@ -1059,4 +1061,20 @@ model Coupon {
 
   @@unique([tenantId, code])
   @@map("coupons")
+}
+
+/// Foto enviada pelo painel (produto, logo, capa, banner). Fica no banco para não sumir em hospedagem
+/// sem disco fixo; a loja busca por /public/uploads/:id, com cache longo (o conteúdo nunca muda).
+model Upload {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Restaurante dono da foto; vazio = equipe Delivery360 (banners de campanha).
+  tenantId    String?  @map("tenant_id") @db.Uuid
+  mime        String
+  bytes       Bytes
+  size        Int
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("uploads")
 }

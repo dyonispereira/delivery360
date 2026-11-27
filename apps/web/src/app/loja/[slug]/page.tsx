@@ -231,7 +231,23 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
             <input id="busca" className="input py-3" type="search" placeholder="Buscar no cardápio" value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
 
-          {!q && data.banners.length > 0 && <BannerCarousel banners={data.banners} onPick={pickCoupon} />}
+          {!q && data.banners.some((b) => !b.fullArt) && <BannerCarousel banners={data.banners.filter((b) => !b.fullArt)} onPick={pickCoupon} />}
+          {!q &&
+            data.banners
+              .filter((b) => b.fullArt)
+              .map((b) => (
+                <section key={b.id} className="px-4 pt-4" aria-label={b.title}>
+                  <button
+                    type="button"
+                    className="block w-full overflow-hidden rounded-2xl"
+                    onClick={() => b.couponCode && pickCoupon(b.couponCode)}
+                    aria-label={b.couponCode ? `${b.title}: usar cupom ${b.couponCode}` : b.title}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={b.imageUrl} alt={b.title} className="block h-auto w-full" />
+                  </button>
+                </section>
+              ))}
 
           {!q && storeWide.length > 0 && (
             <div className="mx-4 mt-4 rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-900" role="note">

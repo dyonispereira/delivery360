@@ -5,6 +5,7 @@ import { formatBRL, parseBRL } from '@delivery360/shared';
 import { Badge, ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { api } from '@/lib/api';
 import { BannerPreview, splitLabel } from '@/components/campaign-banner';
+import { ImageField } from '@/components/image-field';
 
 type CouponType = 'PERCENT' | 'FIXED' | 'FREE_DELIVERY';
 
@@ -18,6 +19,7 @@ interface Campaign {
   endsAt: string | null;
   active: boolean;
   position: number;
+  fullArt?: boolean;
   couponCode: string | null;
   type: CouponType;
   value: number;
@@ -53,6 +55,7 @@ interface Form {
   ends: string;
   position: string;
   active: boolean;
+  fullArt: boolean;
   hasCoupon: boolean;
   code: string;
   type: CouponType;
@@ -78,6 +81,7 @@ const EMPTY: Form = {
   ends: '',
   position: '0',
   active: true,
+  fullArt: false,
   hasCoupon: false,
   code: '',
   type: 'PERCENT',
@@ -117,6 +121,7 @@ const fromCampaign = (c: Campaign): Form => ({
   ends: toLocalInput(c.endsAt),
   position: String(c.position),
   active: c.active,
+  fullArt: c.fullArt ?? false,
   hasCoupon: !!c.couponCode,
   code: c.couponCode ?? '',
   type: c.type,
@@ -145,6 +150,7 @@ function toBody(f: Form): Record<string, unknown> | string {
     endsAt: fromLocalInput(f.ends),
     position: int(f.position) ?? 0,
     active: f.active,
+    fullArt: f.fullArt,
   };
   if (!f.hasCoupon) return { ...base, couponCode: null };
   if (!/^[A-Za-z0-9_-]{3,20}$/.test(f.code.trim())) return 'Código: de 3 a 20 letras ou números, sem espaços.';
@@ -271,9 +277,14 @@ export default function CampaignsPage() {
               Subtítulo (opcional)
               <input className="input mt-1" value={form.subtitle} maxLength={120} onChange={(e) => set({ subtitle: e.target.value })} placeholder="Ex.: 20% off em todas as pizzas" />
             </label>
-            <label className="block text-sm">
-              Imagem do banner (link, formato largo 16:7)
-              <input className="input mt-1" value={form.imageUrl} onChange={(e) => set({ imageUrl: e.target.value })} placeholder="https://..." />
+            <div className="block text-sm">
+              Imagem do banner (formato largo 16:7, ou faixa com a arte completa)
+              <div className="mt-1">
+                <ImageField value={form.imageUrl} onChange={(imageUrl) => set({ imageUrl })} endpoint="/admin/uploads" aspect="aspect-[16/7]" max={2400} />
+              </div>
+            </div>
+            <label className="flex items-center gap-3 text-sm">
+              <Toggle checked={form.fullArt} onChange={(v) => set({ fullArt: v })} /> A arte já tem o texto (mostrar a imagem inteira, sem título por cima)
             </label>
 
             <fieldset className="space-y-2">
