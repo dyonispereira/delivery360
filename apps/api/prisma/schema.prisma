@@ -250,28 +250,41 @@ enum PaymentStatus {
 
 /// Configuração da loja online do restaurante (1 por restaurante).
 model Store {
-  tenantId         String          @id @map("tenant_id") @db.Uuid
+  tenantId            String          @id @map("tenant_id") @db.Uuid
   /// Endereço público: /loja/<slug>
-  slug             String          @unique
-  displayName      String          @map("display_name")
-  description      String?
-  logoUrl          String?         @map("logo_url")
+  slug                String          @unique
+  displayName         String          @map("display_name")
+  description         String?
+  logoUrl             String?         @map("logo_url")
   /// Foto de capa no topo da loja online.
-  coverUrl         String?         @map("cover_url")
-  whatsapp         String?
+  coverUrl            String?         @map("cover_url")
+  whatsapp            String?
   /// Cidade e UF (ex.: "Campinas - SP"), usada na rota do motoboy.
-  city             String?
-  isOpen           Boolean         @default(false) @map("is_open")
-  acceptsDelivery  Boolean         @default(true) @map("accepts_delivery")
-  acceptsPickup    Boolean         @default(true) @map("accepts_pickup")
-  minOrderCents    Int             @default(0) @map("min_order_cents")
+  city                String?
+  isOpen              Boolean         @default(false) @map("is_open")
+  acceptsDelivery     Boolean         @default(true) @map("accepts_delivery")
+  acceptsPickup       Boolean         @default(true) @map("accepts_pickup")
+  minOrderCents       Int             @default(0) @map("min_order_cents")
   /// Formas de pagamento aceitas (lista de PaymentMethod).
-  paymentMethods   PaymentMethod[] @default([PIX, CASH_ON_DELIVERY, CARD_ON_DELIVERY]) @map("payment_methods")
-  estimatedMinutes Int             @default(40) @map("estimated_minutes")
+  paymentMethods      PaymentMethod[] @default([PIX, CASH_ON_DELIVERY, CARD_ON_DELIVERY]) @map("payment_methods")
+  estimatedMinutes    Int             @default(40) @map("estimated_minutes")
   /// Taxa de serviço do salão sugerida no fechamento da mesa (pontos-base, 1000 = 10%; 0 = sem taxa).
-  serviceFeeBps    Int             @default(1000) @map("service_fee_bps")
-  updatedAt        DateTime        @updatedAt @map("updated_at")
-  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  serviceFeeBps       Int             @default(1000) @map("service_fee_bps")
+  /// Pedido agendado: o cliente escolhe dia e horário (vale também com a loja fechada agora).
+  schedulingEnabled   Boolean         @default(false) @map("scheduling_enabled")
+  /// Janela de horários para agendar, no horário de Brasília (ex.: 18:00 às 23:00; fechar antes de abrir = passa da meia-noite).
+  scheduleOpensAt     String          @default("18:00") @map("schedule_opens_at")
+  scheduleClosesAt    String          @default("23:00") @map("schedule_closes_at")
+  /// Dias da semana com agendamento (0 = domingo). Vazio = todos.
+  scheduleWeekdays    Int[]           @default([]) @map("schedule_weekdays")
+  /// Antecedência mínima em minutos (ex.: 60 = só a partir de daqui a 1 hora).
+  scheduleLeadMinutes Int             @default(60) @map("schedule_lead_minutes")
+  /// Até quantos dias à frente o cliente pode agendar.
+  scheduleMaxDays     Int             @default(7) @map("schedule_max_days")
+  /// Intervalo entre os horários oferecidos (minutos).
+  scheduleSlotMinutes Int             @default(30) @map("schedule_slot_minutes")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+  tenant              Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@map("stores")
 }
@@ -467,6 +480,9 @@ model Order {
   externalCode          String?              @map("external_code")
   /// Código de entrega informado pelo app (no lugar dos 4 últimos dígitos do telefone).
   deliveryCode          String?              @map("delivery_code")
+  /// Pedido agendado: dia e hora em que o cliente quer receber (ou retirar). Vazio = o quanto antes.
+  /// Fica em "Agendados" no painel e só entra na cozinha perto da hora (horário − tempo de preparo).
+  scheduledFor          DateTime?            @map("scheduled_for")
   /// Troco para quanto (dinheiro na entrega).
   changeForCents        Int?                 @map("change_for_cents")
   utmSource             String?              @map("utm_source")

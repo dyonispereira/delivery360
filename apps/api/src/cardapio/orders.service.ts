@@ -20,6 +20,7 @@ import { AsaasError } from '../payments/asaas.client';
 import { CreateOrderDto, PayCardDto, QuoteOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
 import { CouponError, couponDiscount, couponLabel } from './coupon-rules';
 import { LoyaltyError, levelFor, loyaltyDiscounts, pointsFor } from './loyalty-rules';
+import { ScheduleError, checkSlot, releaseAt, scheduleLabel, scheduleSlots } from './schedule';
 import { awardOrderPoints, earnedLastYear, ensureReferralCode, loyaltyProgram, pointsBalance, refundOrderPoints } from './loyalty.service';
 import { activePromoPrice, effectivePrice, unitCost, type CostItem } from '@delivery360/shared';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
@@ -225,6 +226,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         /** O pagamento online desta loja (Pix ou cartão) pede CPF (exigência do Asaas). */
         pixNeedsDocument: !!gateway?.requiresDocument,
         estimatedMinutes: store.estimatedMinutes,
+        /** Pedido agendado: dias e horários que o cliente pode escolher agora. */
+        schedule: store.schedulingEnabled ? { days: scheduleSlots(store, now) } : null,
         rating: ratings._count.ratingStore >= 3 ? { average: Math.round((ratings._avg.ratingStore ?? 0) * 10) / 10, count: ratings._count.ratingStore } : null,
       },
       categories: categories
@@ -399,6 +402,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       couponCode?: string;
       rewardId?: string;
       referralCode?: string;
+      scheduledFor?: string;
     },
     phone: string | null,
     /** Entrega sem bairro escolhido ainda: calcula sem taxa (só na prévia). */
@@ -411,6 +415,20 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     ]);
     const now = new Date();
 
+    // Agendado: o horário tem que estar entre os oferecidos. Com horário válido, vale mesmo com a loja fechada agora.
+    let scheduledFor: Date | null = null;
+    if (input.scheduledFor) {
+      try {
+        scheduledFor = checkSlot(store, input.scheduledFor, now);
+      } catch (err) {
+        if (err instanceof ScheduleError) throw new BadRequestException(err.message);
+        throw err;
+      }
+    } else if (!store.isOpen && store.schedulingEnabled) {
+      throw new BadRequestException('A loja está fechada agora. Escolha um horário para agendar o pedido.');
+    }
+    const rules = scheduledFor ? { ...store, isOpen: true } : store;
+
     let priced;
     try {
       priced = priceOrder(
@@ -421,7 +439,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           // O troco é conferido depois do cupom, contra o total final.
           items: input.items,
         },
-        zoneless ? { ...store, acceptsPickup: true } : store,
+        zoneless ? { ...rules, acceptsPickup: true } : rules,
         menu,
         zones,
       );
@@ -509,7 +527,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (input.paymentMethod === 'CASH_ON_DELIVERY' && input.changeForCents != null && input.changeForCents < totalCents) {
       throw new BadRequestException(`O troco precisa ser para um valor maior que o total (R$ ${(totalCents / 100).toFixed(2).replace('.', ',')}).`);
     }
-    return { priced, costOf, coupon, boost, loyalty, totalCents };
+    return { priced, costOf, coupon, boost, loyalty, totalCents, scheduledFor };
   }
 
   /**
@@ -649,7 +667,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (!phone) throw new BadRequestException('Informe um telefone com DDD.');
     if (dto.type === 'DELIVERY' && !dto.address) throw new BadRequestException('Informe o endereço de entrega.');
 
-    const { priced, costOf, coupon, boost, loyalty, totalCents } = await this.quoteFor(store, { ...dto, zoneId: dto.address?.zoneId }, phone);
+    const { priced, costOf, coupon, boost, loyalty, totalCents, scheduledFor } = await this.quoteFor(store, { ...dto, zoneId: dto.address?.zoneId }, phone);
 
     const online = ONLINE_METHODS.includes(dto.paymentMethod);
     const gateway = online ? await this.payments.gatewayFor(tenantId) : null;
@@ -732,6 +750,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           totalCents: totalCents,
           paymentMethod: dto.paymentMethod,
           changeForCents: dto.paymentMethod === 'CASH_ON_DELIVERY' ? (dto.changeForCents ?? null) : null,
+          scheduledFor,
           utmSource: dto.utmSource || null,
           utmCampaign: dto.utmCampaign || null,
           items: {
@@ -748,7 +767,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
               options: { create: i.options.map((o) => ({ optionId: o.optionId, groupName: o.groupName, name: o.name, priceCents: o.priceCents })) },
             })),
           },
-          statusHistory: { create: { status, note: online ? 'Aguardando pagamento' : 'Pagamento na entrega' } },
+          statusHistory: {
+            create: {
+              status,
+              note: [online ? 'Aguardando pagamento' : 'Pagamento na entrega', scheduledFor ? `Agendado para ${scheduleLabel(scheduledFor)}` : null].filter(Boolean).join(' · '),
+            },
+          },
           payments: {
             create: {
               tenantId,
@@ -805,6 +829,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       status: order.status,
       type: order.type,
       createdAt: order.createdAt,
+      scheduledFor: order.scheduledFor,
       customerName: order.customerName,
       address:
         order.type === 'DELIVERY'
@@ -1141,8 +1166,24 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   // ---------- Painel e cozinha ----------
 
   /** Pedidos em andamento + os finalizados/cancelados das últimas 12 horas, do mais antigo ao mais novo. */
-  listBoard(tenantId: string) {
+  /**
+   * Agendados aparecem com `held: true` até a hora de começar (horário − tempo estimado da loja):
+   * ficam na coluna "Agendados" do painel e fora da cozinha.
+   */
+  async listBoard(tenantId: string) {
     const since = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    const [store, orders] = await Promise.all([
+      this.prisma.store.findUnique({ where: { tenantId }, select: { estimatedMinutes: true } }),
+      this.listBoardOrders(tenantId, since),
+    ]);
+    const now = Date.now();
+    return orders.map((o) => {
+      const release = o.scheduledFor ? releaseAt(o.scheduledFor, store?.estimatedMinutes ?? 40) : null;
+      return { ...o, releaseAt: release, held: !!release && o.status === 'PAID' && release.getTime() > now };
+    });
+  }
+
+  private listBoardOrders(tenantId: string, since: Date) {
     return this.prisma.order.findMany({
       where: {
         tenantId,

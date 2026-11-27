@@ -24,6 +24,10 @@ export interface BoardOrder {
   subtotalCents: number;
   deliveryFeeCents: number;
   totalCents: number;
+  /** Pedido agendado: horário do cliente, quando entra na cozinha e se ainda está esperando. */
+  scheduledFor?: string | null;
+  releaseAt?: string | null;
+  held?: boolean;
   /** Prêmio da fidelidade trocado por pontos (ex.: "Coca 2L grátis"). */
   rewardName?: string | null;
   paymentMethod: PaymentMethod;
@@ -67,7 +71,8 @@ export function primaryAction(o: Pick<BoardOrder, 'status' | 'type'>, withCourie
 
 /** Minutos desde que o pedido entrou na operação (pago). */
 export function minutesSince(o: BoardOrder, now: number): number {
-  const paid = o.statusHistory.find((h) => h.status === 'PAID')?.createdAt ?? o.createdAt;
+  // Agendado: conta a partir da hora de começar, não de quando o cliente pediu.
+  const paid = o.releaseAt ?? o.statusHistory.find((h) => h.status === 'PAID')?.createdAt ?? o.createdAt;
   return Math.max(0, Math.floor((now - new Date(paid).getTime()) / 60000));
 }
 
@@ -128,8 +133,10 @@ export function useBoard(intervalMs: number, onNew?: (orders: BoardOrder[]) => v
   const load = useCallback(async () => {
     try {
       const list = await api<BoardOrder[]>('/cardapio/orders/board', { tenant: true });
-      const fresh = seen.current ? list.filter((o) => o.status === 'PAID' && !seen.current!.has(o.id)) : [];
-      seen.current = new Set(list.map((o) => o.id));
+      // Agendado avisa duas vezes: quando chega e quando é hora de começar (sai de "Agendados").
+      const key = (o: BoardOrder) => `${o.id}:${o.held ? 'held' : 'live'}`;
+      const fresh = seen.current ? list.filter((o) => o.status === 'PAID' && !seen.current!.has(key(o))) : [];
+      seen.current = new Set(list.map(key));
       setOrders(list);
       setError(null);
       if (fresh.length) onNewRef.current?.(fresh);
@@ -203,6 +210,7 @@ export function printOrder(o: BoardOrder, storeName: string, markPrinted = true)
     ${o.notes ? `<hr><div class="obs">OBS DO PEDIDO: ${esc(o.notes)}</div>` : ''}<hr>
     <div class="row"><span>Subtotal</span><span>${formatBRL(o.subtotalCents)}</span></div>
     ${o.type === 'DELIVERY' ? `<div class="row"><span>Entrega</span><span>${formatBRL(o.deliveryFeeCents)}</span></div>` : ''}
+    ${o.scheduledFor ? `<div class="obs">AGENDADO: ${esc(scheduleText(o.scheduledFor))}</div><hr>` : ''}
     ${o.subtotalCents + o.deliveryFeeCents > o.totalCents ? `<div class="row"><span>Descontos</span><span>-${formatBRL(o.subtotalCents + o.deliveryFeeCents - o.totalCents)}</span></div>` : ''}
     ${o.rewardName ? `<div class="obs">PRÊMIO FIDELIDADE: ${esc(o.rewardName)}</div>` : ''}
     <div class="row big"><span>TOTAL</span><span>${formatBRL(o.totalCents)}</span></div>
@@ -233,4 +241,12 @@ export async function autoPrint(o: BoardOrder, storeName: string) {
   } catch {
     /* sem conexão: o pedido continua no painel para imprimir à mão */
   }
+}
+
+/** "sáb, 29/11 às 20:00" no horário de Brasília. */
+export function scheduleText(iso: string) {
+  const d = new Date(iso);
+  const day = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' }).replace('.', '');
+  const hm = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+  return `${day} às ${hm}`;
 }
