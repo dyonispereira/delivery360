@@ -451,7 +451,7 @@ export function flame(x, y, s = 1, c1 = '#F2B705', c2 = '#E4572E') {
   </g>`;
 }
 
-export function logoSVG(size = 1024) {
+export function logoSVG(size = 1024, name = 'Fornalha', fontSize = 210) {
   // Pensado para aparecer pequeno (avatar da loja): chama grande e nome legível.
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 1024 1024">
     <defs>
@@ -460,7 +460,7 @@ export function logoSVG(size = 1024) {
     <rect width="1024" height="1024" fill="url(#lg)"/>
     <rect x="40" y="40" width="944" height="944" rx="80" fill="none" stroke="#F2B705" stroke-width="12" opacity="0.9"/>
     ${flame(512, 330, 3.4)}
-    <text x="512" y="720" text-anchor="middle" font-family="Bitstream Charter, Caladea, serif" font-weight="700" font-size="210" fill="#FFF4E0">Fornalha</text>
+    <text x="512" y="720" text-anchor="middle" font-family="Bitstream Charter, Caladea, serif" font-weight="700" font-size="${fontSize}" fill="#FFF4E0">${name}</text>
     <rect x="262" y="774" width="500" height="92" rx="46" fill="#B3261E"/>
     <text x="512" y="838" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="60" letter-spacing="14" fill="#FFF4E0">PIZZARIA</text>
   </svg>`;
