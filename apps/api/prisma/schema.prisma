@@ -67,6 +67,10 @@ model Tenant {
   coupons          Coupon[]
   diningTables     DiningTable[]
   tableTabs        TableTab[]
+  loyaltyProgram   LoyaltyProgram?
+  loyaltyRewards   LoyaltyReward[]
+  clubLevels       ClubLevel[]
+  loyaltyMoves     LoyaltyTransaction[]
 
   @@map("tenants")
 }
@@ -375,20 +379,28 @@ model Option {
 
 /// Cliente final que pediu pela loja online (por restaurante, identificado pelo telefone).
 model Customer {
-  id                String   @id @default(uuid()) @db.Uuid
-  tenantId          String   @map("tenant_id") @db.Uuid
+  id                String               @id @default(uuid()) @db.Uuid
+  tenantId          String               @map("tenant_id") @db.Uuid
   name              String
   /// Só dígitos, com DDD (ex.: 11987654321).
   phone             String
   /// CPF ou CNPJ, só dígitos (o Asaas exige para gerar o Pix).
   document          String?
   /// Id do cliente na conta Asaas do restaurante (para não cadastrar de novo).
-  gatewayCustomerId String?  @map("gateway_customer_id")
-  createdAt         DateTime @default(now()) @map("created_at")
-  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  gatewayCustomerId String?              @map("gateway_customer_id")
+  /// Indique e Ganhe: código do link de indicação deste cliente (ex.: ANA7K2). Criado no primeiro pedido.
+  referralCode      String?              @map("referral_code")
+  /// Quem indicou este cliente (só vale no primeiro pedido).
+  referredById      String?              @map("referred_by_id") @db.Uuid
+  referredBy        Customer?            @relation("Referral", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals         Customer[]           @relation("Referral")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  tenant            Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   orders            Order[]
+  loyaltyMoves      LoyaltyTransaction[]
 
   @@unique([tenantId, phone])
+  @@unique([tenantId, referralCode])
   @@map("customers")
 }
 
@@ -431,6 +443,18 @@ model Order {
   platformCoupon        Coupon?              @relation("PlatformBoost", fields: [platformCouponId], references: [id], onDelete: SetNull)
   /// Quanto o cliente economizou com preço de/por (já fora do subtotal). Vai para "Descontos e cupons" no DRE.
   promoDiscountCents    Int                  @default(0) @map("promo_discount_cents")
+  /// Fidelidade (bancado pelo restaurante): soma do prêmio trocado por pontos, do desconto do clube e da indicação.
+  loyaltyDiscountCents  Int                  @default(0) @map("loyalty_discount_cents")
+  /// Prêmio trocado por pontos neste pedido (nome congelado) e quantos pontos saíram.
+  rewardId              String?              @map("reward_id") @db.Uuid
+  rewardName            String?              @map("reward_name")
+  rewardDiscountCents   Int                  @default(0) @map("reward_discount_cents")
+  pointsSpent           Int                  @default(0) @map("points_spent")
+  /// Clube de benefícios: nível do cliente no pedido e o desconto que ele deu.
+  clubLevelName         String?              @map("club_level_name")
+  clubDiscountCents     Int                  @default(0) @map("club_discount_cents")
+  /// Indique e Ganhe: desconto do primeiro pedido de quem chegou por indicação.
+  referralDiscountCents Int                  @default(0) @map("referral_discount_cents")
   totalCents            Int                  @map("total_cents")
   paymentMethod         PaymentMethod        @map("payment_method")
   /// De onde veio o pedido (loja própria ou app de delivery).
@@ -1156,6 +1180,116 @@ model Coupon {
 
 /// Foto enviada pelo painel (produto, logo, capa, banner). Fica no banco para não sumir em hospedagem
 /// sem disco fixo; a loja busca por /public/uploads/:id, com cache longo (o conteúdo nunca muda).
+// =====================================================================
+// Fidelidade: pontos por pedido, prêmios, clube de benefícios e Indique e Ganhe
+// =====================================================================
+
+/// Regras do programa de fidelidade da loja (1 por restaurante). Tudo é bancado pelo restaurante.
+model LoyaltyProgram {
+  tenantId               String   @id @map("tenant_id") @db.Uuid
+  /// Pontos por pedido: o cliente ganha pontos quando o pedido é entregue ou retirado.
+  enabled                Boolean  @default(false)
+  /// Pontos a cada R$ 1,00 pago nos produtos (a taxa de entrega não conta).
+  pointsPerReal          Int      @default(1) @map("points_per_real")
+  /// Pontos vencem depois de N dias sem pedir (0 = não vencem).
+  expireDays             Int      @default(0) @map("expire_days")
+  /// Clube de benefícios: níveis com desconto automático.
+  clubEnabled            Boolean  @default(false) @map("club_enabled")
+  /// Indique e Ganhe.
+  referralEnabled        Boolean  @default(false) @map("referral_enabled")
+  /// Desconto do amigo indicado no primeiro pedido (centavos).
+  referralFriendCents    Int      @default(1000) @map("referral_friend_cents")
+  /// Pedido mínimo do amigo para ganhar o desconto (centavos).
+  referralMinOrderCents  Int      @default(3000) @map("referral_min_order_cents")
+  /// Pontos de quem indicou, quando o primeiro pedido do amigo é entregue.
+  referralReferrerPoints Int      @default(100) @map("referral_referrer_points")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("loyalty_programs")
+}
+
+enum RewardType {
+  /// Desconto em reais.
+  FIXED
+  /// Entrega grátis.
+  FREE_DELIVERY
+  /// Um produto do cardápio de graça (o cliente coloca no carrinho).
+  PRODUCT
+}
+
+/// Prêmio que o cliente troca por pontos no carrinho.
+model LoyaltyReward {
+  id            String     @id @default(uuid()) @db.Uuid
+  tenantId      String     @map("tenant_id") @db.Uuid
+  name          String
+  pointsCost    Int        @map("points_cost")
+  type          RewardType
+  /// FIXED: centavos de desconto.
+  valueCents    Int        @default(0) @map("value_cents")
+  /// PRODUCT: o produto que sai de graça (uma unidade, sem os adicionais).
+  productId     String?    @map("product_id") @db.Uuid
+  minOrderCents Int        @default(0) @map("min_order_cents")
+  active        Boolean    @default(true)
+  position      Int        @default(0)
+  createdAt     DateTime   @default(now()) @map("created_at")
+  tenant        Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, position])
+  @@map("loyalty_rewards")
+}
+
+/// Nível do clube de benefícios (ex.: Prata a partir de 300 pontos ganhos em 12 meses: 5% em todo pedido).
+model ClubLevel {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  name         String
+  /// Pontos ganhos nos últimos 12 meses para entrar no nível.
+  minPoints    Int      @map("min_points")
+  /// Desconto automático nos produtos (pontos-base, 500 = 5%).
+  discountBps  Int      @default(0) @map("discount_bps")
+  freeDelivery Boolean  @default(false) @map("free_delivery")
+  createdAt    DateTime @default(now()) @map("created_at")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@map("club_levels")
+}
+
+enum LoyaltyKind {
+  /// Ganhou com um pedido entregue.
+  EARN
+  /// Trocou por um prêmio.
+  REDEEM
+  /// Devolvidos (pedido com prêmio cancelado).
+  REFUND
+  /// Ganhou porque um amigo indicado fez o primeiro pedido.
+  REFERRAL
+  /// Ajuste manual do restaurante.
+  ADJUST
+  /// Venceram por falta de pedido.
+  EXPIRE
+}
+
+/// Extrato de pontos do cliente. O saldo é a soma.
+model LoyaltyTransaction {
+  id         String      @id @default(uuid()) @db.Uuid
+  tenantId   String      @map("tenant_id") @db.Uuid
+  customerId String      @map("customer_id") @db.Uuid
+  points     Int
+  kind       LoyaltyKind
+  /// Pedido que gerou o movimento (uma vez só por pedido e tipo).
+  orderId    String?     @map("order_id") @db.Uuid
+  note       String?
+  createdAt  DateTime    @default(now()) @map("created_at")
+  customer   Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, kind])
+  @@index([tenantId, customerId, createdAt])
+  @@map("loyalty_transactions")
+}
+
 model Upload {
   id          String   @id @default(uuid()) @db.Uuid
   /// Restaurante dono da foto; vazio = equipe Delivery360 (banners de campanha).

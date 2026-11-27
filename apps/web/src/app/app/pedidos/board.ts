@@ -24,6 +24,8 @@ export interface BoardOrder {
   subtotalCents: number;
   deliveryFeeCents: number;
   totalCents: number;
+  /** Prêmio da fidelidade trocado por pontos (ex.: "Coca 2L grátis"). */
+  rewardName?: string | null;
   paymentMethod: PaymentMethod;
   changeForCents: number | null;
   /** De onde veio: loja própria ou app de delivery (com o número do pedido no app). */
@@ -201,6 +203,8 @@ export function printOrder(o: BoardOrder, storeName: string, markPrinted = true)
     ${o.notes ? `<hr><div class="obs">OBS DO PEDIDO: ${esc(o.notes)}</div>` : ''}<hr>
     <div class="row"><span>Subtotal</span><span>${formatBRL(o.subtotalCents)}</span></div>
     ${o.type === 'DELIVERY' ? `<div class="row"><span>Entrega</span><span>${formatBRL(o.deliveryFeeCents)}</span></div>` : ''}
+    ${o.subtotalCents + o.deliveryFeeCents > o.totalCents ? `<div class="row"><span>Descontos</span><span>-${formatBRL(o.subtotalCents + o.deliveryFeeCents - o.totalCents)}</span></div>` : ''}
+    ${o.rewardName ? `<div class="obs">PRÊMIO FIDELIDADE: ${esc(o.rewardName)}</div>` : ''}
     <div class="row big"><span>TOTAL</span><span>${formatBRL(o.totalCents)}</span></div>
     <div>${o.type === 'DINE_IN' ? 'Soma na conta da mesa' : payment}</div><hr><div class="c">Delivery360</div>
   </body></html>`;

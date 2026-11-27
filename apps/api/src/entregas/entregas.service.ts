@@ -10,6 +10,7 @@ import { closeBatchIfDone } from './batch-utils';
 import { MAX_CODE_FAILS, checkDeliveryCode, maskPhone } from './delivery-code';
 import { DELIVERY_FAIL_LABELS } from '@delivery360/shared';
 import { CourierDto, CreateBatchDto, FailDeliveryDto, FixAttemptDto, LocationDto, UpdateCourierDto } from './entregas.dto';
+import { awardOrderPoints } from '../cardapio/loyalty.service';
 
 /** Pedidos que podem sair em lote: entrega, já em preparo ou prontos, ainda sem motoboy. */
 const DISPATCHABLE: OrderStatus[] = ['IN_PREPARATION', 'READY'];
@@ -266,6 +267,7 @@ export class EntregasService {
         },
       });
       await this.events.publish(order.tenantId, 'pedido.status', { orderId, from: 'OUT_FOR_DELIVERY', to: 'COMPLETED', totalCents: order.totalCents }, tx);
+      await awardOrderPoints(tx, orderId);
       // A Gestão usa este evento para lançar o custo do motoboy por entrega.
       await this.events.publish(
         order.tenantId,

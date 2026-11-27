@@ -121,7 +121,8 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         });
         // Preço de/por e cupom do restaurante: só no DRE (receita pelo preço cheio − desconto = o que foi pago).
         // Não é dinheiro, então não aparece em contas a pagar/receber nem no caixa.
-        const discountCents = order.promoDiscountCents + Math.max(0, restaurantCoupon);
+        // Fidelidade (prêmio por pontos, clube, indicação): também custo do restaurante.
+        const discountCents = order.promoDiscountCents + Math.max(0, restaurantCoupon) + order.loyaltyDiscountCents;
         if (discountCents > 0) {
           const memo = { day, status: (online ? 'PAID' : 'OPEN') as EntryStatus, source: 'cardapio', paymentMethod: method, channel: 'LOJA' as const, memo: true };
           await this.upsert(tx, t, `order:${order.id}:gross`, {
@@ -150,6 +151,21 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
               description: `Cupom ${order.couponCode ?? ''} · pedido #${order.number}`.replace(/ +/g, ' '),
               counterparty: order.customerName,
               amountCents: restaurantCoupon,
+            });
+          }
+          if (order.loyaltyDiscountCents > 0) {
+            const what = [
+              order.rewardDiscountCents > 0 ? `prêmio ${order.rewardName ?? ''}`.trim() : null,
+              order.clubDiscountCents > 0 ? `clube ${order.clubLevelName ?? ''}`.trim() : null,
+              order.referralDiscountCents > 0 ? 'indicação' : null,
+            ].filter(Boolean);
+            await this.upsert(tx, t, `order:${order.id}:loyalty`, {
+              ...memo,
+              type: 'PAYABLE',
+              code: '2.4',
+              description: `Fidelidade (${what.join(', ')}) · pedido #${order.number}`,
+              counterparty: order.customerName,
+              amountCents: order.loyaltyDiscountCents,
             });
           }
         }
@@ -209,7 +225,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         await tx.financialEntry.updateMany({
           where: {
             tenantId: t,
-            externalKey: { in: ['sale', 'fee', 'gross', 'promo', 'coupon'].map((k) => `order:${String(p.orderId)}:${k}`) },
+            externalKey: { in: ['sale', 'fee', 'gross', 'promo', 'coupon', 'loyalty'].map((k) => `order:${String(p.orderId)}:${k}`) },
             status: 'OPEN',
             paymentMethod: { not: 'APP_ONLINE' },
           },
@@ -225,7 +241,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         await tx.financialEntry.updateMany({
           where: {
             tenantId: t,
-            externalKey: { in: ['tax', 'fee', 'commission', 'gross', 'promo', 'coupon', 'coupon360'].map((k) => `order:${String(p.orderId)}:${k}`) },
+            externalKey: { in: ['tax', 'fee', 'commission', 'gross', 'promo', 'coupon', 'loyalty', 'coupon360'].map((k) => `order:${String(p.orderId)}:${k}`) },
             status: 'OPEN',
           },
           data: { status: 'CANCELLED', notes: 'Pedido cancelado' },
@@ -367,6 +383,12 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         couponCode: true,
         platformDiscountCents: true,
         couponPlatformCents: true,
+        loyaltyDiscountCents: true,
+        rewardName: true,
+        rewardDiscountCents: true,
+        clubLevelName: true,
+        clubDiscountCents: true,
+        referralDiscountCents: true,
         paymentMethod: true,
         channel: true,
         externalCode: true,

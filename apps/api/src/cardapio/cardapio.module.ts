@@ -11,10 +11,12 @@ import { CampaignsService } from './campaigns.service';
 import { CampaignsController } from './campaigns.controller';
 import { SalaoController } from './salao.controller';
 import { SalaoService } from './salao.service';
+import { LoyaltyController } from './loyalty.controller';
+import { LoyaltyService } from './loyalty.service';
 
 @Module({
-  controllers: [CardapioManageController, ChannelsController, PublicController, CampaignsController, SalaoController],
-  providers: [CatalogService, OrdersService, ChannelOrdersService, CouponsService, CombosService, CampaignsService, SalaoService],
+  controllers: [CardapioManageController, ChannelsController, PublicController, CampaignsController, SalaoController, LoyaltyController],
+  providers: [CatalogService, OrdersService, ChannelOrdersService, CouponsService, CombosService, CampaignsService, SalaoService, LoyaltyService],
   exports: [OrdersService],
 })
 export class CardapioModule {}
