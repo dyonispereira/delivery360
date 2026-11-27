@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   formatBRL,
   ORDER_STATUS_LABELS,
-  serviceFee,
+  parseBRL,
   splitBill,
   TAB_PAYMENT_METHODS,
   type PaymentMethod,
@@ -105,7 +105,7 @@ export default function SalaoPage() {
           onSent={(number) => {
             setToast(`Pedido #${number} enviado para a cozinha`);
             void loadTables().then(() => undefined);
-            setView({ kind: 'table', table: { ...view.table, tab: view.table.tab ?? { id: '', openedAt: new Date().toISOString(), people: null, subtotalCents: 0, rounds: 1, readyCount: 0, kitchenCount: 1 } } });
+            setView({ kind: 'table', table: { ...view.table, tab: view.table.tab ?? { id: '', openedAt: new Date().toISOString(), people: null, subtotalCents: 0, totalCents: 0, paidCents: 0, rounds: 1, readyCount: 0, kitchenCount: 1 } } });
           }}
         />
       )}
@@ -184,6 +184,7 @@ function TablesGrid({
               {t.tab ? (
                 <span className="text-sm">
                   <span className="block text-xl font-black">{formatBRL(t.tab.subtotalCents)}</span>
+                  {t.tab.paidCents > 0 && <span className="block text-xs font-semibold">{t.tab.paidCents >= t.tab.totalCents ? 'Paga · liberar' : `${formatBRL(t.tab.paidCents)} pago`}</span>}
                   <span className="text-white/85">
                     {sinceLabel(t.tab.openedAt)}
                     {t.tab.people ? ` · ${t.tab.people} pessoas` : ''}
@@ -312,11 +313,11 @@ function TableView({ table, onBack, onAdd, onClose }: { table: SalaoTable; onBac
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white/95 p-3 backdrop-blur md:left-64">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <div className="mr-auto">
-            <div className="text-xs text-zinc-500">Consumo</div>
-            <div className="text-xl font-black">{formatBRL(tab.subtotalCents)}</div>
+            <div className="text-xs text-zinc-500">{tab.paidCents > 0 ? `Total · ${formatBRL(tab.paidCents)} pago` : 'Consumo'}</div>
+            <div className="text-xl font-black">{formatBRL(tab.paidCents > 0 ? tab.remainingCents : tab.subtotalCents)}{tab.paidCents > 0 && <span className="ml-1 text-sm font-medium text-zinc-500">falta</span>}</div>
           </div>
           <button className="btn-ghost py-3" onClick={onClose}>
-            Fechar conta
+            {tab.paidCents > 0 ? 'Pagamentos' : 'Fechar conta'}
           </button>
           <button className="btn-primary py-3" onClick={onAdd}>
             + Itens
@@ -440,30 +441,35 @@ function AddItems({ table, onBack, onSent }: { table: SalaoTable; onBack: () => 
 
 // ---------- Fechar conta ----------
 
-function CloseTab({ table, feeBps, onBack, onClosed }: { table: SalaoTable; feeBps: number; onBack: () => void; onClosed: (total: number) => void }) {
-  const { tab, error: loadError } = useTab(table.id);
-  const [withFee, setWithFee] = useState(feeBps > 0);
+const methodLabel = (m: PaymentMethod) => TAB_PAYMENT_METHODS.find((x) => x.method === m)?.label ?? m;
+
+/**
+ * Conta da mesa: cada pagamento (cartão 1, cartão 2, Pix, dinheiro) dá baixa no que falta.
+ * A mesa só é liberada quando a conta está quitada.
+ */
+function CloseTab({ table, onBack, onClosed }: { table: SalaoTable; feeBps: number; onBack: () => void; onClosed: (total: number) => void }) {
+  const { tab, error: loadError, reload } = useTab(table.id);
+  const [current, setCurrent] = useState<TabDetail | null>(null);
   const [method, setMethod] = useState<PaymentMethod | null>(null);
+  const [amount, setAmount] = useState('');
+  const [label, setLabel] = useState('');
   const [split, setSplit] = useState(1);
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const t = current ?? tab;
+  useEffect(() => {
+    if (tab) setCurrent(tab);
+  }, [tab]);
   useEffect(() => {
     if (tab?.people) setSplit(tab.people);
   }, [tab?.people]);
 
-  if (tab === undefined) return <Spinner />;
-  if (tab === null) {
-    return (
-      <>
-        <Header title={table.name} subtitle="Esta conta já foi fechada" onBack={onBack} />
-      </>
-    );
-  }
+  if (t === undefined) return <Spinner />;
+  if (t === null) return <Header title={table.name} subtitle="Esta conta já foi fechada" onBack={onBack} />;
 
-  const live = tab.rounds.filter((r) => r.status !== 'CANCELLED');
+  const live = t.rounds.filter((r) => r.status !== 'CANCELLED');
   const inKitchen = live.filter((r) => r.status === 'PAID' || r.status === 'IN_PREPARATION');
-  // Itens somados (o mesmo prato em rodadas diferentes vira uma linha só).
   const lines = new Map<string, { name: string; quantity: number; totalCents: number }>();
   for (const r of live)
     for (const i of r.items) {
@@ -471,25 +477,50 @@ function CloseTab({ table, feeBps, onBack, onClosed }: { table: SalaoTable; feeB
       const cur = lines.get(key);
       lines.set(key, { name: i.options.length ? `${i.name} (${i.options.map((o) => o.name).join(', ')})` : i.name, quantity: (cur?.quantity ?? 0) + i.quantity, totalCents: (cur?.totalCents ?? 0) + i.totalCents });
     }
-  const fee = withFee ? serviceFee(tab.subtotalCents, feeBps) : 0;
-  const total = tab.subtotalCents + fee;
-  const parts = splitBill(total, split);
+  const remaining = t.remainingCents;
+  const perPerson = splitBill(t.totalCents, split);
+  const paidPct = t.totalCents ? Math.min(100, Math.round((t.paidCents / t.totalCents) * 100)) : 100;
+  const typed = parseBRL(amount);
+  const toPay = typed ?? remaining;
+  const isCash = method === 'CASH_ON_DELIVERY';
+  // Dinheiro: pode receber mais que o que falta (o resto é troco).
+  const applied = isCash ? Math.min(toPay, remaining) : toPay;
+  const change = isCash && toPay > remaining ? toPay - remaining : 0;
 
-  async function confirm() {
-    setSaving(true);
+  async function call(path: string, init: { method: string; body?: unknown }) {
+    setBusy(true);
     setError(null);
     try {
-      await api(`/cardapio/salao/tabs/${tab!.id}/close`, { method: 'POST', tenant: true, body: { serviceFee: withFee, paymentMethod: total > 0 ? method : undefined } });
-      onClosed(total);
+      const next = await api<TabDetail>(path, { ...init, tenant: true });
+      setCurrent(next);
+      return next;
     } catch (e) {
       setError((e as Error).message);
-      setSaving(false);
+      await reload();
+      return null;
+    } finally {
+      setBusy(false);
     }
+  }
+
+  async function addPayment() {
+    if (!method || applied <= 0) return;
+    const next = await call(`/cardapio/salao/tabs/${t!.id}/payments`, { method: 'POST', body: { method, amountCents: applied, label: label.trim() || undefined } });
+    if (next) {
+      setAmount('');
+      setLabel('');
+      setMethod(null);
+    }
+  }
+
+  async function release() {
+    const next = await call(`/cardapio/salao/tabs/${t!.id}/close`, { method: 'POST', body: {} });
+    if (next) onClosed(next.totalCents);
   }
 
   return (
     <>
-      <Header title={`Fechar conta · ${table.name}`} subtitle={`Aberta há ${sinceLabel(tab.openedAt)}`} onBack={onBack} />
+      <Header title={`Conta · ${table.name}`} subtitle={`Aberta há ${sinceLabel(t.openedAt)}`} onBack={onBack} />
       <ErrorBox message={loadError} />
       <div className="card mb-4 p-4">
         <ul className="mb-3 space-y-1 text-sm">
@@ -505,63 +536,130 @@ function CloseTab({ table, feeBps, onBack, onClosed }: { table: SalaoTable; feeB
         <div className="space-y-1 border-t border-dashed border-zinc-200 pt-3 text-sm">
           <div className="flex justify-between">
             <span>Consumo</span>
-            <span>{formatBRL(tab.subtotalCents)}</span>
+            <span>{formatBRL(t.subtotalCents)}</span>
           </div>
-          {feeBps > 0 && (
+          {t.serviceFeeBps > 0 && (
             <label className="flex cursor-pointer items-center justify-between gap-3">
               <span className="flex items-center gap-2">
-                <input type="checkbox" className="h-5 w-5 accent-[var(--brand)]" checked={withFee} onChange={(e) => setWithFee(e.target.checked)} />
-                Taxa de serviço ({(feeBps / 100).toLocaleString('pt-BR')}%)
+                <input
+                  type="checkbox"
+                  className="h-5 w-5 accent-[var(--brand)]"
+                  checked={t.serviceFee}
+                  disabled={busy}
+                  onChange={(e) => void call(`/cardapio/salao/tabs/${t.id}`, { method: 'PATCH', body: { serviceFee: e.target.checked } })}
+                />
+                Taxa de serviço ({(t.serviceFeeBps / 100).toLocaleString('pt-BR')}%)
               </span>
-              <span>{formatBRL(fee)}</span>
+              <span>{formatBRL(t.serviceFeeCents)}</span>
             </label>
           )}
           <div className="flex justify-between pt-1 text-xl font-black">
             <span>Total</span>
-            <span>{formatBRL(total)}</span>
+            <span>{formatBRL(t.totalCents)}</span>
           </div>
         </div>
       </div>
 
-      {total > 0 && (
-        <>
-          <div className="card mb-4 p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="font-semibold">Dividir a conta</span>
+      <div className="card mb-4 p-4">
+        <div className="mb-2 flex items-end justify-between">
+          <div>
+            <div className="text-xs text-zinc-500">Pago</div>
+            <div className="text-lg font-bold text-emerald-700">{formatBRL(t.paidCents)}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-zinc-500">{remaining < 0 ? 'Pago a mais' : 'Falta'}</div>
+            <div className={`text-2xl font-black ${remaining > 0 ? 'text-[var(--brand)]' : remaining < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{formatBRL(Math.abs(remaining))}</div>
+          </div>
+        </div>
+        <div className="mb-3 h-2 overflow-hidden rounded-full bg-zinc-100">
+          <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${paidPct}%` }} />
+        </div>
+        {t.payments.length > 0 && (
+          <ul className="divide-y divide-zinc-100 text-sm">
+            {t.payments.map((p, i) => (
+              <li key={p.id} className="flex items-center gap-2 py-2">
+                <span className="text-zinc-400">{i + 1}.</span>
+                <span className="flex-1">
+                  {methodLabel(p.method)}
+                  {p.label && <span className="text-zinc-500"> · {p.label}</span>}
+                </span>
+                <b>{formatBRL(p.amountCents)}</b>
+                <button
+                  className="rounded-full px-2 py-1 text-zinc-400 hover:bg-red-50 hover:text-red-600"
+                  disabled={busy}
+                  onClick={() => void call(`/cardapio/salao/tabs/${t.id}/payments/${p.id}`, { method: 'DELETE' })}
+                  aria-label={`Estornar pagamento ${i + 1}`}
+                  title="Estornar (lançado errado)"
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {remaining > 0 && (
+        <div className="card mb-4 space-y-3 p-4">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold">Receber pagamento</span>
+            <div className="flex items-center gap-2 text-sm text-zinc-500">
+              Dividir por
               <div className="flex items-center rounded-xl border border-zinc-200">
-                <button className="px-3 py-2 text-lg" onClick={() => setSplit(Math.max(1, split - 1))} aria-label="Menos pessoas">−</button>
-                <span className="w-8 text-center font-bold">{split}</span>
-                <button className="px-3 py-2 text-lg" onClick={() => setSplit(Math.min(50, split + 1))} aria-label="Mais pessoas">+</button>
+                <button className="px-3 py-1.5 text-lg" onClick={() => setSplit(Math.max(1, split - 1))} aria-label="Menos pessoas">−</button>
+                <span className="w-6 text-center font-bold text-zinc-900">{split}</span>
+                <button className="px-3 py-1.5 text-lg" onClick={() => setSplit(Math.min(50, split + 1))} aria-label="Mais pessoas">+</button>
               </div>
             </div>
-            <p className="text-sm text-zinc-600">
-              {split === 1 ? 'Uma pessoa paga tudo.' : parts[0] === parts[parts.length - 1] ? `${formatBRL(parts[0])} por pessoa` : `${formatBRL(parts[1])} por pessoa (uma paga ${formatBRL(parts[0])})`}
-            </p>
           </div>
-
-          <p className="mb-2 font-semibold">Como pagou?</p>
-          <div className="mb-4 grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             {TAB_PAYMENT_METHODS.map((m) => (
               <button
                 key={m.method}
                 onClick={() => setMethod(m.method)}
-                className={`rounded-2xl border px-2 py-4 text-sm font-semibold transition ${method === m.method ? 'border-[var(--brand)] bg-orange-50 text-[var(--brand)]' : 'border-zinc-200 bg-white'}`}
+                className={`rounded-2xl border px-2 py-3 text-sm font-semibold transition ${method === m.method ? 'border-[var(--brand)] bg-orange-50 text-[var(--brand)]' : 'border-zinc-200 bg-white'}`}
               >
                 {m.label}
               </button>
             ))}
           </div>
-        </>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-ghost py-1.5 text-xs" onClick={() => setAmount(formatBRL(remaining).replace('R$', '').trim())}>
+              Tudo que falta · {formatBRL(remaining)}
+            </button>
+            {split > 1 && (
+              <button className="btn-ghost py-1.5 text-xs" onClick={() => setAmount(formatBRL(Math.min(perPerson[perPerson.length - 1], remaining)).replace('R$', '').trim())}>
+                1 pessoa · {formatBRL(Math.min(perPerson[perPerson.length - 1], remaining))}
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-[1fr_1fr] gap-3">
+            <div>
+              <label className="label" htmlFor="pay-amount">{isCash ? 'Recebido em dinheiro' : 'Valor'}</label>
+              <input id="pay-amount" className="input py-3 text-base" inputMode="decimal" placeholder={formatBRL(remaining)} value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </div>
+            <div>
+              <label className="label" htmlFor="pay-label">Quem pagou (opcional)</label>
+              <input id="pay-label" className="input py-3 text-base" placeholder="Ex.: João" maxLength={40} value={label} onChange={(e) => setLabel(e.target.value)} />
+            </div>
+          </div>
+          {!isCash && typed !== null && typed > remaining && <p className="text-sm text-red-600">Passa do que falta ({formatBRL(remaining)}).</p>}
+          {change > 0 && <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">Troco: {formatBRL(change)}</p>}
+          <button className="btn-primary w-full py-3 text-base" disabled={busy || !method || applied <= 0 || (!isCash && toPay > remaining)} onClick={() => void addPayment()}>
+            {method ? `Registrar ${formatBRL(applied)} no ${methodLabel(method).toLowerCase()}` : 'Escolha a forma de pagamento'}
+          </button>
+        </div>
       )}
 
-      {inKitchen.length > 0 && (
+      {inKitchen.length > 0 && remaining <= 0 && (
         <p className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {inKitchen.length === 1 ? `O pedido #${inKitchen[0].number} ainda está na cozinha e` : `${inKitchen.length} pedidos ainda estão na cozinha e`} será{inKitchen.length > 1 ? 'ão' : ''} finalizado{inKitchen.length > 1 ? 's' : ''} junto com a conta.
+          {inKitchen.length === 1 ? `O pedido #${inKitchen[0].number} ainda está na cozinha e` : `${inKitchen.length} pedidos ainda estão na cozinha e`} será{inKitchen.length > 1 ? 'ão' : ''} finalizado{inKitchen.length > 1 ? 's' : ''} ao liberar a mesa.
         </p>
       )}
       <ErrorBox message={error} />
-      <button className="btn-primary mt-2 w-full py-4 text-base" disabled={saving || (total > 0 && !method)} onClick={() => void confirm()}>
-        {saving ? 'Fechando...' : total > 0 ? (method ? `Recebi ${formatBRL(total)} · liberar mesa` : 'Escolha a forma de pagamento') : 'Liberar mesa'}
+      {remaining < 0 && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">Pagaram {formatBRL(-remaining)} a mais (um item foi cancelado ou a taxa foi tirada). Estorne um pagamento para acertar.</p>}
+      <button className="btn mt-2 w-full bg-emerald-600 py-4 text-base text-white" disabled={busy || remaining !== 0} onClick={() => void release()}>
+        {remaining > 0 ? `Falta ${formatBRL(remaining)} para liberar a mesa` : remaining < 0 ? 'Acerte os pagamentos para liberar' : 'Conta quitada · liberar mesa'}
       </button>
     </>
   );

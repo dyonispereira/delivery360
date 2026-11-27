@@ -37,6 +37,10 @@ export interface SalaoTable {
     people: number | null;
     /** Soma dos pedidos não cancelados. */
     subtotalCents: number;
+    /** Consumo + taxa de serviço (se esta conta cobra). */
+    totalCents: number;
+    /** Já recebido (pagamentos parciais). */
+    paidCents: number;
     rounds: number;
     /** Rodadas prontas na cozinha esperando o garçom levar. */
     readyCount: number;
@@ -56,6 +60,30 @@ export interface TabRound {
   items: { id: string; name: string; quantity: number; totalCents: number; notes: string | null; options: { name: string }[] }[];
 }
 
+export interface TabPaymentInfo {
+  id: string;
+  method: PaymentMethod;
+  amountCents: number;
+  label: string | null;
+  createdAt: string;
+}
+
+/**
+ * Taxa de serviço de cada pagamento, proporcional ao valor (o último leva o arredondamento),
+ * para o caixa de cada forma de pagamento bater com o que entrou.
+ */
+export function allocateServiceFee(amounts: number[], feeCents: number): number[] {
+  const total = amounts.reduce((s, a) => s + a, 0);
+  if (!total || feeCents <= 0) return amounts.map(() => 0);
+  let left = feeCents;
+  return amounts.map((a, i) => {
+    if (i === amounts.length - 1) return left;
+    const part = Math.min(left, Math.round((a * feeCents) / total));
+    left -= part;
+    return part;
+  });
+}
+
 export interface TabDetail {
   id: string;
   tableId: string;
@@ -68,8 +96,15 @@ export interface TabDetail {
   subtotalCents: number;
   /** Taxa de serviço configurada na loja (pontos-base). */
   serviceFeeBps: number;
-  /** Fechada: o que foi cobrado. */
+  /** Esta conta cobra a taxa de serviço. */
+  serviceFee: boolean;
   serviceFeeCents: number;
+  /** Consumo + taxa de serviço. */
   totalCents: number;
+  payments: TabPaymentInfo[];
+  paidCents: number;
+  /** Quanto falta pagar (negativo = pagaram a mais, por exemplo depois de cancelar um item). */
+  remainingCents: number;
+  /** Forma de pagamento de maior valor (fechada). */
   paymentMethod: PaymentMethod | null;
 }

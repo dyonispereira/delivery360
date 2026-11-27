@@ -136,34 +136,72 @@ describe('Salão: garçom lança na mesa, cozinha recebe, caixa fecha (e2e)', ()
     expect((await owner().delete(`/cardapio/salao/tables/${ids.mesa1}`)).status).toBe(409);
   });
 
-  it('fecha a conta com 10%: venda no Salão (1.1) já paga, taxa de serviço fora da DRE, mesa livre', async () => {
-    expect((await waiter().post(`/cardapio/salao/tabs/${ids.tab}/close`).send({ serviceFee: true })).status).toBe(400);
-    const res = await waiter().post(`/cardapio/salao/tabs/${ids.tab}/close`).send({ serviceFee: true, paymentMethod: 'CARD_ON_DELIVERY' });
+  it('conta dividida: cada pagamento dá baixa, mas a mesa só libera quitada', async () => {
+    // Consumo 114,00 + 10% = 125,40.
+    const pay = (body: Record<string, unknown>) => waiter().post(`/cardapio/salao/tabs/${ids.tab}/payments`).send(body);
+    let res = await pay({ method: 'CARD_ON_DELIVERY', amountCents: 5_000, label: 'João' });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ status: 'OPEN', totalCents: 12_540, paidCents: 5_000, remainingCents: 7_540, serviceFee: true, serviceFeeCents: 1_140 });
+
+    // Ainda falta: não libera.
+    const early = await waiter().post(`/cardapio/salao/tabs/${ids.tab}/close`).send({});
+    expect(early.status).toBe(409);
+    expect(early.body.message).toContain('R$ 75,40');
+
+    // Passar do que falta é recusado; lançou errado, estorna.
+    expect((await pay({ method: 'PIX', amountCents: 9_000 })).status).toBe(400);
+    const wrong = await pay({ method: 'CASH_ON_DELIVERY', amountCents: 100 });
+    const wrongId = wrong.body.payments.find((x: { amountCents: number }) => x.amountCents === 100).id;
+    res = await waiter().delete(`/cardapio/salao/tabs/${ids.tab}/payments/${wrongId}`);
+    expect(res.body.paidCents).toBe(5_000);
+
+    // Com pagamento feito, cliente recusa os 10%: o total cai, o que falta também.
+    res = await waiter().patch(`/cardapio/salao/tabs/${ids.tab}`).send({ serviceFee: false });
+    expect(res.body).toMatchObject({ totalCents: 11_400, remainingCents: 6_400 });
+    res = await waiter().patch(`/cardapio/salao/tabs/${ids.tab}`).send({ serviceFee: true });
+    expect(res.body.remainingCents).toBe(7_540);
+
+    await pay({ method: 'CARD_ON_DELIVERY', amountCents: 5_000, label: 'Ana' });
+    res = await pay({ method: 'PIX', amountCents: 2_540 });
+    expect(res.body).toMatchObject({ paidCents: 12_540, remainingCents: 0, status: 'OPEN' });
+    expect((await pay({ method: 'PIX', amountCents: 1 })).status).toBe(409);
+
+    // Mesa ainda aparece ocupada (paga), até liberar.
+    const { tables } = (await waiter().get('/cardapio/salao/tables')).body;
+    expect(tables.find((t: { id: string }) => t.id === ids.mesa1).tab).toMatchObject({ paidCents: 12_540 });
+  });
+
+  it('libera a mesa quitada: cada pagamento no caixa com a sua forma, consumo em 1.1 e 10% fora da DRE', async () => {
+    const res = await waiter().post(`/cardapio/salao/tabs/${ids.tab}/close`).send({});
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ status: 'CLOSED', subtotalCents: 11_400, serviceFeeCents: 1_140, totalCents: 12_540, paymentMethod: 'CARD_ON_DELIVERY' });
 
     // A rodada que ainda estava na cozinha é finalizada junto.
     const r2 = await prisma.order.findUnique({ where: { id: ids.round2 } });
-    expect(r2).toMatchObject({ status: 'COMPLETED', paymentMethod: 'CARD_ON_DELIVERY' });
+    expect(r2.status).toBe('COMPLETED');
 
     await app.get(GestaoSyncService).processPending(tenantId);
-    const entries = await prisma.financialEntry.findMany({ where: { tenantId }, include: { account: true } });
-    const sales = entries.filter((e: { externalKey: string | null }) => e.externalKey?.endsWith(':sale'));
-    expect(sales).toHaveLength(2);
-    for (const s of sales) expect(s).toMatchObject({ status: 'PAID', paymentMethod: 'CARD_ON_DELIVERY' });
-    expect(sales.map((s: { account: { code: string } }) => s.account.code)).toEqual(['1.1', '1.1']);
-    expect(sales.reduce((n: number, s: { amountCents: number }) => n + s.amountCents, 0)).toBe(11_400);
-    expect(sales.map((s: { description: string }) => s.description).every((d: string) => d.startsWith('Mesa 1 · pedido #'))).toBe(true);
+    const entries = await prisma.financialEntry.findMany({ where: { tenantId, status: { not: 'CANCELLED' } }, include: { account: true } });
+    const byCode = (code: string) => entries.filter((e: { account: { code: string } }) => e.account.code === code);
+    // Sem venda por pedido no salão: o dinheiro entra pelos pagamentos.
+    expect(entries.filter((e: { externalKey: string | null }) => e.externalKey?.startsWith('order:') && e.externalKey.endsWith(':sale'))).toHaveLength(0);
 
-    const service = entries.filter((e: { externalKey: string | null }) => e.externalKey?.startsWith(`tab:${ids.tab}:`));
-    expect(service.map((e: { account: { code: string }; status: string; amountCents: number }) => [e.account.code, e.status, e.amountCents]).sort()).toEqual([
-      ['11.3', 'PAID', 1_140],
-      ['11.4', 'OPEN', 1_140],
-    ]);
+    const sales = byCode('1.1').map((e: { paymentMethod: string; amountCents: number; status: string }) => [e.paymentMethod, e.amountCents, e.status]);
+    const service = byCode('11.3').map((e: { paymentMethod: string; amountCents: number }) => [e.paymentMethod, e.amountCents]);
+    expect(sales.reduce((n: number, x: [string, number]) => n + x[1], 0)).toBe(11_400);
+    expect(service.reduce((n: number, x: [string, number]) => n + x[1], 0)).toBe(1_140);
+    // Caixa por forma de pagamento = o que entrou de fato: cartões 100,00 e Pix 25,40.
+    const cash = (m: string) => [...byCode('1.1'), ...byCode('11.3')].filter((e: { paymentMethod: string }) => e.paymentMethod === m).reduce((n: number, e: { amountCents: number }) => n + e.amountCents, 0);
+    expect(cash('CARD_ON_DELIVERY')).toBe(10_000);
+    expect(cash('PIX')).toBe(2_540);
+    expect(sales.every((x: [string, number, string]) => x[2] === 'PAID')).toBe(true);
+    expect(byCode('1.1').map((e: { description: string }) => e.description)).toContain('Mesa 1 · Cartão (maquininha) 1/3 (João)');
+    expect(byCode('11.4').map((e: { amountCents: number; status: string }) => [e.amountCents, e.status])).toEqual([[1_140, 'OPEN']]);
 
     const { tables } = (await waiter().get('/cardapio/salao/tables')).body;
     expect(tables.find((t: { id: string }) => t.id === ids.mesa1).tab).toBeNull();
-    expect((await waiter().post(`/cardapio/salao/tabs/${ids.tab}/close`).send({ serviceFee: false, paymentMethod: 'PIX' })).status).toBe(409);
+    expect((await waiter().post(`/cardapio/salao/tabs/${ids.tab}/payments`).send({ method: 'PIX', amountCents: 100 })).status).toBe(409);
+    expect((await waiter().post(`/cardapio/salao/tabs/${ids.tab}/close`).send({ paymentMethod: 'PIX' })).status).toBe(409);
   });
 
   it('nova conta na mesma mesa; rodada cancelada não entra na conta nem no financeiro', async () => {
@@ -173,11 +211,12 @@ describe('Salão: garçom lança na mesa, cozinha recebe, caixa fecha (e2e)', ()
     expect((await waiter().patch(`/cardapio/orders/${b.body.orderId}/status`).send({ status: 'CANCELLED' })).status).toBe(403);
     expect((await owner().patch(`/cardapio/orders/${b.body.orderId}/status`).send({ status: 'CANCELLED' })).status).toBe(200);
 
+    // Atalho "recebi tudo": sem pagamentos, registra o total numa forma só e libera.
     const closed = await waiter().post(`/cardapio/salao/tabs/${a.body.tab.id}/close`).send({ serviceFee: false, paymentMethod: 'PIX' });
-    expect(closed.body).toMatchObject({ subtotalCents: 700, serviceFeeCents: 0, totalCents: 700 });
+    expect(closed.body).toMatchObject({ subtotalCents: 700, serviceFeeCents: 0, totalCents: 700, paidCents: 700, paymentMethod: 'PIX' });
     await app.get(GestaoSyncService).processPending(tenantId);
-    const sale = await prisma.financialEntry.findUnique({ where: { tenantId_externalKey: { tenantId, externalKey: `order:${a.body.orderId}:sale` } } });
-    expect(sale).toMatchObject({ status: 'PAID', amountCents: 700 });
+    const sale = await prisma.financialEntry.findFirst({ where: { tenantId, externalKey: { startsWith: 'tabpay:' }, amountCents: 700 }, include: { account: true } });
+    expect(sale).toMatchObject({ status: 'PAID', paymentMethod: 'PIX', account: { code: '1.1' } });
     expect(await prisma.financialEntry.count({ where: { tenantId, externalKey: { startsWith: `order:${b.body.orderId}:` } } })).toBe(0);
 
     const today = (await owner().get('/cardapio/salao/tabs/closed')).body;

@@ -78,3 +78,28 @@ ALTER TABLE "table_tabs" ADD CONSTRAINT "table_tabs_tenant_id_fkey" FOREIGN KEY 
 -- AddForeignKey
 ALTER TABLE "table_tabs" ADD CONSTRAINT "table_tabs_table_id_fkey" FOREIGN KEY ("table_id") REFERENCES "dining_tables"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+
+-- Vários pagamentos por conta (vários cartões, Pix, dinheiro); a mesa só fecha quitada.
+-- AlterTable
+ALTER TABLE "table_tabs" ADD COLUMN     "service_fee" BOOLEAN NOT NULL DEFAULT true;
+
+-- CreateTable
+CREATE TABLE "tab_payments" (
+    "id" UUID NOT NULL,
+    "tenant_id" UUID NOT NULL,
+    "tab_id" UUID NOT NULL,
+    "method" "PaymentMethod" NOT NULL,
+    "amount_cents" INTEGER NOT NULL,
+    "label" TEXT,
+    "user_id" UUID,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "tab_payments_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE INDEX "tab_payments_tab_id_idx" ON "tab_payments"("tab_id");
+
+-- AddForeignKey
+ALTER TABLE "tab_payments" ADD CONSTRAINT "tab_payments_tab_id_fkey" FOREIGN KEY ("tab_id") REFERENCES "table_tabs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+

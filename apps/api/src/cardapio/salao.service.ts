@@ -1,15 +1,16 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { OrderStatus, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentMethod, Prisma } from '@prisma/client';
 import { serviceFee, type SalaoTable, type TabDetail } from '@delivery360/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../core/audit.service';
 import { EventsService } from '../core/events.service';
-import { BulkTablesDto, CloseTabDto, TableDto, TableOrderDto, UpdateTableDto } from './cardapio.dto';
+import { BulkTablesDto, CloseTabDto, TabPaymentDto, TableDto, TableOrderDto, UpdateTabDto, UpdateTableDto } from './cardapio.dto';
 import { OrdersService, trackingCode } from './orders.service';
 
 /** Cliente único do salão: o pedido de mesa não tem telefone (o "cliente" é a mesa). */
 const SALAO_CUSTOMER_KEY = 'salao';
 const KITCHEN: OrderStatus[] = ['PAID', 'IN_PREPARATION'];
+const brl = (c: number) => `R$ ${(c / 100).toFixed(2).replace('.', ',')}`;
 
 /**
  * Salão: o garçom lança os itens da mesa pelo celular, cada envio vira um pedido (rodada) que cai
@@ -38,7 +39,7 @@ export class SalaoService {
           tabs: {
             where: { status: 'OPEN' },
             take: 1,
-            include: { orders: { select: { status: true, totalCents: true } } },
+            include: { orders: { select: { status: true, totalCents: true } }, payments: { select: { amountCents: true } } },
           },
         },
       }),
@@ -60,6 +61,11 @@ export class SalaoService {
                 openedAt: tab.openedAt.toISOString(),
                 people: tab.people,
                 subtotalCents: live.reduce((s, o) => s + o.totalCents, 0),
+                totalCents: (() => {
+                  const sub = live.reduce((s, o) => s + o.totalCents, 0);
+                  return sub + (tab.serviceFee ? serviceFee(sub, store?.serviceFeeBps ?? 0) : 0);
+                })(),
+                paidCents: tab.payments.reduce((s, p) => s + p.amountCents, 0),
                 rounds: live.length,
                 readyCount: live.filter((o) => o.status === 'READY').length,
                 kitchenCount: live.filter((o) => KITCHEN.includes(o.status)).length,
@@ -212,17 +218,30 @@ export class SalaoService {
     return tab ? this.tabDetail(tenantId, tab.id) : null;
   }
 
-  async tabDetail(tenantId: string, tabId: string): Promise<TabDetail> {
+  /** Conta com o consumo, a taxa de serviço, os pagamentos já feitos e quanto falta. */
+  private async loadTab(db: Prisma.TransactionClient | PrismaService, tenantId: string, tabId: string) {
     const [tab, store] = await Promise.all([
-      this.prisma.tableTab.findFirst({
+      db.tableTab.findFirst({
         where: { id: tabId, tenantId },
-        include: { orders: { orderBy: { createdAt: 'asc' }, include: { items: { include: { options: true } } } } },
+        include: {
+          orders: { orderBy: { createdAt: 'asc' }, include: { items: { include: { options: true } } } },
+          payments: { orderBy: { createdAt: 'asc' } },
+        },
       }),
-      this.prisma.store.findUnique({ where: { tenantId }, select: { serviceFeeBps: true } }),
+      db.store.findUnique({ where: { tenantId }, select: { serviceFeeBps: true } }),
     ]);
     if (!tab) throw new NotFoundException('Conta não encontrada.');
-    const subtotalCents = tab.orders.filter((o) => o.status !== 'CANCELLED').reduce((s, o) => s + o.totalCents, 0);
+    const feeBps = store?.serviceFeeBps ?? 0;
     const open = tab.status === 'OPEN';
+    const subtotalCents = open ? tab.orders.filter((o) => o.status !== 'CANCELLED').reduce((s, o) => s + o.totalCents, 0) : tab.subtotalCents;
+    const serviceFeeCents = open ? (tab.serviceFee ? serviceFee(subtotalCents, feeBps) : 0) : tab.serviceFeeCents;
+    const totalCents = subtotalCents + serviceFeeCents;
+    const paidCents = tab.payments.reduce((s, p) => s + p.amountCents, 0);
+    return { tab, feeBps, subtotalCents, serviceFeeCents, totalCents, paidCents, remainingCents: totalCents - paidCents };
+  }
+
+  async tabDetail(tenantId: string, tabId: string): Promise<TabDetail> {
+    const { tab, feeBps, subtotalCents, serviceFeeCents, totalCents, paidCents, remainingCents } = await this.loadTab(this.prisma, tenantId, tabId);
     return {
       id: tab.id,
       tableId: tab.tableId,
@@ -241,60 +260,108 @@ export class SalaoService {
         totalCents: o.totalCents,
         items: o.items.map((i) => ({ id: i.id, name: i.name, quantity: i.quantity, totalCents: i.totalCents, notes: i.notes, options: i.options.map((x) => ({ name: x.name })) })),
       })),
-      subtotalCents: open ? subtotalCents : tab.subtotalCents,
-      serviceFeeBps: store?.serviceFeeBps ?? 0,
-      serviceFeeCents: open ? 0 : tab.serviceFeeCents,
-      totalCents: open ? subtotalCents : tab.totalCents,
+      subtotalCents,
+      serviceFeeBps: feeBps,
+      serviceFee: tab.serviceFee,
+      serviceFeeCents,
+      totalCents,
+      payments: tab.payments.map((p) => ({ id: p.id, method: p.method, amountCents: p.amountCents, label: p.label, createdAt: p.createdAt.toISOString() })),
+      paidCents,
+      remainingCents,
       paymentMethod: tab.paymentMethod,
     };
   }
 
+  private async lockOpenTab(tx: Prisma.TransactionClient, tenantId: string, tabId: string) {
+    // Trava a conta enquanto mexe nos pagamentos: dois celulares ao mesmo tempo não passam do total.
+    const rows = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM table_tabs WHERE id = ${tabId}::uuid AND tenant_id = ${tenantId}::uuid FOR UPDATE`;
+    if (!rows.length) throw new NotFoundException('Conta não encontrada.');
+    if (rows[0].status !== 'OPEN') throw new ConflictException('Esta conta já foi fechada.');
+  }
+
+  /** Taxa de serviço sim ou não nesta conta (o cliente pode recusar). */
+  async updateTab(tenantId: string, userId: string, tabId: string, dto: UpdateTabDto) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockOpenTab(tx, tenantId, tabId);
+      await tx.tableTab.update({ where: { id: tabId }, data: { serviceFee: dto.serviceFee } });
+      const { paidCents, totalCents } = await this.loadTab(tx, tenantId, tabId);
+      if (paidCents > totalCents) {
+        throw new ConflictException(`Já foram pagos ${brl(paidCents)}, mais que o novo total (${brl(totalCents)}). Estorne um pagamento antes.`);
+      }
+      await this.audit.log({ tenantId, userId, action: 'tab.service_fee', entity: 'table_tab', entityId: tabId, after: { serviceFee: dto.serviceFee } }, tx);
+    });
+    return this.tabDetail(tenantId, tabId);
+  }
+
+  /** Registra um pagamento (um cartão, um Pix, dinheiro): dá baixa na conta, mas a mesa só fecha quitada. */
+  async addPayment(tenantId: string, userId: string, tabId: string, dto: TabPaymentDto) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockOpenTab(tx, tenantId, tabId);
+      const { remainingCents } = await this.loadTab(tx, tenantId, tabId);
+      if (remainingCents <= 0) throw new ConflictException('A conta já está paga. É só liberar a mesa.');
+      if (dto.amountCents > remainingCents) throw new BadRequestException(`Falta só ${brl(remainingCents)} nesta conta.`);
+      const p = await tx.tabPayment.create({
+        data: { tenantId, tabId, method: dto.method, amountCents: dto.amountCents, label: dto.label?.trim() || null, userId },
+      });
+      await this.audit.log({ tenantId, userId, action: 'tab.payment', entity: 'table_tab', entityId: tabId, after: { paymentId: p.id, method: p.method, amountCents: p.amountCents } }, tx);
+    });
+    return this.tabDetail(tenantId, tabId);
+  }
+
+  /** Desfaz um pagamento lançado errado (só com a conta aberta). */
+  async removePayment(tenantId: string, userId: string, tabId: string, paymentId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockOpenTab(tx, tenantId, tabId);
+      const p = await tx.tabPayment.findFirst({ where: { id: paymentId, tabId, tenantId } });
+      if (!p) throw new NotFoundException('Pagamento não encontrado.');
+      await tx.tabPayment.delete({ where: { id: p.id } });
+      await this.audit.log({ tenantId, userId, action: 'tab.payment_removed', entity: 'table_tab', entityId: tabId, before: { paymentId: p.id, method: p.method, amountCents: p.amountCents } }, tx);
+    });
+    return this.tabDetail(tenantId, tabId);
+  }
+
   /**
-   * Fecha a conta: grava a forma de pagamento em cada rodada, finaliza o que ainda estava aberto
-   * (o cliente já está indo embora) e manda a venda para o financeiro. A mesa fica livre.
+   * Libera a mesa: só com a conta quitada (os pagamentos somam o total). Atalho: com `paymentMethod`
+   * e nada pago ainda, registra o total de uma vez nessa forma (um pagamento só).
+   * Finaliza o que ainda estava aberto (o cliente já está indo embora) e manda a venda para o financeiro.
    */
   async closeTab(tenantId: string, userId: string, tabId: string, dto: CloseTabDto) {
-    const tab = await this.prisma.tableTab.findFirst({ where: { id: tabId, tenantId }, include: { orders: true } });
-    if (!tab) throw new NotFoundException('Conta não encontrada.');
-    if (tab.status !== 'OPEN') throw new ConflictException('Esta conta já foi fechada.');
-    const live = tab.orders.filter((o) => o.status !== 'CANCELLED');
-    const subtotalCents = live.reduce((s, o) => s + o.totalCents, 0);
-    if (subtotalCents > 0 && !dto.paymentMethod) throw new BadRequestException('Escolha a forma de pagamento.');
-    const store = await this.prisma.store.findUnique({ where: { tenantId }, select: { serviceFeeBps: true } });
-    const serviceFeeCents = dto.serviceFee ? serviceFee(subtotalCents, store?.serviceFeeBps ?? 0) : 0;
-    const method = dto.paymentMethod ?? 'CASH_ON_DELIVERY';
     const now = new Date();
-
     await this.prisma.$transaction(async (tx) => {
-      // Condicional: se outro celular fechou a mesma conta antes, este para aqui.
-      const { count } = await tx.tableTab.updateMany({
-        where: { id: tabId, status: 'OPEN' },
-        data: {
-          status: 'CLOSED',
-          openKey: null,
-          closedAt: now,
-          closedById: userId,
-          paymentMethod: subtotalCents > 0 ? method : null,
-          subtotalCents,
-          serviceFeeCents,
-          totalCents: subtotalCents + serviceFeeCents,
-        },
+      await this.lockOpenTab(tx, tenantId, tabId);
+      if (dto.serviceFee !== undefined) await tx.tableTab.update({ where: { id: tabId }, data: { serviceFee: dto.serviceFee } });
+      let state = await this.loadTab(tx, tenantId, tabId);
+      if (dto.paymentMethod && state.paidCents === 0 && state.remainingCents > 0) {
+        await tx.tabPayment.create({ data: { tenantId, tabId, method: dto.paymentMethod, amountCents: state.remainingCents, userId } });
+        state = await this.loadTab(tx, tenantId, tabId);
+      }
+      const { tab, subtotalCents, serviceFeeCents, totalCents, paidCents, remainingCents } = state;
+      if (remainingCents > 0) throw new ConflictException(`Ainda falta receber ${brl(remainingCents)} para liberar a mesa.`);
+      if (remainingCents < 0) throw new ConflictException(`Os pagamentos passam do total em ${brl(-remainingCents)}. Estorne o pagamento a mais antes de liberar.`);
+
+      const payments = await tx.tabPayment.findMany({ where: { tabId }, orderBy: { createdAt: 'asc' } });
+      // Forma de pagamento "principal" (a de maior valor), para relatórios por pedido.
+      const byMethod = new Map<string, number>();
+      for (const p of payments) byMethod.set(p.method, (byMethod.get(p.method) ?? 0) + p.amountCents);
+      const main = ([...byMethod.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'CASH_ON_DELIVERY') as PaymentMethod;
+
+      await tx.tableTab.update({
+        where: { id: tabId },
+        data: { status: 'CLOSED', openKey: null, closedAt: now, closedById: userId, paymentMethod: payments.length ? main : null, subtotalCents, serviceFeeCents, totalCents },
       });
-      if (count === 0) throw new ConflictException('Esta conta acabou de ser fechada em outro aparelho.');
-      for (const o of live) {
-        await tx.order.update({ where: { id: o.id }, data: { paymentMethod: method, status: 'COMPLETED', deliveredAt: o.deliveredAt ?? now } });
+      for (const o of tab.orders.filter((x) => x.status !== 'CANCELLED')) {
+        await tx.order.update({ where: { id: o.id }, data: { paymentMethod: main, status: 'COMPLETED', deliveredAt: o.deliveredAt ?? now } });
         if (o.status !== 'COMPLETED') {
           await tx.orderStatusHistory.create({ data: { orderId: o.id, status: 'COMPLETED', userId, note: 'Conta da mesa fechada' } });
           await this.events.publish(tenantId, 'pedido.status', { orderId: o.id, from: o.status, to: 'COMPLETED', totalCents: o.totalCents }, tx);
         }
-        await tx.payment.create({ data: { tenantId, orderId: o.id, provider: 'offline', method, status: 'PAID', amountCents: o.totalCents, paidAt: now } });
-        await this.orders.publishReceived(tx, o.id, tenantId, o.totalCents, method);
+        // Venda por pedido: só imposto e descontos (o dinheiro entra pelos pagamentos da conta, abaixo).
+        await this.orders.publishReceived(tx, o.id, tenantId, o.totalCents, main);
       }
-      if (serviceFeeCents > 0) {
-        await this.events.publish(tenantId, 'salao.taxa_servico', { tabId, tableName: tab.tableName, amountCents: serviceFeeCents, paymentMethod: method }, tx);
-      }
+      // Cada pagamento entra no caixa com a sua forma (cartão 1, cartão 2, Pix...), com a parte da taxa de serviço.
+      if (paidCents > 0) await this.events.publish(tenantId, 'salao.conta_fechada', { tabId }, tx);
       await this.audit.log(
-        { tenantId, userId, action: 'tab.close', entity: 'table_tab', entityId: tabId, after: { subtotalCents, serviceFeeCents, paymentMethod: method } },
+        { tenantId, userId, action: 'tab.close', entity: 'table_tab', entityId: tabId, after: { subtotalCents, serviceFeeCents, payments: payments.map((p) => [p.method, p.amountCents]) } },
         tx,
       );
     });

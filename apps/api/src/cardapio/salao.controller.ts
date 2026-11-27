@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, NotFoundException, Param, ParseUUIDPipe,
 import { CurrentTenant, CurrentUser, RequireModule, TenantRoles } from '../access/access.decorators';
 import type { AuthUser, TenantContext } from '../access/access.types';
 import { PrismaService } from '../prisma/prisma.service';
-import { BulkTablesDto, CloseTabDto, ServiceFeeDto, TableDto, TableOrderDto, UpdateTableDto } from './cardapio.dto';
+import { BulkTablesDto, CloseTabDto, ServiceFeeDto, TabPaymentDto, TableDto, TableOrderDto, UpdateTabDto, UpdateTableDto } from './cardapio.dto';
 import { OrdersService } from './orders.service';
 import { SalaoService } from './salao.service';
 
@@ -94,6 +94,22 @@ export class SalaoController {
   @Get('tabs/:id')
   tab(@CurrentTenant() t: TenantContext, @Param('id', UUID) id: string) {
     return this.salao.tabDetail(t.tenantId, id);
+  }
+
+  @Patch('tabs/:id')
+  updateTab(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string, @Body() dto: UpdateTabDto) {
+    return this.salao.updateTab(t.tenantId, u.id, id, dto);
+  }
+
+  /** Pagamento parcial: cada cartão, Pix ou dinheiro dá baixa na conta; a mesa só libera quitada. */
+  @Post('tabs/:id/payments')
+  addPayment(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string, @Body() dto: TabPaymentDto) {
+    return this.salao.addPayment(t.tenantId, u.id, id, dto);
+  }
+
+  @Delete('tabs/:id/payments/:paymentId')
+  removePayment(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string, @Param('paymentId', UUID) paymentId: string) {
+    return this.salao.removePayment(t.tenantId, u.id, id, paymentId);
   }
 
   @Post('tabs/:id/close')

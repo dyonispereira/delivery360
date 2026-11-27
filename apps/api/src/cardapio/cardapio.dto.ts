@@ -436,10 +436,24 @@ export class TableOrderDto {
   @IsOptional() @IsInt() @Min(1) @Max(99) people?: number;
 }
 
+const TAB_METHODS = ['PIX', 'CASH_ON_DELIVERY', 'CARD_ON_DELIVERY'] as const;
+type TabMethod = (typeof TAB_METHODS)[number];
+
 export class CloseTabDto {
-  /** Obrigatória quando a conta tem valor. */
-  @IsOptional() @IsIn(['PIX', 'CASH_ON_DELIVERY', 'CARD_ON_DELIVERY']) paymentMethod?: 'PIX' | 'CASH_ON_DELIVERY' | 'CARD_ON_DELIVERY';
+  /** Atalho: sem pagamentos ainda, registra o total de uma vez nesta forma. */
+  @IsOptional() @IsIn(TAB_METHODS) paymentMethod?: TabMethod;
   /** Cobrar a taxa de serviço da loja (o cliente pode recusar). */
+  @IsOptional() @IsBoolean() serviceFee?: boolean;
+}
+
+/** Um pagamento da conta da mesa (um cartão, um Pix, dinheiro). */
+export class TabPaymentDto {
+  @IsIn(TAB_METHODS) method: TabMethod;
+  @IsInt() @Min(1) @Max(MAX_CENTS) amountCents: number;
+  @IsOptional() @IsString() @MaxLength(40) label?: string;
+}
+
+export class UpdateTabDto {
   @IsBoolean() serviceFee: boolean;
 }
 

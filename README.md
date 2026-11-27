@@ -50,8 +50,10 @@ não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TES
 - Em **Salão (garçom)** o dono cadastra as mesas (Mesa 1 a N de uma vez) e a taxa de serviço.
 - O garçom toca na mesa, escolhe os itens no celular e envia: cada envio é um pedido de mesa que cai na
   cozinha e na impressora com o nome da mesa. A conta da mesa soma os envios até o fechamento.
-- No fechamento: taxa de serviço opcional, divisão por pessoas e forma de pagamento (Pix, maquininha, dinheiro).
-  A venda entra no financeiro já paga na conta 1.1 Salão; a taxa de serviço fica fora da DRE (11.3 recebida, 11.4 a repassar à equipe).
+- Conta da mesa: taxa de serviço opcional e quantos pagamentos precisar (vários cartões, Pix, dinheiro com troco),
+  cada um dando baixa no que falta. A mesa só é liberada quando a conta está quitada.
+- No financeiro, cada pagamento entra já pago com a sua forma: o consumo em 1.1 Salão e a parte da taxa de serviço
+  em 11.3, fora da DRE (11.4 fica a repassar à equipe).
 
 ## Loja online (módulo Cardápio)
 
