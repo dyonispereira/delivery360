@@ -10,7 +10,7 @@ export const splitLabel = (bps: number) =>
 export function BannerPreview({ title, subtitle, imageUrl, code }: { title: string; subtitle: string; imageUrl: string; code: string | null }) {
   return (
     <div className="relative aspect-[16/7] w-full overflow-hidden rounded-2xl bg-zinc-200">
-      {/^https?:\/\//.test(imageUrl) && (
+      {/^(https?:\/\/|\/)/.test(imageUrl) && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
       )}

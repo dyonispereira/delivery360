@@ -133,7 +133,7 @@ const fromCampaign = (c: Campaign): Form => ({
 
 function toBody(f: Form): Record<string, unknown> | string {
   if (!f.title.trim()) return 'Dê um título para a campanha.';
-  if (!/^https?:\/\//.test(f.imageUrl.trim())) return 'Informe o link da imagem do banner (https://...).';
+  if (!/^(https?:\/\/|\/)\S+$/.test(f.imageUrl.trim())) return 'Informe o link da imagem do banner (https://...).';
   if (!f.allStores && f.tenantIds.length === 0) return 'Escolha pelo menos uma loja.';
   const int = (v: string) => (v.trim() ? Number.parseInt(v, 10) : null);
   const base = {

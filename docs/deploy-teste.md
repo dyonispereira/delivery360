@@ -20,8 +20,13 @@ As senhas são geradas pelo Render. Veja em **delivery360 > Environment**:
 | Super admin | `admin@delivery360.app` | `SEED_ADMIN_PASSWORD` |
 | Dono da Pizzaria Demo | `dono@pizzaria-demo.local` | `SEED_DEMO_PASSWORD` |
 | Dono da Pizzaria Simulada | `dono@pizzaria-simulada.local` | `SEED_SIMULATION_PASSWORD` (sem a variável: `simulacao123`) |
+| Dono da Fornalha Pizzaria (loja modelo) | `dono@fornalha.local` | `SEED_DEMO_PASSWORD` |
 
 Loja de demonstração: `<link>/loja/pizzaria-demo`. O PIX é simulado (botão "Simular pagamento").
+
+Loja modelo para apresentar a clientes: `<link>/loja/fornalha`. É uma pizzaria fictícia completa, com logo, capa, fotos ilustradas dos
+produtos, banners, ofertas de/por, cupons, combo e avaliações. As imagens ficam em `apps/web/public/vitrine/fornalha` e são
+geradas por `node apps/web/scripts/vitrine/render.mjs` (desenhadas em SVG, sem fotos de terceiros).
 
 A **Pizzaria Simulada** (`<link>/loja/pizzaria-simulada`) é criada uma vez, no primeiro deploy, com 30 dias de operação
 até aquele dia: cerca de R$ 80 mil em vendas (loja, iFood, 99Food e Keeta), 10 funcionários (2 de férias, 2 com férias

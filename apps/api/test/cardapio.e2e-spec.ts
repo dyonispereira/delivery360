@@ -235,6 +235,10 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
   });
 
   it('loja nova: capa, mais pedidos, nota média e dados para pedir de novo', async () => {
+    // Imagem: link completo ou arquivo do próprio site (fotos da loja modelo); nada de javascript: ou espaços.
+    expect((await owner().put('/cardapio/store').send({ coverUrl: '/vitrine/fornalha/capa.webp' })).status).toBe(200);
+    expect((await owner().put('/cardapio/store').send({ coverUrl: 'javascript:alert(1)' })).status).toBe(400);
+    expect((await owner().put('/cardapio/store').send({ coverUrl: '//evil.example/x.png' })).status).toBe(400);
     expect((await owner().put('/cardapio/store').send({ coverUrl: 'https://img.exemplo.com/capa.jpg' })).status).toBe(200);
     const menu = (await http().get(`/public/stores/${slug}`)).body;
     expect(menu.store.coverUrl).toBe('https://img.exemplo.com/capa.jpg');
