@@ -3,6 +3,7 @@ import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { MODULES, MODULE_CODES, type ModuleCode } from '@delivery360/shared';
 import { DEFAULT_ACCOUNTS, GROUPS } from '../src/gestao/chart';
+import { seedShowcase } from './showcase';
 
 const prisma = new PrismaClient();
 
@@ -47,7 +48,10 @@ async function main() {
 
   console.log(`Seed concluído. Super admin: ${email}`);
 
-  if (process.env.SEED_DEMO === 'true') await seedDemo();
+  if (process.env.SEED_DEMO === 'true') {
+    await seedDemo();
+    await seedShowcase(prisma);
+  }
 }
 
 /** Restaurante de demonstração para o link de teste (só roda com SEED_DEMO=true e só uma vez). */

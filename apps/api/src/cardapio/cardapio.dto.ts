@@ -8,7 +8,7 @@ import {
   IsISO8601,
   IsOptional,
   IsString,
-  IsUrl,
+  type ValidationOptions,
   IsUUID,
   Matches,
   Max,
@@ -17,6 +17,10 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+/** Imagem: link completo (https://...) ou arquivo do próprio site (/vitrine/...), como as fotos da loja modelo. */
+const IsImageUrl = (opts?: ValidationOptions) =>
+  Matches(/^(https?:\/\/[\w-]+(\.[\w-]+)*(:\d+)?(\/[^\s"'()<>\\]*)?|\/(?!\/)[\w\-./]+)$/, { message: 'Informe o link da imagem (https://...).', ...opts });
 
 export const PAYMENT_METHODS = ['PIX', 'CREDIT_CARD', 'CASH_ON_DELIVERY', 'CARD_ON_DELIVERY'] as const;
 /** Código PDV: letras, números, ponto, hífen e sublinhado (vazio apaga). */
@@ -29,8 +33,8 @@ export class UpdateStoreDto {
   slug?: string;
   @IsOptional() @IsString() @MinLength(2) @MaxLength(80) displayName?: string;
   @IsOptional() @IsString() @MaxLength(500) description?: string;
-  @IsOptional() @IsUrl({ require_protocol: true }) logoUrl?: string;
-  @IsOptional() @IsUrl({ require_protocol: true }) coverUrl?: string;
+  @IsOptional() @IsImageUrl() logoUrl?: string;
+  @IsOptional() @IsImageUrl() coverUrl?: string;
   @IsOptional() @Matches(/^\d{10,13}$/, { message: 'WhatsApp: só números, com DDD.' }) whatsapp?: string;
   @IsOptional() @IsString() @MaxLength(80) city?: string;
   @IsOptional() @IsBoolean() isOpen?: boolean;
@@ -81,7 +85,7 @@ export class ProductDto {
   @IsString() @MinLength(1) @MaxLength(120) name: string;
   @IsOptional() @IsString() @MaxLength(1000) description?: string;
   @IsInt() @Min(0) @Max(MAX_CENTS) priceCents: number;
-  @IsOptional() @IsUrl({ require_protocol: true }) imageUrl?: string;
+  @IsOptional() @IsImageUrl() imageUrl?: string;
   @IsOptional() @IsInt() position?: number;
   @IsOptional() @IsBoolean() active?: boolean;
   @IsOptional() @IsBoolean() available?: boolean;
@@ -100,7 +104,7 @@ export class UpdateProductDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(120) name?: string;
   @IsOptional() @IsString() @MaxLength(1000) description?: string;
   @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) priceCents?: number;
-  @IsOptional() @IsUrl({ require_protocol: true }) imageUrl?: string;
+  @IsOptional() @IsImageUrl() imageUrl?: string;
   @IsOptional() @IsInt() position?: number;
   @IsOptional() @IsBoolean() active?: boolean;
   @IsOptional() @IsBoolean() available?: boolean;
@@ -345,7 +349,7 @@ export class ComboDto {
   @IsUUID() categoryId: string;
   @IsString() @MinLength(1) @MaxLength(120) name: string;
   @IsOptional() @IsString() @MaxLength(500) description?: string;
-  @IsOptional() @IsUrl({ require_protocol: true }) imageUrl?: string;
+  @IsOptional() @IsImageUrl() imageUrl?: string;
   @IsInt() @Min(1) @Max(MAX_CENTS) priceCents: number;
   @IsOptional() @IsBoolean() active?: boolean;
   @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => ComboStepDto) steps: ComboStepDto[];
@@ -356,7 +360,7 @@ export class ComboDto {
 export class CampaignDto {
   @IsString() @MaxLength(60) title: string;
   @IsOptional() @IsString() @MaxLength(120) subtitle?: string | null;
-  @IsUrl({ require_protocol: true, require_tld: false }, { message: 'Informe o link da imagem do banner (https://...).' }) imageUrl: string;
+  @IsImageUrl({ message: 'Informe o link da imagem do banner (https://...).' }) imageUrl: string;
   /** Lojas da campanha. Vazio = todas. */
   @IsOptional() @IsArray() @ArrayMaxSize(500) @IsUUID('all', { each: true }) tenantIds?: string[];
   @IsOptional() @IsISO8601() startsAt?: string | null;
