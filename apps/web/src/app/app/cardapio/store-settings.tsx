@@ -148,7 +148,7 @@ export function StoreSettings({ canEdit }: { canEdit: boolean }) {
               </label>
             ))}
           </div>
-          <p className="mt-1 text-xs text-zinc-500">Cartão online entra junto com a contratação do gateway de pagamento.</p>
+          <p className="mt-1 text-xs text-zinc-500">Pix e cartão de crédito online só aparecem na loja depois de conectar a conta Asaas (card Pagamento online, abaixo).</p>
         </div>
         <ErrorBox message={error} />
         {saved && <p className="text-sm text-emerald-700">Salvo.</p>}

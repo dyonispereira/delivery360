@@ -22,10 +22,12 @@ export interface AsaasPayment {
   value: number;
   netValue?: number;
   billingType: string;
+  /** Página de pagamento do Asaas (fatura); no cartão, é onde o cliente digita os dados. */
+  invoiceUrl?: string;
 }
 
 /**
- * Cliente mínimo da API v3 do Asaas (só o que o Pix da loja usa).
+ * Cliente mínimo da API v3 do Asaas (só o que o Pix e o cartão da loja usam).
  * Docs: https://docs.asaas.com/reference — autenticação pelo header access_token; User-Agent obrigatório.
  */
 export class AsaasClient {
@@ -74,7 +76,7 @@ export class AsaasClient {
     return r.id;
   }
 
-  createPayment(input: { customer: string; billingType: 'PIX'; value: number; dueDate: string; description: string; externalReference?: string }) {
+  createPayment(input: { customer: string; billingType: 'PIX' | 'CREDIT_CARD'; value: number; dueDate: string; description: string; externalReference?: string }) {
     return this.call<AsaasPayment>('POST', '/payments', input);
   }
 

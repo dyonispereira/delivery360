@@ -49,6 +49,24 @@ describe('Asaas', () => {
     ]);
   });
 
+  it('cartão: cria a cobrança de cartão e devolve a página segura do Asaas, sem QR Code', async () => {
+    const asaas = fakeAsaas({
+      'POST /payments': () => [200, { id: 'pay_3', status: 'PENDING', value: 61, billingType: 'CREDIT_CARD', invoiceUrl: 'https://sandbox.asaas.com/i/pay3' }],
+    });
+    const gw = new AsaasGateway(new AsaasClient('k', true, asaas.fetchImpl));
+    const r = await gw.createCharge({ amountCents: 6100, method: 'CREDIT_CARD', description: 'Pedido', customer: { name: 'C', phone: '1', document: '52998224725', gatewayCustomerId: 'cus_9' } });
+    expect(r).toMatchObject({ externalId: 'pay_3', checkoutUrl: 'https://sandbox.asaas.com/i/pay3', gatewayCustomerId: 'cus_9' });
+    expect(r.pixCopyPaste).toBeUndefined();
+    expect(r.expiresAt!.getTime() - Date.now()).toBeGreaterThan(29 * 60_000);
+    expect(asaas.calls).toHaveLength(1);
+    expect(asaas.calls[0].body).toMatchObject({ billingType: 'CREDIT_CARD', value: 61 });
+
+    const noUrl = fakeAsaas({ 'POST /payments': () => [200, { id: 'pay_4', status: 'PENDING', value: 1, billingType: 'CREDIT_CARD' }] });
+    await expect(
+      new AsaasGateway(new AsaasClient('k', true, noUrl.fetchImpl)).createCharge({ amountCents: 100, method: 'CREDIT_CARD', description: 'x', customer: { name: 'C', phone: '1', document: '52998224725', gatewayCustomerId: 'cus_9' } }),
+    ).rejects.toBeInstanceOf(AsaasError);
+  });
+
   it('traduz os erros do Asaas', async () => {
     const asaas = fakeAsaas({
       'GET /myAccount/commercialInfo/': () => [401, {}],

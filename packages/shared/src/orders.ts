@@ -189,7 +189,7 @@ export interface OrderTracking {
   totalCents: number;
   paymentMethod: PaymentMethod;
   changeForCents: number | null;
-  payment: { status: PaymentStatus; pixCopyPaste: string | null; pixQrImage?: string | null; expiresAt: string | null; canSimulate: boolean } | null;
+  payment: { status: PaymentStatus; pixCopyPaste: string | null; pixQrImage?: string | null; checkoutUrl?: string | null; expiresAt: string | null; canSimulate: boolean } | null;
   history: { status: OrderStatus; createdAt: string }[];
   store: { slug: string; displayName: string; whatsapp: string | null; estimatedMinutes: number } | null;
   courierName: string | null;

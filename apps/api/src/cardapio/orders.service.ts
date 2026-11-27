@@ -218,9 +218,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         acceptsDelivery: store.acceptsDelivery,
         acceptsPickup: store.acceptsPickup,
         minOrderCents: store.minOrderCents,
-        // Pix pelo site só com conta de pagamento conectada (ou o Pix de teste ligado).
-        paymentMethods: store.paymentMethods.filter((m) => m !== 'CREDIT_CARD' && (m !== 'PIX' || !!gateway)),
-        /** O Pix desta loja pede CPF (exigência do Asaas). */
+        // Pix e cartão pelo site só com conta de pagamento conectada (ou o pagamento de teste ligado).
+        paymentMethods: store.paymentMethods.filter((m) => !ONLINE_METHODS.includes(m) || !!gateway),
+        /** O pagamento online desta loja (Pix ou cartão) pede CPF (exigência do Asaas). */
         pixNeedsDocument: !!gateway?.requiresDocument,
         estimatedMinutes: store.estimatedMinutes,
         rating: ratings._count.ratingStore >= 3 ? { average: Math.round((ratings._avg.ratingStore ?? 0) * 10) / 10, count: ratings._count.ratingStore } : null,
@@ -386,7 +386,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         {
           type: zoneless ? 'PICKUP' : input.type,
           zoneId: input.zoneId,
-          paymentMethod: input.paymentMethod ?? (store.paymentMethods.find((m) => m !== 'CREDIT_CARD') as PaymentMethod),
+          paymentMethod: input.paymentMethod ?? (store.paymentMethods.find((m) => !ONLINE_METHODS.includes(m)) ?? store.paymentMethods[0]),
           // O troco é conferido depois do cupom, contra o total final.
           items: input.items,
         },
@@ -520,10 +520,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const store = await this.findPublicStore(slug);
     const tenantId = store.tenantId;
 
-    // Cartão online depende do SDK do gateway no navegador (tokenização): entra junto com o gateway real.
-    if (dto.paymentMethod === 'CREDIT_CARD') {
-      throw new BadRequestException('Pagamento com cartão pela loja ainda não está disponível. Use PIX ou pague na entrega.');
-    }
     const phone = normalizePhone(dto.customer.phone);
     if (!phone) throw new BadRequestException('Informe um telefone com DDD.');
     if (dto.type === 'DELIVERY' && !dto.address) throw new BadRequestException('Informe o endereço de entrega.');
@@ -532,14 +528,15 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
     const online = ONLINE_METHODS.includes(dto.paymentMethod);
     const gateway = online ? await this.payments.gatewayFor(tenantId) : null;
-    if (online && !gateway) throw new BadRequestException('Esta loja ainda não recebe Pix pelo site. Escolha pagar na entrega.');
+    const card = dto.paymentMethod === 'CREDIT_CARD';
+    if (online && !gateway) throw new BadRequestException(`Esta loja ainda não recebe ${card ? 'cartão' : 'Pix'} pelo site. Escolha pagar na entrega.`);
     const document = normalizeDocument(dto.customer.document);
-    if (gateway?.requiresDocument && !document) throw new BadRequestException('Informe um CPF válido para pagar com Pix.');
+    if (gateway?.requiresDocument && !document) throw new BadRequestException(`Informe um CPF válido para pagar com ${card ? 'cartão' : 'Pix'}.`);
     const known = gateway ? await this.prisma.customer.findUnique({ where: { tenantId_phone: { tenantId, phone } } }) : null;
     const charge = gateway
       ? await this.charge(gateway, {
           amountCents: totalCents,
-          method: 'PIX',
+          method: card ? 'CREDIT_CARD' : 'PIX',
           description: `Pedido ${store.displayName}`,
           customer: {
             name: dto.customer.name.trim(),
@@ -618,6 +615,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
               externalId: charge?.externalId ?? null,
               pixCopyPaste: charge?.pixCopyPaste ?? null,
               pixQrImage: charge?.pixQrImage ?? null,
+              checkoutUrl: charge?.checkoutUrl ?? null,
               expiresAt: charge?.expiresAt ?? null,
             },
           },
@@ -685,6 +683,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
             status: payment.status,
             pixCopyPaste: payment.status === 'PENDING' ? payment.pixCopyPaste : null,
             pixQrImage: payment.status === 'PENDING' ? payment.pixQrImage : null,
+            checkoutUrl: payment.status === 'PENDING' ? payment.checkoutUrl : null,
             expiresAt: payment.expiresAt,
             canSimulate: payment.provider === 'fake' && payment.status === 'PENDING' && this.fakeEnabled(),
           }
@@ -862,11 +861,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return this.getTracking(code);
   }
 
-  /** PIX vencido: cancela o pedido que nunca foi pago. */
+  /** Pix ou cartão vencido: cancela o pedido que nunca foi pago. */
   async expireStale(now = new Date()) {
     const stale = await this.prisma.payment.findMany({
       where: { status: 'PENDING', expiresAt: { lt: now }, order: { status: 'AWAITING_PAYMENT' } },
-      select: { id: true, orderId: true, tenantId: true, provider: true, externalId: true },
+      select: { id: true, orderId: true, tenantId: true, provider: true, externalId: true, method: true },
       take: 200,
     });
     for (const p of stale) {
@@ -874,7 +873,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         const res = await tx.payment.updateMany({ where: { id: p.id, status: 'PENDING' }, data: { status: 'EXPIRED' } });
         if (res.count === 0) return;
         await tx.order.updateMany({ where: { id: p.orderId, status: 'AWAITING_PAYMENT' }, data: { status: 'CANCELLED' } });
-        await tx.orderStatusHistory.create({ data: { orderId: p.orderId, status: 'CANCELLED', note: 'PIX não pago no prazo' } });
+        await tx.orderStatusHistory.create({ data: { orderId: p.orderId, status: 'CANCELLED', note: p.method === 'CREDIT_CARD' ? 'Cartão não pago no prazo' : 'PIX não pago no prazo' } });
       });
       // Cancela a cobrança no gateway para o cliente não pagar um pedido que já foi cancelado.
       if (p.provider !== 'fake' && p.externalId) {
@@ -985,8 +984,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       } catch (e) {
         // Pago depois de cancelado (raro: a cobrança é apagada no Asaas quando o prazo vence). Fica registrado para devolver.
         if (!(e instanceof ConflictException)) throw e;
-        this.log.warn(`Pix ${id} pago depois de o pedido ${payment.orderId} ser cancelado: devolver pelo Asaas.`);
-        await this.prisma.orderStatusHistory.create({ data: { orderId: payment.orderId, status: 'CANCELLED', note: 'Pix pago depois do prazo: devolver ao cliente pelo Asaas' } });
+        this.log.warn(`Pagamento ${id} feito depois de o pedido ${payment.orderId} ser cancelado: devolver pelo Asaas.`);
+        await this.prisma.orderStatusHistory.create({ data: { orderId: payment.orderId, status: 'CANCELLED', note: payment.method === 'CREDIT_CARD' ? 'Cartão pago depois do prazo: estornar pelo Asaas' : 'Pix pago depois do prazo: devolver ao cliente pelo Asaas' } });
       }
       return { received: true };
     }
@@ -1002,7 +1001,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     } catch (e) {
       if (e instanceof AsaasError) {
         this.log.warn(`Asaas recusou a cobrança: ${e.message}`);
-        throw new BadRequestException(`Não foi possível gerar o Pix: ${e.message}`);
+        throw new BadRequestException(`Não foi possível gerar ${input.method === 'CREDIT_CARD' ? 'o pagamento com cartão' : 'o Pix'}: ${e.message}`);
       }
       throw e;
     }
