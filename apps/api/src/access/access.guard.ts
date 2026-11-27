@@ -17,6 +17,7 @@ import {
   STAFF_ROLES_KEY,
   TENANT_ROLES_KEY,
   TENANT_SCOPED,
+  WAITER_ALLOWED,
 } from './access.decorators';
 import { activeModuleCodes, hasTenantRole, resolveTenantAccess } from './access.rules';
 import { AuthUser, JwtPayload, TENANT_HEADER, TenantContext } from './access.types';
@@ -31,7 +32,8 @@ type AppRequest = Request & { user?: AuthUser; tenant?: TenantContext };
  * 2. @StaffOnly: só a nossa equipe;
  * 3. restaurante (cabeçalho x-tenant-id) para @TenantScoped, @RequireModule e @TenantRoles;
  * 4. @RequireModule: a chave do módulo precisa estar ligada para o restaurante;
- * 5. @TenantRoles: papel do usuário no restaurante.
+ * 5. garçom (WAITER): só rotas @WaiterAllowed;
+ * 6. @TenantRoles: papel do usuário no restaurante.
  */
 @Injectable()
 export class AccessGuard implements CanActivate {
@@ -70,6 +72,10 @@ export class AccessGuard implements CanActivate {
 
     if (requiredModule && !tenant.activeModules.includes(requiredModule)) {
       throw new ForbiddenException(`O módulo "${requiredModule}" não está ativo para este restaurante.`);
+    }
+    // Garçom só entra no salão (e no contexto do restaurante): nem pedidos da loja, nem cardápio, nem financeiro.
+    if (tenant.role === 'WAITER' && !user.staffRole && !this.meta<boolean>(WAITER_ALLOWED, ctx)) {
+      throw new ForbiddenException('O garçom só tem acesso ao salão.');
     }
     if (tenantRoles && !hasTenantRole(user.staffRole, tenant.role, tenantRoles)) {
       throw new ForbiddenException('Seu perfil neste restaurante não pode fazer esta ação.');

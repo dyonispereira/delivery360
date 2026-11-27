@@ -49,6 +49,17 @@ export interface SalaoTable {
   } | null;
 }
 
+/** Rodada pronta na cozinha esperando o garçom levar (painel do salão). */
+export interface ReadyRound {
+  id: string;
+  number: number;
+  tableId: string | null;
+  tableName: string | null;
+  waiterName: string | null;
+  readyAt: string;
+  items: { id: string; name: string; quantity: number; notes: string | null; options: string[] }[];
+}
+
 export interface TabRound {
   id: string;
   number: number;

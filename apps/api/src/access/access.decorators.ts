@@ -20,6 +20,10 @@ export const TenantScoped = () => SetMetadata(TENANT_SCOPED, true);
 /** Rota de um módulo: exige restaurante + chave do módulo ligada. */
 export const RequireModule = (code: ModuleCode) => SetMetadata(REQUIRED_MODULE, code);
 
+/** Rota que o garçom (papel WAITER) pode usar; o resto do sistema é fechado para ele. */
+export const WAITER_ALLOWED = 'access:waiterAllowed';
+export const WaiterAllowed = () => SetMetadata(WAITER_ALLOWED, true);
+
 /** Papéis de restaurante permitidos (a equipe sempre passa). */
 export const TenantRoles = (...roles: TenantRole[]) => SetMetadata(TENANT_ROLES_KEY, roles);
 

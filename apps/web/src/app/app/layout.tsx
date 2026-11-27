@@ -45,6 +45,11 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
     void loadTenant(tenantId);
   }, [user, loading, router, loadTenant]);
 
+  // Garçom que abrir outra tela volta para o salão.
+  useEffect(() => {
+    if (tenant?.role === 'WAITER' && !pathname.startsWith('/app/salao')) router.replace('/app/salao');
+  }, [tenant, pathname, router]);
+
   function switchTenant(id: string) {
     session.setTenantId(id);
     void loadTenant(id);
@@ -62,6 +67,7 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
       </div>
     );
   if (!tenant || !user) return <Spinner />;
+  if (tenant.role === 'WAITER' && !pathname.startsWith('/app/salao')) return <Spinner />;
 
   const ICONS: Record<string, IconName> = {
     '/app': 'home',
@@ -73,7 +79,9 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
     '/app/entregas': 'bike',
     '/app/trafego': 'megaphone',
   };
-  const nav = [
+  // Garçom: só o salão (mesas, prontos para servir e conta da mesa).
+  const waiter = tenant.role === 'WAITER';
+  const nav = waiter ? [{ href: '/app/salao', label: 'Salão' }] : [
     { href: '/app', label: 'Início' },
     // Operação do dia a dia primeiro: painel e cozinha fazem parte do módulo Cardápio.
     ...(tenant.activeModules.includes('cardapio')

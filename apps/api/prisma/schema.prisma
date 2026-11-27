@@ -26,6 +26,8 @@ enum TenantRole {
   OWNER
   MANAGER
   STAFF
+  /// Garçom: só vê o salão (mesas, prontos para servir e a conta da mesa).
+  WAITER
 }
 
 /// Restaurante cliente. Cada um é isolado dos demais.

@@ -49,11 +49,13 @@ describe('Salão: garçom lança na mesa, cozinha recebe, caixa fecha (e2e)', ()
     for (const [name, email, role] of [
       ['Dona Rosa', 'dono@salao.test', 'OWNER'],
       ['Caio Brandão Lima', 'garcom@salao.test', 'STAFF'],
+      ['Bia Garçom', 'bia@salao.test', 'WAITER'],
     ]) {
       await admin(http().post(`/admin/tenants/${tenantId}/users`)).send({ name, email, password: 'senha-forte-1', role });
     }
     ownerToken = (await http().post('/auth/login').send({ email: 'dono@salao.test', password: 'senha-forte-1' })).body.accessToken;
     waiterToken = (await http().post('/auth/login').send({ email: 'garcom@salao.test', password: 'senha-forte-1' })).body.accessToken;
+    ids.biaToken = (await http().post('/auth/login').send({ email: 'bia@salao.test', password: 'senha-forte-1' })).body.accessToken;
 
     await owner().get('/cardapio/store');
     ids.cat = (await owner().post('/cardapio/categories').send({ name: 'Pratos' })).body.id;
@@ -119,14 +121,32 @@ describe('Salão: garçom lança na mesa, cozinha recebe, caixa fecha (e2e)', ()
     expect(tables.find((t: { id: string }) => t.id === ids.mesa2).tab).toBeNull();
   });
 
-  it('cozinha deixa pronto e o garçom marca servido', async () => {
+  it('papel Garçom: só o salão; nada de painel da loja, cardápio ou financeiro', async () => {
+    const bia = as(ids.biaToken);
+    expect((await bia.get('/tenant/context')).body.role).toBe('WAITER');
+    expect((await bia.get('/cardapio/salao/tables')).status).toBe(200);
+    expect((await bia.get('/cardapio/salao/menu')).status).toBe(200);
+    expect((await bia.get('/cardapio/salao/ready')).status).toBe(200);
+    for (const url of ['/cardapio/orders/board', '/cardapio/menu', '/cardapio/store', '/gestao/entries']) {
+      expect((await bia.get(url)).status).toBe(403);
+    }
+    expect((await bia.patch(`/cardapio/orders/${ids.round1}/status`).send({ status: 'IN_PREPARATION' })).status).toBe(403);
+    expect((await bia.post('/cardapio/salao/tables').send({ name: 'Bar' })).status).toBe(403);
+  });
+
+  it('cozinha deixa pronto: aparece em "prontos para servir" e o garçom marca servido', async () => {
     expect((await waiter().post(`/cardapio/salao/orders/${ids.round1}/served`)).status).toBe(409);
     for (const status of ['IN_PREPARATION', 'READY']) {
       expect((await waiter().patch(`/cardapio/orders/${ids.round1}/status`).send({ status })).status).toBe(200);
     }
+    const ready = (await as(ids.biaToken).get('/cardapio/salao/ready')).body;
+    expect(ready).toHaveLength(1);
+    expect(ready[0]).toMatchObject({ id: ids.round1, tableName: 'Mesa 1', tableId: ids.mesa1 });
+    expect(ready[0].items[0]).toMatchObject({ name: 'Parmegiana', quantity: 2, options: ['Arroz e fritas'], notes: 'sem cebola' });
     const { tables } = (await waiter().get('/cardapio/salao/tables')).body;
     expect(tables.find((t: { id: string }) => t.id === ids.mesa1).tab.readyCount).toBe(1);
-    expect((await waiter().post(`/cardapio/salao/orders/${ids.round1}/served`)).status).toBe(201);
+    expect((await as(ids.biaToken).post(`/cardapio/salao/orders/${ids.round1}/served`)).status).toBe(201);
+    expect((await waiter().get('/cardapio/salao/ready')).body).toHaveLength(0);
     const o = await prisma.order.findUnique({ where: { id: ids.round1 } });
     expect(o.status).toBe('COMPLETED');
   });
