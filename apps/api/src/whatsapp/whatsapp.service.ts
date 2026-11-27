@@ -148,7 +148,8 @@ export class WhatsappService implements OnModuleInit, OnModuleDestroy {
       // Fila velha (loja sem WhatsApp, ou fora do ar por horas) é descartada.
       await this.prisma.orderStatusHistory.updateMany({ where: { notifiedAt: null, createdAt: { lt: since } }, data: { notifiedAt: now } });
       const rows = await this.prisma.orderStatusHistory.findMany({
-        where: { notifiedAt: null, createdAt: { gte: since }, order: { tenant: { whatsappAccount: { status: 'CONNECTED', notifyEnabled: true } } } },
+        where: { notifiedAt: null, createdAt: { gte: since }, // Só pedidos da loja própria: quem pediu pelo iFood/99/Keeta é avisado pelo app de lá.
+        order: { channel: 'LOJA', tenant: { whatsappAccount: { status: 'CONNECTED', notifyEnabled: true } } } },
         orderBy: { createdAt: 'asc' },
         take: 50,
         include: {

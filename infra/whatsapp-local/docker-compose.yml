@@ -1,0 +1,51 @@
+# WhatsApp para TESTE, rodando no seu computador (precisa do Docker Desktop).
+# Sobe a Evolution API + um túnel gratuito da Cloudflare, para o link de teste no Render conseguir falar com ela.
+# Uso: veja o README.md desta pasta. Só funciona enquanto o computador estiver ligado.
+services:
+  evolution:
+    image: evoapicloud/evolution-api:latest
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    env_file: .env
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: "8080"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:evolution@postgres:5432/evolution?schema=evolution_api
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+      DEL_INSTANCE: "false"
+      QRCODE_LIMIT: "30"
+      LOG_LEVEL: ERROR,WARN
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution
+      POSTGRES_DB: evolution
+    volumes:
+      - evolution_db:/var/lib/postgresql/data
+
+  # Túnel gratuito (sem conta): o endereço https://....trycloudflare.com aparece no log deste serviço.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - evolution
+    command: tunnel --no-autoupdate --url http://evolution:8080
+
+volumes:
+  evolution_instances:
+  evolution_db:

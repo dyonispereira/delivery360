@@ -37,7 +37,10 @@ export function statusMessage(m: StatusMessageInput): string | null {
         ? `📦 *Pedido ${n} pronto!*\n\nEstá aguardando o entregador para sair.${link}`
         : `🛍️ *Pedido ${n} pronto para retirada!*\n\nÉ só passar no balcão da *${m.storeName}* e informar o número ${n}.`;
     case 'OUT_FOR_DELIVERY':
-      return `🛵 *Pedido ${n} saiu para entrega!*\n\n${m.courierName ? `${firstName(m.courierName)} está a caminho.` : 'O entregador está a caminho.'}${m.trackingUrl ? ` Veja no mapa: ${m.trackingUrl}` : ''}`;
+      return (
+        `🛵 *Pedido ${n} saiu para entrega!*\n\n${m.courierName ? `${firstName(m.courierName)} está a caminho.` : 'O entregador está a caminho.'}${m.trackingUrl ? ` Veja no mapa: ${m.trackingUrl}` : ''}` +
+        `\n\n🔑 Ao receber, informe ao entregador o código de entrega: *os 4 últimos números do seu telefone*.`
+      );
     case 'COMPLETED':
       return (
         `🎉 *Pedido ${n} ${delivery ? 'entregue' : 'retirado'}!*\n\nBom apetite! Obrigado por pedir na *${m.storeName}*.` +

@@ -8,6 +8,7 @@ describe('WhatsApp', () => {
     expect(statusMessage({ ...base, status: 'AWAITING_PAYMENT' })).toBeNull();
     expect(statusMessage({ ...base, status: 'PAID', estimatedMinutes: 40 })).toContain('Oi, Ana!');
     expect(statusMessage({ ...base, status: 'OUT_FOR_DELIVERY', courierName: 'Carlos Lima' })).toContain('Carlos está a caminho');
+    expect(statusMessage({ ...base, status: 'OUT_FOR_DELIVERY' })).toContain('4 últimos números do seu telefone');
     expect(statusMessage({ ...base, status: 'COMPLETED', type: 'PICKUP' })).toContain('retirado');
     expect(statusMessage({ ...base, status: 'COMPLETED', trackingUrl: null })).not.toContain('Conta pra gente');
   });
