@@ -33,14 +33,40 @@ export default function TenantsPage() {
     api<PlanSummary[]>('/admin/plans').then(setPlans).catch(() => setPlans([]));
   }, []);
 
+  const active = tenants?.filter((t) => t.status === 'ACTIVE').length ?? 0;
+  const modulesOn = tenants?.reduce((n, t) => n + t.activeModules.length, 0) ?? 0;
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
+      <section className="relative overflow-hidden rounded-3xl bg-[image:var(--grad-fire)] p-6 text-white shadow-[0_24px_60px_-28px_rgba(229,37,42,0.6)] sm:p-8">
+        <div aria-hidden className="absolute -right-16 -top-20 h-64 w-64 rounded-full bg-white/15 blur-2xl" />
+        <div aria-hidden className="absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-black/20 blur-3xl" />
+        <div className="relative flex flex-wrap items-end justify-between gap-6">
+          <div className="animate-slide-in">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-white/80">Carteira Delivery360</p>
+            <h1 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">Restaurantes</h1>
+            <p className="mt-1 max-w-md text-sm text-white/85">Ative módulos, acompanhe o plano e entre no sistema de cada cliente.</p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            {[
+              ['Clientes', tenants?.length ?? '–'],
+              ['Ativos', tenants ? active : '–'],
+              ['Módulos ligados', tenants ? modulesOn : '–'],
+            ].map(([label, value], k) => (
+              <div key={label} className="animate-rise rounded-2xl bg-black/20 px-4 py-3 backdrop-blur" style={{ animationDelay: `${k * 80}ms` }}>
+                <div className="text-2xl font-black">{value}</div>
+                <div className="text-[11px] font-medium text-white/80">{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">Restaurantes</h1>
         <input className="input max-w-xs" placeholder="Buscar por nome ou CNPJ" value={q} onChange={(e) => setQ(e.target.value)} />
         {isSuper && (
-          <button className="btn-primary ml-auto" onClick={() => setShowForm((v) => !v)}>
-            {showForm ? 'Fechar' : 'Novo restaurante'}
+          <button className="btn-primary ml-auto rounded-full px-5" onClick={() => setShowForm((v) => !v)}>
+            {showForm ? 'Fechar' : '+ Novo restaurante'}
           </button>
         )}
       </div>
@@ -65,22 +91,27 @@ export default function TenantsPage() {
       ) : (
         <div className="card overflow-x-auto p-0">
           <table className="w-full text-sm">
-            <thead className="border-b border-zinc-200 bg-zinc-50 text-left text-zinc-600">
+            <thead className="border-b border-zinc-100 bg-zinc-50/70 text-left text-xs uppercase tracking-wide text-zinc-500">
               <tr>
-                <th className="px-4 py-2 font-medium">Restaurante</th>
-                <th className="px-4 py-2 font-medium">Plano</th>
-                <th className="px-4 py-2 font-medium">Módulos ativos</th>
-                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-3 font-semibold">Restaurante</th>
+                <th className="px-4 py-3 font-semibold">Plano</th>
+                <th className="px-4 py-3 font-semibold">Módulos ativos</th>
+                <th className="px-4 py-3 font-semibold">Status</th>
               </tr>
             </thead>
             <tbody>
               {tenants.map((t) => (
-                <tr key={t.id} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
+                <tr key={t.id} className="border-b border-zinc-100 transition last:border-0 hover:bg-orange-50/40">
                   <td className="px-4 py-3">
-                    <Link href={`/admin/restaurantes/${t.id}`} className="font-medium text-zinc-900 hover:text-[var(--brand)]">
-                      {t.name}
+                    <Link href={`/admin/restaurantes/${t.id}`} className="group flex items-center gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[image:var(--grad-fire)] text-sm font-black text-white shadow-sm">
+                        {t.name.trim().slice(0, 1).toUpperCase()}
+                      </span>
+                      <span>
+                        <span className="block font-semibold text-zinc-900 group-hover:text-[var(--brand)]">{t.name}</span>
+                        {t.cnpj && <span className="block text-xs text-zinc-500">CNPJ {t.cnpj}</span>}
+                      </span>
                     </Link>
-                    {t.cnpj && <div className="text-xs text-zinc-500">CNPJ {t.cnpj}</div>}
                   </td>
                   <td className="px-4 py-3">{t.plan?.name ?? <span className="text-zinc-400">Sem plano</span>}</td>
                   <td className="px-4 py-3">
