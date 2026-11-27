@@ -77,6 +77,8 @@ export class GestaoService {
     const today = toDbDate(localDate(new Date()));
     const where: Prisma.FinancialEntryWhereInput = {
       tenantId,
+      // Preço cheio e descontos (memo) são só do DRE: aqui aparece o dinheiro de verdade.
+      memo: false,
       type: q.type,
       accountId: q.accountId,
       ...(q.status === 'OVERDUE' ? { status: 'OPEN', dueDate: { lt: today } } : q.status ? { status: q.status } : { status: { not: 'CANCELLED' } }),
@@ -162,7 +164,7 @@ export class GestaoService {
   async pay(tenantId: string, userId: string, ids: string[], paidAt?: string) {
     const day = paidAt ?? localDate(new Date());
     const { count } = await this.prisma.financialEntry.updateMany({
-      where: { tenantId, id: { in: ids }, status: 'OPEN' },
+      where: { tenantId, id: { in: ids }, status: 'OPEN', memo: false },
       data: { status: 'PAID', paidAt: toDbDate(day) },
     });
     if (count === 0) throw new ConflictException('Nada para dar baixa: os lançamentos já estão pagos ou cancelados.');
@@ -280,7 +282,7 @@ export class GestaoService {
         select: { channel: true, externalKey: true, amountCents: true },
       }),
       this.prisma.financialEntry.findMany({
-        where: { tenantId, channel: { not: null }, status: 'OPEN', paymentMethod: 'APP_ONLINE' },
+        where: { tenantId, channel: { not: null }, status: 'OPEN', paymentMethod: 'APP_ONLINE', memo: false },
         select: { channel: true, externalKey: true, amountCents: true, dueDate: true },
       }),
       // CMV dos pedidos que geraram receita no período (todos menos cancelados e PIX não pago).
@@ -339,7 +341,7 @@ export class GestaoService {
     const limit = until ?? localDate(new Date());
     const day = paidAt ?? localDate(new Date());
     const rows = await this.prisma.financialEntry.findMany({
-      where: { tenantId, channel, status: 'OPEN', paymentMethod: 'APP_ONLINE', dueDate: { lte: toDbDate(limit) } },
+      where: { tenantId, channel, status: 'OPEN', paymentMethod: 'APP_ONLINE', memo: false, dueDate: { lte: toDbDate(limit) } },
       select: { id: true, type: true, amountCents: true },
     });
     if (rows.length === 0) throw new ConflictException(`Nada a receber do ${CHANNEL_LABELS[channel]} até ${limit.split('-').reverse().join('/')}.`);
@@ -404,7 +406,7 @@ export class GestaoService {
     const in7 = toDbDate(addDays(todayStr, 7));
     const monthStart = `${todayStr.slice(0, 8)}01`;
     const open = await this.prisma.financialEntry.findMany({
-      where: { tenantId, status: 'OPEN' },
+      where: { tenantId, status: 'OPEN', memo: false },
       select: { type: true, dueDate: true, amountCents: true },
     });
     const bucket = (type: EntryType) => {
@@ -419,7 +421,7 @@ export class GestaoService {
     };
     const cash = await this.prisma.financialEntry.groupBy({
       by: ['type'],
-      where: { tenantId, status: 'PAID', paidAt: { gte: toDbDate(monthStart), lte: today } },
+      where: { tenantId, status: 'PAID', memo: false, paidAt: { gte: toDbDate(monthStart), lte: today } },
       _sum: { amountCents: true },
     });
     const cashIn = cash.find((c) => c.type === 'RECEIVABLE')?._sum.amountCents ?? 0;
@@ -435,7 +437,8 @@ export class GestaoService {
   }
 
   private async own(tenantId: string, id: string) {
-    const e = await this.prisma.financialEntry.findFirst({ where: { id, tenantId } });
+    // Lançamento memo (preço cheio/desconto) é automático e só de DRE: não se edita nem se dá baixa.
+    const e = await this.prisma.financialEntry.findFirst({ where: { id, tenantId, memo: false } });
     if (!e) throw new NotFoundException('Lançamento não encontrado.');
     return e;
   }

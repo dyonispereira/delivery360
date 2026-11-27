@@ -271,11 +271,18 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     expect(order.items[0]).toMatchObject({ unitPriceCents: 5290, listUnitPriceCents: 5800 });
 
     await app.get(GestaoSyncService).processPending(tenantId);
-    const entries: { externalKey: string; amountCents: number; status: string; account: { code: string } }[] = await prisma.financialEntry.findMany({ where: { tenantId, externalKey: { startsWith: `order:${order.id}:` } }, include: { account: true } });
+    const entries: { externalKey: string; amountCents: number; status: string; memo: boolean; account: { code: string } }[] = await prisma.financialEntry.findMany({ where: { tenantId, externalKey: { startsWith: `order:${order.id}:` } }, include: { account: true } });
     const by = (k: string) => entries.find((e: { externalKey: string }) => e.externalKey === `order:${order.id}:${k}`);
-    expect(by('sale')).toMatchObject({ amountCents: order.totalCents + 1020 });
-    expect(by('promo')).toMatchObject({ amountCents: 1020, status: 'OPEN' });
+    // Caixa: a venda é o que o cliente pagou. Preço cheio e desconto ficam só no DRE (memo).
+    expect(by('sale')).toMatchObject({ amountCents: order.totalCents, memo: false });
+    expect(by('gross')).toMatchObject({ amountCents: 1020, memo: true, account: { code: '1.2' } });
+    expect(by('promo')).toMatchObject({ amountCents: 1020, status: 'OPEN', memo: true });
     expect(by('promo')!.account.code).toBe('2.4');
+    const receivables = (await owner().get('/gestao/entries?type=RECEIVABLE')).body.items as { description: string; amountCents: number }[];
+    expect(receivables.filter((e) => e.description.includes(`#${order.number}`)).map((e) => e.amountCents)).toEqual([order.totalCents]);
+    const payables = (await owner().get('/gestao/entries?type=PAYABLE')).body.items as { description: string }[];
+    expect(payables.some((e) => e.description.startsWith('Preço promocional'))).toBe(false);
+    expect((await owner().post(`/gestao/entries/${(await prisma.financialEntry.findFirstOrThrow({ where: { externalKey: `order:${order.id}:promo` } })).id}/pay`).send({})).status).toBe(409);
 
     // Promoção vencida: volta o preço normal.
     await owner().patch(`/cardapio/products/${ids.pizza}`).send({ promoEndsAt: new Date(Date.now() - 1000).toISOString(), promoStartsAt: new Date(Date.now() - 86_400_000).toISOString() });
@@ -331,7 +338,8 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
       include: { account: true },
     });
     const by = (k: string) => entries.find((e) => e.externalKey === `order:${row.id}:${k}`);
-    expect(by('sale')).toMatchObject({ amountCents: 12200 });
+    expect(by('sale')).toMatchObject({ amountCents: 11200 });
+    expect(by('gross')).toMatchObject({ amountCents: 1000 });
     expect(by('coupon')).toMatchObject({ amountCents: 1000, account: { code: '2.4' } });
 
     const list = (await owner().get('/cardapio/coupons')).body;
@@ -382,7 +390,8 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     const bEntries: { externalKey: string; amountCents: number; type: string; status: string; counterparty: string | null; account: { code: string } }[] =
       await prisma.financialEntry.findMany({ where: { tenantId, externalKey: { startsWith: `order:${bRow.id}:` } }, include: { account: true } });
     const bBy = (k: string) => bEntries.find((e) => e.externalKey === `order:${bRow.id}:${k}`);
-    expect(bBy('sale')).toMatchObject({ amountCents: bRow.totalCents + 1000 });
+    expect(bBy('sale')).toMatchObject({ amountCents: bRow.totalCents });
+    expect(bBy('gross')).toMatchObject({ amountCents: 1000 });
     expect(bBy('coupon')).toMatchObject({ amountCents: 1000, account: { code: '2.4' } });
     expect(bBy('coupon360')).toMatchObject({ type: 'RECEIVABLE', amountCents: 800, status: 'OPEN', counterparty: 'Delivery360', account: { code: '1.2' } });
     const boostRow = (await owner().get('/cardapio/coupons')).body.find((c: { id: string }) => c.id === d360.body.id);
@@ -445,7 +454,8 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
       include: { account: true },
     });
     const by = (k: string) => entries.find((e) => e.externalKey === `order:${row.id}:${k}`);
-    expect(by('sale')).toMatchObject({ amountCents: row.totalCents + 1160 });
+    expect(by('sale')).toMatchObject({ amountCents: row.totalCents });
+    expect(by('gross')).toMatchObject({ amountCents: 1160 });
     expect(by('coupon')).toMatchObject({ amountCents: 1160, account: { code: '2.4' } });
     expect(by('coupon360')).toMatchObject({ amountCents: 1160, counterparty: 'Delivery360', account: { code: '1.2' } });
 
