@@ -26,6 +26,8 @@ export interface Product {
   extraCostBps?: number;
   /** Código PDV: o mesmo no iFood, 99Food, Keeta e na loja própria. */
   pdvCode?: string | null;
+  ncm?: string | null;
+  cfop?: string | null;
   channelPrices?: ChannelPrices;
   /** Preço de/por. */
   promoPriceCents?: number | null;

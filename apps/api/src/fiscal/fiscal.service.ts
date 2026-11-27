@@ -307,7 +307,7 @@ export class FiscalService {
               message: doc.message,
             }
           : null,
-      footer: store?.receiptFooter ?? null,
+      footer: store?.receiptFooter || null,
       widthMm: store?.receiptWidthMm ?? 80,
       copies: store?.receiptCopies ?? 1,
     };

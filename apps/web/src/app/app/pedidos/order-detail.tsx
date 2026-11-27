@@ -13,6 +13,8 @@ import {
 } from '@delivery360/shared';
 import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
+import { openReceiptPdf, printReceipt } from '@/components/receipt';
+import type { Receipt } from '@delivery360/shared';
 import type { BoardOrder } from './board';
 import { ChannelTag } from './channel-tag';
 
@@ -84,9 +86,9 @@ function Body({ order: o, canEdit, reload, onClose }: { order: OrderDetail; canE
           <h2 className="text-xl font-bold">
             Pedido #{o.number} <ChannelTag channel={o.channel} code={o.externalCode} className="align-middle" />
           </h2>
-          <p className="text-zinc-600">{o.type === 'DINE_IN' ? `${o.tableName ?? 'Salão'}${o.waiterName ? ` · garçom ${o.waiterName}` : ''}` : `${o.customerName} · ${o.customerPhone}`}</p>
+          <p className="text-zinc-600">{o.type === 'DINE_IN' ? `${o.tableName ?? 'Salão'}${o.waiterName ? ` · garçom ${o.waiterName}` : ''}` : o.type === 'COUNTER' ? `Balcão (PDV) · ${o.customerName}${o.waiterName ? ` · caixa ${o.waiterName}` : ''}` : `${o.customerName} · ${o.customerPhone}`}</p>
           <p className={o.status === 'CANCELLED' ? 'font-semibold text-red-600' : 'font-semibold text-emerald-700'}>
-            {o.type === 'PICKUP' && o.status === 'COMPLETED' ? 'Retirado' : o.type === 'DINE_IN' && o.status === 'COMPLETED' ? 'Servido' : ORDER_STATUS_LABELS[o.status]}
+            {(o.type === 'PICKUP' || o.type === 'COUNTER') && o.status === 'COMPLETED' ? 'Retirado' : o.type === 'DINE_IN' && o.status === 'COMPLETED' ? 'Servido' : ORDER_STATUS_LABELS[o.status]}
           </p>
         </div>
         <button className="btn-ghost py-1" onClick={onClose} aria-label="Fechar">✕</button>
@@ -161,10 +163,12 @@ function Body({ order: o, canEdit, reload, onClose }: { order: OrderDetail; canE
           ))}
         </ul>
         <div className="mt-2 flex justify-between border-t border-zinc-100 pt-2 font-semibold">
-          <span>Total · {o.type === 'DINE_IN' ? (o.status === 'COMPLETED' ? (TAB_PAYMENT_METHODS.find((m) => m.method === o.paymentMethod)?.label ?? 'Salão') : 'conta da mesa aberta') : PAYMENT_METHOD_LABELS[o.paymentMethod]}</span>
+          <span>Total · {o.type === 'COUNTER' ? 'pago no balcão' : o.type === 'DINE_IN' ? (o.status === 'COMPLETED' ? (TAB_PAYMENT_METHODS.find((m) => m.method === o.paymentMethod)?.label ?? 'Salão') : 'conta da mesa aberta') : PAYMENT_METHOD_LABELS[o.paymentMethod]}</span>
           <span>{formatBRL(o.totalCents)}</span>
         </div>
       </section>
+
+      {o.type !== 'DINE_IN' && o.status !== 'AWAITING_PAYMENT' && (!o.channel || o.channel === 'LOJA') && <ReceiptActions orderId={o.id} cancelled={o.status === 'CANCELLED'} />}
 
       <section>
         <h3 className="mb-2 font-semibold">Linha do tempo</h3>
@@ -245,5 +249,54 @@ function MapLink({ a }: { a: DeliveryAttemptInfo }) {
     <a className="text-xs text-sky-700 underline" href={`https://www.google.com/maps?q=${a.lat},${a.lng}`} target="_blank" rel="noreferrer">
       Ver no mapa onde o motoboy estava
     </a>
+  );
+}
+
+/** Cupom do pedido: imprimir na térmica, abrir em PDF e emitir a NFC-e (se a loja usa nota). */
+function ReceiptActions({ orderId, cancelled }: { orderId: string; cancelled: boolean }) {
+  const [error, setError] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const receipt = () => api<Receipt>(`/cardapio/pdv/pedidos/${orderId}/cupom`, { tenant: true });
+  async function run(fn: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    setMsg(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section>
+      <h3 className="mb-2 font-semibold">Cupom e nota fiscal</h3>
+      <div className="flex flex-wrap gap-2">
+        <button className="btn-ghost py-1.5" disabled={busy} onClick={() => run(async () => printReceipt(await receipt()))}>
+          🖨️ Imprimir cupom
+        </button>
+        <button className="btn-ghost py-1.5" disabled={busy} onClick={() => run(() => openReceiptPdf(orderId))}>
+          📄 PDF
+        </button>
+        {!cancelled && (
+          <button
+            className="btn-ghost py-1.5"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const doc = await api<{ number: number; status: string; message: string | null }>(`/cardapio/pdv/pedidos/${orderId}/nfce`, { method: 'POST', tenant: true, body: {} });
+                setMsg(doc.status === 'AUTHORIZED' ? `NFC-e nº ${doc.number} autorizada.` : (doc.message ?? 'Nota enviada; aguardando a SEFAZ.'));
+              })
+            }
+          >
+            🧾 Emitir NFC-e
+          </button>
+        )}
+      </div>
+      {msg && <p className="mt-2 text-emerald-700">{msg}</p>}
+      <ErrorBox message={error} />
+    </section>
   );
 }

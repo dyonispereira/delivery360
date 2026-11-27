@@ -18,14 +18,21 @@ export async function receiptPdf(r: Receipt): Promise<Buffer> {
   const normal = r.widthMm === 58 ? 7.5 : 8.5;
   const qr = r.fiscal?.qrCodeUrl ? await QRCode.toBuffer(r.fiscal.qrCodeUrl, { margin: 0, width: 300, errorCorrectionLevel: 'M' }) : null;
 
-  // Altura: estimada pelo número de linhas (o papel da térmica é contínuo).
-  const lines = 22 + r.items.reduce((s, i) => s + 1 + i.options.length, 0) + r.payments.length + (r.fiscal ? 16 : 0) + (r.footer ? 2 : 0);
-  const height = lines * normal * 1.45 + (qr ? inner * 0.6 : 0) + margin * 2;
+  // O papel da térmica é contínuo: desenha uma vez numa folha comprida para medir e depois na altura exata.
+  const measure = new PDFDocument({ size: [width, 20_000], margin, autoFirstPage: true });
+  draw(measure);
+  const height = Math.ceil(measure.y + margin);
+  measure.end();
 
   const doc = new PDFDocument({ size: [width, height], margin, info: { Title: `${r.kind === 'NFCE' ? 'NFC-e' : 'Cupom'} ${r.number}` } });
   const chunks: Buffer[] = [];
   doc.on('data', (c: Buffer) => chunks.push(c));
   const done = new Promise<Buffer>((res) => doc.on('end', () => res(Buffer.concat(chunks))));
+  draw(doc);
+  doc.end();
+  return done;
+
+  function draw(doc: PDFKit.PDFDocument) {
 
   const center = (t: string, size = normal, bold = false) => doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).text(t, { width: inner, align: 'center' });
   const row = (left: string, right: string, size = normal, bold = false) => {
@@ -102,6 +109,5 @@ export async function receiptPdf(r: Receipt): Promise<Buffer> {
   }
   if (r.footer) center(r.footer, small);
   center('Delivery360', small);
-  doc.end();
-  return done;
+  }
 }

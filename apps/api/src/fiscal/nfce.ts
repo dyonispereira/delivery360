@@ -166,8 +166,9 @@ export function accessKey(a: { uf: string; issuedAt: Date; cnpj: string; series:
   return base + mod11(base);
 }
 
-/** Endereço de consulta da NFC-e por UF (o de SP como padrão nos testes). */
+/** Endereço de consulta da NFC-e por UF (SP e RJ conhecidos; os outros vêm do emissor real). */
 export function consultUrl(uf: string, environment: 'HOMOLOGACAO' | 'PRODUCAO') {
+  if (uf === 'RJ') return 'http://www.fazenda.rj.gov.br/nfce/consulta';
   if (uf === 'SP') return environment === 'PRODUCAO' ? 'https://www.nfce.fazenda.sp.gov.br/consulta' : 'https://www.homologacao.nfce.fazenda.sp.gov.br/consulta';
   return `https://www.sefaz.${uf.toLowerCase()}.gov.br/nfce/consulta`;
 }
@@ -181,7 +182,9 @@ export function qrCodeUrl(a: { key: string; environment: 'HOMOLOGACAO' | 'PRODUC
   const id = String(Number(a.cscId || '1'));
   const base = `${a.key}|2|${tpAmb}|${id}`;
   const hash = createHash('sha1').update(base + a.csc).digest('hex').toUpperCase();
-  const host = a.uf === 'SP'
+  const host = a.uf === 'RJ'
+    ? 'http://www4.fazenda.rj.gov.br/consultaNFCe/QRCode'
+    : a.uf === 'SP'
     ? a.environment === 'PRODUCAO' ? 'https://www.nfce.fazenda.sp.gov.br/qrcode' : 'https://www.homologacao.nfce.fazenda.sp.gov.br/qrcode'
     : `https://www.sefaz.${a.uf.toLowerCase()}.gov.br/nfce/qrcode`;
   return `${host}?p=${base}|${hash}`;

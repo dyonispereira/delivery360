@@ -66,7 +66,7 @@ export async function receiptHtml(r: Receipt): Promise<string> {
     body { font-family: 'Courier New', monospace; font-size: ${w === 58 ? 10 : 12}px; width: 100%; max-width: ${w - 4}mm; margin: 0; color: #000; }
     .c { text-align: center; } .b { font-weight: bold; } .s { font-size: ${w === 58 ? 9 : 10}px; } .big { font-size: ${w === 58 ? 12 : 14}px; }
     .row { display: flex; justify-content: space-between; gap: 6px; } .sub { padding-left: 10px; }
-    .key { word-spacing: 2px; letter-spacing: .3px; } .qr { width: ${w === 58 ? 30 : 38}mm; height: auto; margin: 4px auto; display: block; }
+    .key { word-spacing: 2px; letter-spacing: .3px; } .c { overflow-wrap: anywhere; } .qr { width: ${w === 58 ? 30 : 38}mm; height: auto; margin: 4px auto; display: block; }
     hr { border: 0; border-top: 1px dashed #000; margin: 5px 0; } .cut { page-break-after: always; height: 6mm; }
   </style></head><body>${copies}</body></html>`;
 }
