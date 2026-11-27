@@ -65,6 +65,8 @@ model Tenant {
   employees        Employee[]
   payrolls         Payroll[]
   coupons          Coupon[]
+  diningTables     DiningTable[]
+  tableTabs        TableTab[]
 
   @@map("tenants")
 }
@@ -201,6 +203,8 @@ model DomainEvent {
 enum OrderType {
   DELIVERY
   PICKUP
+  /// Pedido do salão, lançado pelo garçom na mesa.
+  DINE_IN
 }
 
 enum OrderStatus {
@@ -258,6 +262,8 @@ model Store {
   /// Formas de pagamento aceitas (lista de PaymentMethod).
   paymentMethods   PaymentMethod[] @default([PIX, CASH_ON_DELIVERY, CARD_ON_DELIVERY]) @map("payment_methods")
   estimatedMinutes Int             @default(40) @map("estimated_minutes")
+  /// Taxa de serviço do salão sugerida no fechamento da mesa (pontos-base, 1000 = 10%; 0 = sem taxa).
+  serviceFeeBps    Int             @default(1000) @map("service_fee_bps")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -450,6 +456,11 @@ model Order {
   /// Última ocorrência ainda não resolvida (o motoboy não conseguiu entregar). Some quando o pedido sai de novo.
   deliveryIssue         DeliveryFailReason?  @map("delivery_issue")
   deliveryIssueAt       DateTime?            @map("delivery_issue_at")
+  /// Salão: a conta da mesa em que o pedido foi lançado, o nome da mesa e quem lançou.
+  tabId                 String?              @map("tab_id") @db.Uuid
+  tab                   TableTab?            @relation(fields: [tabId], references: [id], onDelete: SetNull)
+  tableName             String?              @map("table_name")
+  waiterName            String?              @map("waiter_name")
   /// Avaliação do cliente depois de receber (1 a 5 estrelas; 5 = excelente). Uma vez só.
   ratingStore           Int?                 @map("rating_store")
   ratingDelivery        Int?                 @map("rating_delivery")
@@ -472,7 +483,65 @@ model Order {
   @@index([couponId])
   @@index([platformCouponId])
   @@index([campaignId])
+  @@index([tabId])
   @@map("orders")
+}
+
+// =====================================================================
+// Salão: mesas e conta da mesa (o garçom lança, a cozinha recebe, o caixa fecha)
+// =====================================================================
+
+enum TabStatus {
+  OPEN
+  CLOSED
+}
+
+/// Mesa do salão (ou balcão, varanda...). Só o nome importa; a ordem é a da tela do garçom.
+model DiningTable {
+  id        String     @id @default(uuid()) @db.Uuid
+  tenantId  String     @map("tenant_id") @db.Uuid
+  name      String
+  position  Int        @default(0)
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now()) @map("created_at")
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tabs      TableTab[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, position])
+  @@map("dining_tables")
+}
+
+/// Conta da mesa: abre no primeiro pedido do garçom e soma cada rodada até o fechamento.
+/// Cada rodada é um pedido (Order DINE_IN) que vai para a cozinha; a venda entra no financeiro no fechamento.
+model TableTab {
+  id              String         @id @default(uuid()) @db.Uuid
+  tenantId        String         @map("tenant_id") @db.Uuid
+  tableId         String         @map("table_id") @db.Uuid
+  /// Nome da mesa congelado (a mesa pode ser renomeada depois).
+  tableName       String         @map("table_name")
+  /// Igual ao tableId enquanto a conta está aberta: garante uma conta aberta por mesa.
+  openKey         String?        @unique @map("open_key") @db.Uuid
+  status          TabStatus      @default(OPEN)
+  people          Int?
+  openedById      String?        @map("opened_by_id") @db.Uuid
+  openedAt        DateTime       @default(now()) @map("opened_at")
+  closedById      String?        @map("closed_by_id") @db.Uuid
+  closedAt        DateTime?      @map("closed_at")
+  paymentMethod   PaymentMethod? @map("payment_method")
+  /// No fechamento: soma dos pedidos, taxa de serviço e total pago.
+  subtotalCents   Int            @default(0) @map("subtotal_cents")
+  serviceFeeCents Int            @default(0) @map("service_fee_cents")
+  totalCents      Int            @default(0) @map("total_cents")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  table           DiningTable    @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  orders          Order[]
+
+  @@index([tenantId, status])
+  @@index([tableId])
+  @@map("table_tabs")
 }
 
 /// Item do pedido com nome e preço copiados no momento da compra (o cardápio pode mudar depois).

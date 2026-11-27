@@ -19,6 +19,7 @@ const ONLINE = ['PIX', 'CREDIT_CARD'];
  * - pedido.status → COMPLETED → baixa do a receber (dinheiro/maquininha recebidos na entrega)
  * - pedido.cancelado  → cancela o a receber e o imposto; se já estava pago, a pagar 2.5 (devolver ao cliente)
  * - entrega.concluida → a pagar 6.1 ao motoboy (valor por entrega)
+ * - salao.taxa_servico → entrada 11.3 + a pagar 11.4 à equipe (fora da DRE); a venda da mesa vai para 1.1 Salão
  * - gorjeta.recebida  → entrada 11.1 + a pagar 11.2 ao motoboy (fora da DRE)
  * - gorjeta.repassada → baixa do 11.2
  */
@@ -94,14 +95,19 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         const order = await this.order(tx, String(p.orderId));
         if (!order) return;
         if (order.channel !== 'LOJA') return this.marketplaceSale(tx, t, day, order);
-        const online = ONLINE.includes(order.paymentMethod);
+        // Salão: a venda só entra quando a conta da mesa fecha, já paga.
+        const dineIn = order.type === 'DINE_IN';
+        const online = ONLINE.includes(order.paymentMethod) || dineIn;
+        const revenueCode = dineIn ? '1.1' : '1.2';
         const method = order.paymentMethod as PaymentMethod;
         const restaurantCoupon = order.discountCents - order.couponPlatformCents;
         // Venda pelo que o cliente pagou de fato: é o que entra no caixa e no extrato do gateway.
         await this.upsert(tx, t, `order:${order.id}:sale`, {
           type: 'RECEIVABLE',
-          code: '1.2',
-          description: `Pedido #${order.number}${order.type === 'PICKUP' ? ' (retirada)' : ''}`,
+          code: revenueCode,
+          description: dineIn
+            ? `${order.tableName ?? 'Salão'} · pedido #${order.number}`
+            : `Pedido #${order.number}${order.type === 'PICKUP' ? ' (retirada)' : ''}`,
           counterparty: order.customerName,
           amountCents: order.totalCents,
           day,
@@ -118,7 +124,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           await this.upsert(tx, t, `order:${order.id}:gross`, {
             ...memo,
             type: 'RECEIVABLE',
-            code: '1.2',
+            code: revenueCode,
             description: `Preço cheio (antes dos descontos) · pedido #${order.number}`,
             counterparty: order.customerName,
             amountCents: discountCents,
@@ -259,6 +265,30 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      case 'salao.taxa_servico': {
+        // Taxa de serviço (10%) é da equipe: entra e sai do caixa, fora da DRE.
+        const amountCents = Number(p.amountCents);
+        if (!amountCents) return;
+        const base = { amountCents, day, source: 'cardapio' };
+        await this.upsert(tx, t, `tab:${String(p.tabId)}:service`, {
+          ...base,
+          type: 'RECEIVABLE',
+          code: '11.3',
+          description: `Taxa de serviço · ${String(p.tableName ?? 'mesa')}`,
+          counterparty: null,
+          status: 'PAID',
+          paymentMethod: p.paymentMethod as PaymentMethod,
+        });
+        await this.upsert(tx, t, `tab:${String(p.tabId)}:service-out`, {
+          ...base,
+          type: 'PAYABLE',
+          code: '11.4',
+          description: `Repassar taxa de serviço · ${String(p.tableName ?? 'mesa')}`,
+          counterparty: 'Equipe do salão',
+          status: 'OPEN',
+        });
+        return;
+      }
       case 'gorjeta.recebida': {
         const [order, courier] = await Promise.all([
           this.order(tx, String(p.orderId)),
@@ -311,6 +341,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         number: true,
         type: true,
         customerName: true,
+        tableName: true,
         totalCents: true,
         promoDiscountCents: true,
         discountCents: true,

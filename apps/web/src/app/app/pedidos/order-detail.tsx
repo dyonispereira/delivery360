@@ -6,6 +6,7 @@ import {
   formatBRL,
   ORDER_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
+  TAB_PAYMENT_METHODS,
   RATING_LABELS,
   type DeliveryAttemptInfo,
   type OrderStatus,
@@ -83,9 +84,9 @@ function Body({ order: o, canEdit, reload, onClose }: { order: OrderDetail; canE
           <h2 className="text-xl font-bold">
             Pedido #{o.number} <ChannelTag channel={o.channel} code={o.externalCode} className="align-middle" />
           </h2>
-          <p className="text-zinc-600">{o.customerName} · {o.customerPhone}</p>
+          <p className="text-zinc-600">{o.type === 'DINE_IN' ? `${o.tableName ?? 'Salão'}${o.waiterName ? ` · garçom ${o.waiterName}` : ''}` : `${o.customerName} · ${o.customerPhone}`}</p>
           <p className={o.status === 'CANCELLED' ? 'font-semibold text-red-600' : 'font-semibold text-emerald-700'}>
-            {o.type === 'PICKUP' && o.status === 'COMPLETED' ? 'Retirado' : ORDER_STATUS_LABELS[o.status]}
+            {o.type === 'PICKUP' && o.status === 'COMPLETED' ? 'Retirado' : o.type === 'DINE_IN' && o.status === 'COMPLETED' ? 'Servido' : ORDER_STATUS_LABELS[o.status]}
           </p>
         </div>
         <button className="btn-ghost py-1" onClick={onClose} aria-label="Fechar">✕</button>
@@ -160,7 +161,7 @@ function Body({ order: o, canEdit, reload, onClose }: { order: OrderDetail; canE
           ))}
         </ul>
         <div className="mt-2 flex justify-between border-t border-zinc-100 pt-2 font-semibold">
-          <span>Total · {PAYMENT_METHOD_LABELS[o.paymentMethod]}</span>
+          <span>Total · {o.type === 'DINE_IN' ? (o.status === 'COMPLETED' ? (TAB_PAYMENT_METHODS.find((m) => m.method === o.paymentMethod)?.label ?? 'Salão') : 'conta da mesa aberta') : PAYMENT_METHOD_LABELS[o.paymentMethod]}</span>
           <span>{formatBRL(o.totalCents)}</span>
         </div>
       </section>

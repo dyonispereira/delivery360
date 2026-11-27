@@ -69,6 +69,8 @@ export const DEFAULT_ACCOUNTS: [code: string, name: string][] = [
   ['10.4', 'Amortização de empréstimos'],
   ['11.1', 'Gorjetas recebidas dos clientes'],
   ['11.2', 'Gorjetas repassadas aos motoboys'],
+  ['11.3', 'Taxa de serviço do salão (recebida)'],
+  ['11.4', 'Taxa de serviço repassada à equipe'],
 ];
 
 /** Data (AAAA-MM-DD) no fuso do restaurante. Por enquanto todos em Brasília. */

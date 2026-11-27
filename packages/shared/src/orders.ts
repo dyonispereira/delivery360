@@ -1,6 +1,7 @@
 /** Tipos e rótulos do módulo Cardápio e pedidos, usados pela web e pelos apps. */
 
-export type OrderType = 'DELIVERY' | 'PICKUP';
+/** DINE_IN = salão (lançado pelo garçom na mesa). */
+export type OrderType = 'DELIVERY' | 'PICKUP' | 'DINE_IN';
 export type OrderStatus = 'AWAITING_PAYMENT' | 'PAID' | 'IN_PREPARATION' | 'READY' | 'OUT_FOR_DELIVERY' | 'COMPLETED' | 'CANCELLED';
 /** APP_ONLINE = pago dentro do app de delivery (iFood, 99Food, Keeta); o app repassa depois. */
 export type PaymentMethod = 'PIX' | 'CREDIT_CARD' | 'CASH_ON_DELIVERY' | 'CARD_ON_DELIVERY' | 'APP_ONLINE';

@@ -45,6 +45,14 @@ pnpm --filter @delivery360/api test:e2e    # API completa contra o banco deliver
 Os testes e2e esvaziam o banco de teste a cada execução e se recusam a rodar se o nome do banco
 não terminar em `_test`. Crie-o com `createdb delivery360_test` (ou ajuste `TEST_DATABASE_URL`).
 
+## Salão (garçom)
+
+- Em **Salão (garçom)** o dono cadastra as mesas (Mesa 1 a N de uma vez) e a taxa de serviço.
+- O garçom toca na mesa, escolhe os itens no celular e envia: cada envio é um pedido de mesa que cai na
+  cozinha e na impressora com o nome da mesa. A conta da mesa soma os envios até o fechamento.
+- No fechamento: taxa de serviço opcional, divisão por pessoas e forma de pagamento (Pix, maquininha, dinheiro).
+  A venda entra no financeiro já paga na conta 1.1 Salão; a taxa de serviço fica fora da DRE (11.3 recebida, 11.4 a repassar à equipe).
+
 ## Loja online (módulo Cardápio)
 
 - O restaurante monta o cardápio em **Cardápio e pedidos**: categorias, produtos, grupos de adicionais

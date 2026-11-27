@@ -9,7 +9,10 @@ export interface BoardOrder {
   number: number;
   trackingCode: string;
   status: OrderStatus;
-  type: 'DELIVERY' | 'PICKUP';
+  type: 'DELIVERY' | 'PICKUP' | 'DINE_IN';
+  /** Salão: mesa e garçom que lançou. */
+  tableName: string | null;
+  waiterName: string | null;
   customerName: string;
   customerPhone: string;
   addressStreet: string | null;
@@ -46,9 +49,11 @@ export function primaryAction(o: Pick<BoardOrder, 'status' | 'type'>, withCourie
     case 'PAID':
       return { to: 'IN_PREPARATION', label: 'Iniciar preparo' };
     case 'IN_PREPARATION':
+      if (o.type === 'DINE_IN') return { to: 'READY', label: 'Pronto para servir' };
       if (o.type === 'PICKUP') return { to: 'READY', label: 'Pronto para retirar' };
       return withCouriers ? { to: 'READY', label: 'Pronto' } : { to: 'OUT_FOR_DELIVERY', label: 'Saiu para entrega' };
     case 'READY':
+      if (o.type === 'DINE_IN') return { to: 'COMPLETED', label: 'Servido na mesa' };
       if (o.type === 'PICKUP') return { to: 'COMPLETED', label: 'Cliente retirou' };
       return withCouriers ? null : { to: 'OUT_FOR_DELIVERY', label: 'Saiu para entrega' };
     case 'OUT_FOR_DELIVERY':
@@ -168,7 +173,9 @@ export function printOrder(o: BoardOrder, storeName: string, markPrinted = true)
   const address =
     o.type === 'DELIVERY'
       ? `<div><b>ENTREGA</b> - ${esc(o.deliveryZoneName ?? '')}</div><div>${esc(o.addressStreet ?? '')}, ${esc(o.addressNumber ?? '')}${o.addressComplement ? ` - ${esc(o.addressComplement)}` : ''}</div>${o.addressReference ? `<div>Ref.: ${esc(o.addressReference)}</div>` : ''}`
-      : '<div><b>RETIRADA NO BALCÃO</b></div>';
+      : o.type === 'DINE_IN'
+        ? ''
+        : '<div><b>RETIRADA NO BALCÃO</b></div>';
   const payment = `${PAYMENT_METHOD_LABELS[o.paymentMethod]}${o.paymentMethod === 'PIX' || o.paymentMethod === 'APP_ONLINE' ? ' (PAGO)' : ''}${o.changeForCents ? ` - troco p/ ${formatBRL(o.changeForCents)}` : ''}`;
 
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Pedido ${o.number}</title><style>
@@ -184,14 +191,18 @@ export function printOrder(o: BoardOrder, storeName: string, markPrinted = true)
     <h1>PEDIDO #${o.number}</h1>
     ${o.channel && o.channel !== 'LOJA' ? `<div class="c big">${CHANNEL_LABELS[o.channel]}${o.externalCode ? ` ${esc(o.externalCode)}` : ''}</div>` : ''}
     <div class="c">${when}</div><hr>
-    <div class="big">${esc(o.customerName)}</div><div>Tel: ${esc(o.customerPhone)}</div>
-    ${address}<hr>
+    ${
+      o.type === 'DINE_IN'
+        ? `<h1>${esc(o.tableName ?? 'SALÃO')}</h1>${o.waiterName ? `<div class="c">Garçom: ${esc(o.waiterName)}</div>` : ''}<hr>`
+        : `<div class="big">${esc(o.customerName)}</div><div>Tel: ${esc(o.customerPhone)}</div>
+    ${address}<hr>`
+    }
     ${items}
     ${o.notes ? `<hr><div class="obs">OBS DO PEDIDO: ${esc(o.notes)}</div>` : ''}<hr>
     <div class="row"><span>Subtotal</span><span>${formatBRL(o.subtotalCents)}</span></div>
     ${o.type === 'DELIVERY' ? `<div class="row"><span>Entrega</span><span>${formatBRL(o.deliveryFeeCents)}</span></div>` : ''}
     <div class="row big"><span>TOTAL</span><span>${formatBRL(o.totalCents)}</span></div>
-    <div>${payment}</div><hr><div class="c">Delivery360</div>
+    <div>${o.type === 'DINE_IN' ? 'Soma na conta da mesa' : payment}</div><hr><div class="c">Delivery360</div>
   </body></html>`;
 
   const frame = document.createElement('iframe');

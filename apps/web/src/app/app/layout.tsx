@@ -67,6 +67,7 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
     '/app': 'home',
     '/app/pedidos': 'orders',
     '/app/cozinha': 'kitchen',
+    '/app/salao': 'table',
     '/app/gestao': 'wallet',
     '/app/cardapio': 'menu',
     '/app/entregas': 'bike',
@@ -79,6 +80,7 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
       ? [
           { href: '/app/pedidos', label: 'Painel de pedidos' },
           { href: '/app/cozinha', label: 'Cozinha' },
+          { href: '/app/salao', label: 'Salão (garçom)' },
         ]
       : []),
     // Financeiro (Gestão) é só do dono e do gerente.

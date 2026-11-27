@@ -402,3 +402,47 @@ export class CampaignDto {
 export class CampaignParticipationDto {
   @IsBoolean() participating: boolean;
 }
+
+// ---------- Salão (mesas e conta da mesa) ----------
+
+export class TableDto {
+  @IsString() @MinLength(1) @MaxLength(40) name: string;
+  @IsOptional() @IsInt() @Min(0) @Max(10_000) position?: number;
+}
+
+export class UpdateTableDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(40) name?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(10_000) position?: number;
+  @IsOptional() @IsBoolean() active?: boolean;
+}
+
+/** Cria várias mesas de uma vez: "Mesa 1" até "Mesa N" (as que já existem ficam como estão). */
+export class BulkTablesDto {
+  @IsInt() @Min(1) @Max(200) count: number;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(20) prefix?: string;
+}
+
+export class TabItemDto {
+  @IsUUID() productId: string;
+  @IsInt() @Min(1) @Max(50) quantity: number;
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) optionIds?: string[];
+  @IsOptional() @IsString() @MaxLength(300) notes?: string;
+}
+
+/** Uma rodada lançada pelo garçom: vai direto para a cozinha e soma na conta da mesa. */
+export class TableOrderDto {
+  @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => TabItemDto) items: TabItemDto[];
+  @IsOptional() @IsString() @MaxLength(300) notes?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(99) people?: number;
+}
+
+export class CloseTabDto {
+  /** Obrigatória quando a conta tem valor. */
+  @IsOptional() @IsIn(['PIX', 'CASH_ON_DELIVERY', 'CARD_ON_DELIVERY']) paymentMethod?: 'PIX' | 'CASH_ON_DELIVERY' | 'CARD_ON_DELIVERY';
+  /** Cobrar a taxa de serviço da loja (o cliente pode recusar). */
+  @IsBoolean() serviceFee: boolean;
+}
+
+export class ServiceFeeDto {
+  @IsInt() @Min(0) @Max(2000) serviceFeeBps: number;
+}
