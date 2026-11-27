@@ -105,14 +105,21 @@ function tape(w, y, rot, text) {
     <g>${items}</g></g>`;
 }
 
+/** Recorte de foto real (fundo transparente) embutido no SVG. */
+const foto = (name) => `data:image/webp;base64,${readFileSync(join(here, `fotos/${name}.webp`)).toString('base64')}`;
+
 function banner(kind) {
   const id = 'b';
   const W = 1600, H = 700;
   let art = '';
   if (kind === 'black') {
     art = `<rect width="${W}" height="${H}" fill="#0E0E0E"/>
-      ${tape(W, 70, -6, 'BLACK FRIDAY ★')}${tape(W, 600, 5, 'OFERTAS DA SEMANA ★')}
-      <g transform="translate(1110 390) rotate(-14) scale(0.52)">${longPizzaSVG(id, ['pepperoni', 'calabresa', 'frango'], 1500, 560, 12)}</g>
+      ${tape(W, 70, -6, 'BLACK FRIDAY ★ OFERTAS DA SEMANA ★')}
+      <defs><radialGradient id="bf-glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#FF7A1A" stop-opacity="0.6"/><stop offset="1" stop-color="#FF7A1A" stop-opacity="0"/></radialGradient>
+        <radialGradient id="bf-shadow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#000" stop-opacity="0.8"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient></defs>
+      <ellipse cx="1080" cy="390" rx="560" ry="280" fill="url(#bf-glow)"/>
+      <ellipse cx="1060" cy="560" rx="450" ry="46" fill="url(#bf-shadow)" transform="rotate(-6 1060 560)"/>
+      <image href="${foto('pizza-meio-metro-recorte')}" x="${1070 - 450}" y="${400 - 177}" width="900" height="354" transform="rotate(-2 1070 400)"/>
       <g transform="translate(1330 170) rotate(10)"><circle r="120" fill="${BRAND.red}" stroke="#fff" stroke-width="8"/>
         <text y="-20" text-anchor="middle" font-family="Inter" font-weight="800" font-size="30" fill="#fff">ATÉ</text>
         <text y="48" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="84" fill="#fff">40%</text>
@@ -125,7 +132,6 @@ function banner(kind) {
         <text y="22" text-anchor="middle" font-family="Inter Display, Inter" font-weight="900" font-size="64" fill="#1D1A17">TERÇA EM DOBRO</text></g>`;
   } else if (kind === 'frete') {
     // Foto real da pizza (recortada do fundo de estúdio) sobre degradê quente.
-    const foto = `data:image/webp;base64,${readFileSync(join(here, 'fotos/pizza-calabresa-cheddar-recorte.webp')).toString('base64')}`;
     const pw = 800, ph = Math.round(800 * 733 / 1004); // proporção do recorte
     const speed = [0, 1, 2].map((k) => `<rect x="${-200 + k * 30}" y="${36 + k * 26}" width="${170 - k * 30}" height="9" rx="4.5" fill="#FFF4E0" opacity="${0.55 - k * 0.15}"/>`).join('');
     art = `<defs>
@@ -137,7 +143,7 @@ function banner(kind) {
       <g opacity="0.08" stroke="#FFF4E0" stroke-width="2" fill="none">${Array.from({ length: 8 }, (_, k) => `<circle cx="1180" cy="350" r="${200 + k * 80}"/>`).join('')}</g>
       <circle cx="1180" cy="340" r="520" fill="url(#fr-glow)"/>
       <ellipse cx="1190" cy="${350 + ph / 2 - 25}" rx="${pw / 2 + 10}" ry="44" fill="url(#fr-shadow)"/>
-      <image href="${foto}" x="${1180 - pw / 2}" y="${350 - ph / 2}" width="${pw}" height="${ph}" transform="rotate(-6 1180 350)"/>
+      <image href="${foto('pizza-calabresa-cheddar-recorte')}" x="${1180 - pw / 2}" y="${350 - ph / 2}" width="${pw}" height="${ph}" transform="rotate(-6 1180 350)"/>
       <g transform="translate(850 130) rotate(-12)">
         <circle r="100" fill="#FFB81C" stroke="#FFF4E0" stroke-width="7"/>
         <circle r="84" fill="none" stroke="#1D1A17" stroke-width="2" stroke-dasharray="5 7" opacity="0.45"/>
