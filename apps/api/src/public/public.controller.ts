@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Headers, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Ip, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { Public } from '../access/access.decorators';
-import { CreateOrderDto, QuoteOrderDto, RateOrderDto, TipDto } from '../cardapio/cardapio.dto';
+import { CreateOrderDto, PayCardDto, QuoteOrderDto, RateOrderDto, TipDto } from '../cardapio/cardapio.dto';
 import { OrdersService } from '../cardapio/orders.service';
 
 /** Rotas abertas da loja online (sem login). */
@@ -33,6 +33,17 @@ export class PublicController {
   @Get('orders/:code')
   track(@Param('code') code: string) {
     return this.orders.getTracking(code);
+  }
+
+  /**
+   * Checkout transparente do cartão. Limite baixo por IP para ninguém testar cartões em massa.
+   * O IP vai para o antifraude do gateway (com TRUST_PROXY, é o IP real do cliente).
+   */
+  @Throttle({ default: { limit: process.env.NODE_ENV === 'test' ? 1000 : 6, ttl: 60_000 } })
+  @Post('orders/:code/pay-card')
+  @HttpCode(200)
+  payCard(@Param('code') code: string, @Body() dto: PayCardDto, @Ip() ip: string) {
+    return this.orders.payWithCard(code, dto, (ip ?? '').replace(/^::ffff:/, '') || '127.0.0.1');
   }
 
   /** Só com PAYMENTS_FAKE_ENABLED=true (desenvolvimento e testes). */

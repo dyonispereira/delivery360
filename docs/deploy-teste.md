@@ -39,3 +39,18 @@ Para não criar, use `SEED_SIMULATION=false`. Localmente: `pnpm --filter @delive
 - O serviço dorme após 15 minutos sem uso; o primeiro acesso depois disso demora cerca de 1 minuto.
 - O banco grátis do Render expira em 30 dias. Para continuar, troque para um plano pago ou outro banco.
 - Cada `git push` na `main` publica de novo automaticamente.
+
+## WhatsApp da loja (status do pedido)
+
+O cliente recebe no WhatsApp cada etapa do pedido (aprovado, em preparo, aguardando entregador, saiu para entrega, entregue com o link da avaliação). As mensagens saem do número do próprio restaurante, conectado por QR Code em **Cardápio > Loja online > WhatsApp da loja**.
+
+Para isso o Delivery360 usa um servidor [Evolution API](https://github.com/EvolutionAPI/evolution-api) (código aberto), que mantém o WhatsApp de cada loja conectado. Ele precisa ficar ligado o tempo todo, então **não** roda no plano grátis do Render (que dorme depois de 15 minutos).
+
+1. Suba a Evolution API v2 (imagem Docker oficial, veja o README do projeto) num serviço sempre ligado, por exemplo Render Starter ou uma VPS. Ela precisa de um Postgres próprio (`DATABASE_PROVIDER=postgresql` e `DATABASE_CONNECTION_URI`) e de uma chave (`AUTHENTICATION_API_KEY`).
+2. No serviço `delivery360` do Render, preencha `WHATSAPP_API_URL` (endereço da Evolution, por exemplo `https://evolution.suaempresa.com.br`) e `WHATSAPP_API_KEY` (a mesma `AUTHENTICATION_API_KEY`).
+3. Faça o deploy e, no painel da loja, clique em **Conectar WhatsApp** e leia o QR Code com o celular da loja.
+
+Observações:
+- É uma conexão não oficial (como Anota AI e outros fazem). Use um número do restaurante e evite mandar mensagens em massa, para o WhatsApp não bloquear o número.
+- Se o WhatsApp cair, os avisos esperam na fila por até 2 horas e saem em ordem quando ele volta. O painel mostra "Desconectado".
+- Em desenvolvimento, `WHATSAPP_FAKE_ENABLED=true` simula a conexão (o QR "conecta" sozinho) e não manda nada de verdade.

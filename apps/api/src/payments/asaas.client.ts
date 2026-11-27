@@ -26,6 +26,23 @@ export interface AsaasPayment {
   invoiceUrl?: string;
 }
 
+export interface CardData {
+  holderName: string;
+  number: string;
+  expiryMonth: string;
+  expiryYear: string;
+  ccv: string;
+}
+
+export interface CardHolder {
+  name: string;
+  email: string;
+  cpfCnpj: string;
+  postalCode: string;
+  addressNumber: string;
+  mobilePhone: string;
+}
+
 /**
  * Cliente mínimo da API v3 do Asaas (só o que o Pix e o cartão da loja usam).
  * Docs: https://docs.asaas.com/reference — autenticação pelo header access_token; User-Agent obrigatório.
@@ -78,6 +95,14 @@ export class AsaasClient {
 
   createPayment(input: { customer: string; billingType: 'PIX' | 'CREDIT_CARD'; value: number; dueDate: string; description: string; externalReference?: string }) {
     return this.call<AsaasPayment>('POST', '/payments', input);
+  }
+
+  /**
+   * Paga a cobrança com o cartão digitado no checkout da loja (checkout transparente).
+   * Não é idempotente: se a resposta não chegar, consulte a cobrança antes de tentar de novo.
+   */
+  payWithCreditCard(id: string, input: { creditCard: CardData; creditCardHolderInfo: CardHolder; remoteIp: string }) {
+    return this.call<AsaasPayment>('POST', `/payments/${encodeURIComponent(id)}/payWithCreditCard`, input);
   }
 
   getPayment(id: string) {

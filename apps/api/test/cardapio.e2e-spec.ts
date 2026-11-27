@@ -649,7 +649,7 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     delete process.env.PUBLIC_API_URL;
   });
 
-  it('cartão online: só aparece com o cartão ligado na loja; com o Asaas o cliente paga na página segura e o webhook confirma', async () => {
+  it('cartão online: só aparece com o cartão ligado na loja; o cliente digita o cartão na loja (checkout transparente) e o Asaas aprova', async () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PaymentAccountsService } = require('../src/payments/payment-accounts.service');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -662,11 +662,25 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
     await owner().put('/cardapio/store').send({ paymentMethods: ['PIX', 'CREDIT_CARD', 'CASH_ON_DELIVERY'] });
     expect((await http().get(`/public/stores/${slug}`)).body.store.paymentMethods).toContain('CREDIT_CARD');
 
-    // Sem conta conectada: cartão de teste, pago pelo "simular pagamento".
+    // Sem conta conectada: cartão de teste, digitado na própria loja.
+    const card = { holderName: 'RUI TESTE', number: '4539 6560 4839 2220', expiryMonth: '12', expiryYear: '2035', ccv: '123', email: 'rui@teste.com', postalCode: '01310-100', addressNumber: '100' };
     const test = await http().post(`/public/stores/${slug}/orders`).send(orderBody({ paymentMethod: 'CREDIT_CARD' }));
     expect(test.status).toBe(201);
-    expect(test.body).toMatchObject({ status: 'AWAITING_PAYMENT', paymentMethod: 'CREDIT_CARD', payment: { status: 'PENDING', pixCopyPaste: null, checkoutUrl: null, canSimulate: true } });
-    expect((await http().post(`/public/orders/${test.body.trackingCode}/simulate-payment`)).body.status).toBe('PAID');
+    expect(test.body).toMatchObject({ status: 'AWAITING_PAYMENT', paymentMethod: 'CREDIT_CARD', payment: { status: 'PENDING', pixCopyPaste: null, cardForm: true, canSimulate: false } });
+    expect(test.body.payment).not.toHaveProperty('checkoutUrl');
+    const payUrl = (code: string) => `/public/orders/${code}/pay-card`;
+    const declined = await http().post(payUrl(test.body.trackingCode)).send({ ...card, number: '4916561358240741' });
+    expect(declined.status).toBe(400);
+    expect(declined.body.message).toContain('Pagamento não aprovado');
+    const bad = await http().post(payUrl(test.body.trackingCode)).send({ ...card, number: '12', ccv: 'x' });
+    expect(bad.status).toBe(400);
+    expect(JSON.stringify(bad.body)).not.toContain('4539');
+    const expired = await http().post(payUrl(test.body.trackingCode)).send({ ...card, expiryYear: '2020' });
+    expect(expired.body.message).toContain('vencido');
+    const ok = await http().post(payUrl(test.body.trackingCode)).send(card);
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject({ status: 'PAID', payment: { status: 'PAID', cardForm: false } });
+    expect((await http().post(payUrl(test.body.trackingCode)).send(card)).status).toBe(404); // não cobra duas vezes
 
     const calls: { method: string; path: string; body?: Record<string, unknown> }[] = [];
     let n = 100;
@@ -683,6 +697,12 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
         const id = `pay_${++n}`;
         return reply(200, { id, status: 'PENDING', value: body.value, billingType: body.billingType, invoiceUrl: `https://sandbox.asaas.com/i/${id}` });
       }
+      const payCard = path.match(/^\/payments\/([^/]+)\/payWithCreditCard$/);
+      if (init.method === 'POST' && payCard) {
+        if (body.creditCard.number === '5184019740373151') return reply(400, { errors: [{ description: 'Transação não autorizada.' }] });
+        const value = 50;
+        return reply(200, { id: payCard[1], status: 'CONFIRMED', value, netValue: 48.02, billingType: 'CREDIT_CARD' });
+      }
       return reply(404, { errors: [{ description: 'rota desconhecida' }] });
     };
     await owner().put('/cardapio/payments/account/asaas').send({ apiKey: '$aact_cartao_000000000000000000000000', sandbox: true });
@@ -696,20 +716,48 @@ describe('Cardápio, loja online e pedidos (e2e)', () => {
       .send(orderBody({ paymentMethod: 'CREDIT_CARD', customer: { name: 'Rui', phone: '(11) 96666-0000', document: '52998224725' } }));
     expect(order.status).toBe(201);
     const pay = await prisma.payment.findFirstOrThrow({ where: { order: { trackingCode: order.body.trackingCode } } });
-    expect(order.body.payment).toMatchObject({ status: 'PENDING', pixCopyPaste: null, checkoutUrl: `https://sandbox.asaas.com/i/${pay.externalId}`, canSimulate: false });
+    expect(order.body.payment).toMatchObject({ status: 'PENDING', pixCopyPaste: null, cardForm: true, canSimulate: false });
+    expect(JSON.stringify(order.body)).not.toContain('asaas.com');
     expect(calls.find((c) => c.method === 'POST' && c.path === '/payments')!.body).toMatchObject({ billingType: 'CREDIT_CARD', customer: 'cus_card' });
     expect(calls.some((c) => c.path.endsWith('/pixQrCode'))).toBe(false);
     expect(pay.expiresAt!.getTime() - Date.now()).toBeGreaterThan(29 * 60_000);
     // Ainda não pago: não aparece para a cozinha.
     expect((await owner().get('/cardapio/orders')).body.some((o: { trackingCode: string }) => o.trackingCode === order.body.trackingCode)).toBe(false);
 
-    // Cartão aprovado (PAYMENT_CONFIRMED) e depois o dinheiro cai (PAYMENT_RECEIVED): entra uma vez só, com a taxa.
+    // Checkout transparente: recusado continua pendente (o cliente tenta outro cartão); aprovado entra na hora.
+    const transparent = await http()
+      .post(`/public/stores/${slug}/orders`)
+      .send(orderBody({ paymentMethod: 'CREDIT_CARD', customer: { name: 'Ana', phone: '(11) 95555-0000', document: '52998224725' } }));
+    const tPay = await prisma.payment.findFirstOrThrow({ where: { order: { trackingCode: transparent.body.trackingCode } } });
+    const refused = await http().post(payUrl(transparent.body.trackingCode)).send({ ...card, number: '5184019740373151' });
+    expect(refused.status).toBe(400);
+    expect(refused.body.message).toBe('Pagamento não aprovado: Transação não autorizada.');
+    expect((await http().get(`/public/orders/${transparent.body.trackingCode}`)).body.payment).toMatchObject({ status: 'PENDING', cardForm: true });
+    const approved = await http().post(payUrl(transparent.body.trackingCode)).set('X-Forwarded-For', '200.100.50.25').send(card);
+    expect(approved.status).toBe(200);
+    expect(approved.body).toMatchObject({ status: 'PAID', payment: { status: 'PAID' } });
+    const sent = calls.filter((c) => c.path === `/payments/${tPay.externalId}/payWithCreditCard`).at(-1)!.body!;
+    expect(sent).toMatchObject({
+      creditCard: { holderName: 'RUI TESTE', number: '4539656048392220', expiryMonth: '12', expiryYear: '2035', ccv: '123' },
+      creditCardHolderInfo: { cpfCnpj: '52998224725', email: 'rui@teste.com', postalCode: '01310100', addressNumber: '100', mobilePhone: '11955550000' },
+    });
+    expect(typeof sent.remoteIp).toBe('string');
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: tPay.id } })).feeCents).toBe(198);
+    // Nada do cartão fica gravado.
+    const saved = JSON.stringify(await prisma.payment.findMany({ where: { orderId: tPay.orderId } }));
+    expect(saved).not.toContain('4539656048392220');
+    expect(saved).not.toContain('"123"');
+    // O webhook que chega depois não duplica.
+    expect((await http().post(`/public/webhooks/asaas/${tenantId}`).set('asaas-access-token', stored.webhookToken).send({ event: 'PAYMENT_CONFIRMED', payment: { id: tPay.externalId, value: 50, netValue: 48.02 } })).status).toBe(200);
+    expect(await prisma.domainEvent.count({ where: { tenantId, type: 'pedido.recebido', payload: { path: ['orderId'], equals: tPay.orderId } } })).toBe(1);
+
+    // Cartão em análise no Asaas: confirma pelo webhook (PAYMENT_CONFIRMED) e depois o dinheiro cai (PAYMENT_RECEIVED): entra uma vez só, com a taxa.
     const hookUrl = `/public/webhooks/asaas/${tenantId}`;
     const total = order.body.totalCents / 100;
     const event = { event: 'PAYMENT_CONFIRMED', payment: { id: pay.externalId, value: total, netValue: Math.round((total * 0.9701 - 0.49) * 100) / 100 } };
     expect((await http().post(hookUrl).set('asaas-access-token', stored.webhookToken).send(event)).status).toBe(200);
     expect((await http().post(hookUrl).set('asaas-access-token', stored.webhookToken).send({ ...event, event: 'PAYMENT_RECEIVED' })).status).toBe(200);
-    expect((await http().get(`/public/orders/${order.body.trackingCode}`)).body).toMatchObject({ status: 'PAID', payment: { status: 'PAID', checkoutUrl: null } });
+    expect((await http().get(`/public/orders/${order.body.trackingCode}`)).body).toMatchObject({ status: 'PAID', payment: { status: 'PAID', cardForm: false } });
     const paid = await prisma.payment.findUniqueOrThrow({ where: { id: pay.id } });
     expect(paid.feeCents).toBe(Math.round((total - event.payment.netValue) * 100));
     const orderId = (await prisma.order.findUniqueOrThrow({ where: { trackingCode: order.body.trackingCode } })).id;

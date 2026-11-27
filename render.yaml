@@ -61,3 +61,9 @@ services:
       # Cifra as chaves da API do Asaas guardadas no banco. Não trocar depois (as chaves salvas deixam de abrir).
       - key: PAYMENTS_SECRET
         generateValue: true
+      # WhatsApp da loja (QR Code) para avisar o status do pedido: endereço e chave do servidor Evolution API.
+      # Sem isso o painel mostra "WhatsApp ainda não disponível". Ver docs/deploy-teste.md.
+      - key: WHATSAPP_API_URL
+        sync: false
+      - key: WHATSAPP_API_KEY
+        sync: false
