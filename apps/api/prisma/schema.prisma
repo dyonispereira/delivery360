@@ -551,6 +551,9 @@ model TableTab {
   status          TabStatus      @default(OPEN)
   people          Int?
   openedById      String?        @map("opened_by_id") @db.Uuid
+  /// Garçom responsável pela mesa: quem abriu, ou quem "assumiu" depois. Recebe os avisos de prato pronto.
+  waiterId        String?        @map("waiter_id") @db.Uuid
+  waiterName      String?        @map("waiter_name")
   openedAt        DateTime       @default(now()) @map("opened_at")
   closedById      String?        @map("closed_by_id") @db.Uuid
   closedAt        DateTime?      @map("closed_at")
@@ -571,6 +574,7 @@ model TableTab {
 
   @@index([tenantId, status])
   @@index([tableId])
+  @@index([waiterId])
   @@map("table_tabs")
 }
 

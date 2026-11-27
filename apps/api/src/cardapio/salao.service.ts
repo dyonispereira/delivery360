@@ -10,6 +10,8 @@ import { OrdersService, trackingCode } from './orders.service';
 /** Cliente único do salão: o pedido de mesa não tem telefone (o "cliente" é a mesa). */
 const SALAO_CUSTOMER_KEY = 'salao';
 const KITCHEN: OrderStatus[] = ['PAID', 'IN_PREPARATION'];
+/** "Ana Beatriz Souza" → "Ana Beatriz": cabe no cartão da mesa e no comprovante. */
+const shortName = (name?: string | null) => name?.trim().split(/\s+/).slice(0, 2).join(' ') || null;
 const brl = (c: number) => `R$ ${(c / 100).toFixed(2).replace('.', ',')}`;
 
 /**
@@ -69,6 +71,8 @@ export class SalaoService {
                 rounds: live.length,
                 readyCount: live.filter((o) => o.status === 'READY').length,
                 kitchenCount: live.filter((o) => KITCHEN.includes(o.status)).length,
+                waiterId: tab.waiterId,
+                waiterName: tab.waiterName,
               }
             : null,
         };
@@ -144,14 +148,14 @@ export class SalaoService {
 
     const { priced, costOf } = await this.orders.priceStaffItems(tenantId, dto.items);
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
-    const waiterName = user?.name.trim().split(/\s+/).slice(0, 2).join(' ') || null;
+    const waiterName = shortName(user?.name);
 
     const order = await this.orders.withOrderNumber(tenantId, async (tx, number) => {
       // Uma conta aberta por mesa (open_key único): dois garçons ao mesmo tempo caem na mesma conta.
       let tab = await tx.tableTab.findUnique({ where: { openKey: table.id } });
       if (!tab) {
         tab = await tx.tableTab.create({
-          data: { tenantId, tableId: table.id, tableName: table.name, openKey: table.id, people: dto.people ?? null, openedById: userId },
+          data: { tenantId, tableId: table.id, tableName: table.name, openKey: table.id, people: dto.people ?? null, openedById: userId, waiterId: userId, waiterName },
         });
       } else if (dto.people && dto.people !== tab.people) {
         tab = await tx.tableTab.update({ where: { id: tab.id }, data: { people: dto.people } });
@@ -211,7 +215,7 @@ export class SalaoService {
       include: {
         items: { select: { id: true, name: true, quantity: true, notes: true, options: { select: { name: true } } } },
         statusHistory: { where: { status: 'READY' }, orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } },
-        tab: { select: { tableId: true } },
+        tab: { select: { tableId: true, waiterId: true, waiterName: true } },
       },
     });
     return orders.map((o) => ({
@@ -220,6 +224,8 @@ export class SalaoService {
       tableId: o.tab?.tableId ?? null,
       tableName: o.tableName,
       waiterName: o.waiterName,
+      tabWaiterId: o.tab?.waiterId ?? null,
+      tabWaiterName: o.tab?.waiterName ?? null,
       readyAt: (o.statusHistory[0]?.createdAt ?? o.updatedAt).toISOString(),
       items: o.items.map((i) => ({ id: i.id, name: i.name, quantity: i.quantity, notes: i.notes, options: i.options.map((x) => x.name) })),
     }));
@@ -232,6 +238,17 @@ export class SalaoService {
     if (order.status !== 'READY') throw new ConflictException('Só dá para marcar como servido quando a cozinha deixar pronto.');
     await this.orders.updateStatus(tenantId, userId, orderId, 'COMPLETED', 'Servido na mesa');
     return { ok: true };
+  }
+
+  /** Outro garçom passa a cuidar da mesa (troca de turno, ajuda): os avisos de prato pronto vão para ele. */
+  async assumeTab(tenantId: string, userId: string, tabId: string) {
+    const tab = await this.prisma.tableTab.findFirst({ where: { id: tabId, tenantId, status: 'OPEN' }, select: { id: true, tableName: true, waiterName: true } });
+    if (!tab) throw new NotFoundException('Conta aberta não encontrada.');
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+    const waiterName = shortName(user?.name);
+    await this.prisma.tableTab.update({ where: { id: tab.id }, data: { waiterId: userId, waiterName } });
+    await this.audit.log({ tenantId, userId, action: 'tab.assumed', entity: 'table_tab', entityId: tab.id, before: { waiterName: tab.waiterName }, after: { waiterName } });
+    return this.tabDetail(tenantId, tab.id);
   }
 
   // ---------- Conta ----------
@@ -271,6 +288,8 @@ export class SalaoService {
       tableName: tab.tableName,
       status: tab.status,
       people: tab.people,
+      waiterId: tab.waiterId,
+      waiterName: tab.waiterName,
       openedAt: tab.openedAt.toISOString(),
       closedAt: tab.closedAt?.toISOString() ?? null,
       rounds: tab.orders.map((o) => ({

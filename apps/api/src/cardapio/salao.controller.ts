@@ -93,6 +93,11 @@ export class SalaoController {
     return this.salao.markServed(t.tenantId, u.id, id);
   }
 
+  @Post('tabs/:id/assume')
+  assume(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string) {
+    return this.salao.assumeTab(t.tenantId, u.id, id);
+  }
+
   @Get('tabs/closed')
   closed(@CurrentTenant() t: TenantContext) {
     return this.salao.closedToday(t.tenantId);

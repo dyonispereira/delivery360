@@ -46,6 +46,9 @@ export interface SalaoTable {
     readyCount: number;
     /** Rodadas ainda na cozinha (recebido ou em preparo). */
     kitchenCount: number;
+    /** Garçom responsável (quem abriu ou assumiu a mesa). */
+    waiterId: string | null;
+    waiterName: string | null;
   } | null;
 }
 
@@ -56,6 +59,9 @@ export interface ReadyRound {
   tableId: string | null;
   tableName: string | null;
   waiterName: string | null;
+  /** Garçom responsável pela mesa agora (recebe o aviso). */
+  tabWaiterId: string | null;
+  tabWaiterName: string | null;
   readyAt: string;
   items: { id: string; name: string; quantity: number; notes: string | null; options: string[] }[];
 }
@@ -101,6 +107,8 @@ export interface TabDetail {
   tableName: string;
   status: 'OPEN' | 'CLOSED';
   people: number | null;
+  waiterId: string | null;
+  waiterName: string | null;
   openedAt: string;
   closedAt: string | null;
   rounds: TabRound[];
