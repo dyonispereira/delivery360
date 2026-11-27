@@ -157,9 +157,45 @@ export interface OrderQuote {
   coupon: { code: string; label: string; discountCents: number; promoExcluded: boolean } | null;
   /** Desconto especial automático (impulso Delivery360), somado ao cupom. */
   platformDiscountCents: number;
+  /** Fidelidade: saldo do cliente, clube, prêmio escolhido e indicação. */
+  loyalty?: QuoteLoyalty;
   totalCents: number;
   /** Entrega sem bairro escolhido: a taxa ainda não entrou. */
   zonePending: boolean;
+}
+
+export interface QuoteLoyalty {
+  points: number;
+  level: { name: string; discountBps: number; freeDelivery: boolean } | null;
+  clubDiscountCents: number;
+  /** O cliente tem nível, mas usou cupom (não soma). */
+  clubBlockedByCoupon: boolean;
+  reward: { id: string; name: string; discountCents: number; points: number } | null;
+  referralDiscountCents: number;
+  /** Por que a indicação não entrou (null = entrou ou não veio código). */
+  referralNote: string | null;
+  totalCents: number;
+}
+
+export type RewardType = 'FIXED' | 'FREE_DELIVERY' | 'PRODUCT';
+
+/** Programa de fidelidade como a loja mostra. */
+export interface PublicLoyalty {
+  program: {
+    pointsEnabled: boolean;
+    pointsPerReal: number;
+    expireDays: number;
+    rewards: { id: string; name: string; pointsCost: number; type: RewardType; valueCents: number; productId: string | null; minOrderCents: number }[];
+    levels: { name: string; minPoints: number; discountBps: number; freeDelivery: boolean }[];
+    referral: { friendCents: number; minOrderCents: number; referrerPoints: number } | null;
+  } | null;
+  customer: {
+    points: number;
+    earned12m?: number;
+    level: { name: string; discountBps: number; freeDelivery: boolean } | null;
+    next: { name: string; missing: number } | null;
+    known: boolean;
+  } | null;
 }
 
 export interface OrderTracking {
@@ -188,6 +224,22 @@ export interface OrderTracking {
   couponCode: string | null;
   /** Desconto especial automático. */
   platformDiscountCents: number;
+  /** Fidelidade: prêmio por pontos, clube e indicação (soma em loyaltyDiscountCents). */
+  loyaltyDiscountCents?: number;
+  rewardName?: string | null;
+  rewardDiscountCents?: number;
+  pointsSpent?: number;
+  clubLevelName?: string | null;
+  clubDiscountCents?: number;
+  referralDiscountCents?: number;
+  loyalty?: {
+    pointsEnabled: boolean;
+    /** Pontos deste pedido (ganhos, ou a ganhar quando for entregue). */
+    orderPoints: number;
+    orderPointsEarned: boolean;
+    balance: number;
+    referral: { code: string; friendCents: number; referrerPoints: number; minOrderCents: number } | null;
+  } | null;
   deliveryFeeCents: number;
   totalCents: number;
   paymentMethod: PaymentMethod;

@@ -7,6 +7,7 @@ import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
 import { LiveMap } from '@/components/live-map';
 import { CardFields, cardError, cardPayload, emptyCard, type CardState } from '@/components/card-form';
+import { LoyaltyOrderCard } from '@/components/loyalty';
 
 const DELIVERY_STEPS: OrderStatus[] = ['PAID', 'IN_PREPARATION', 'OUT_FOR_DELIVERY', 'COMPLETED'];
 const PICKUP_STEPS: OrderStatus[] = ['PAID', 'IN_PREPARATION', 'READY', 'COMPLETED'];
@@ -164,6 +165,7 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
 
       {order.status === 'COMPLETED' && (order.canRate || order.rating) && <RatingCard order={order} code={code} onSaved={setOrder} />}
       {(order.canTip || order.tip?.status === 'PAID') && order.tipCourierName && <TipCard order={order} code={code} onSaved={setOrder} />}
+      <LoyaltyOrderCard order={order} />
 
       {pix && order.status === 'AWAITING_PAYMENT' && (
         <section className="card space-y-3">
@@ -243,6 +245,15 @@ export default function TrackingPage({ params }: { params: Promise<{ code: strin
           )}
           {order.platformDiscountCents > 0 && (
             <div className="flex justify-between text-emerald-700"><dt>Desconto especial</dt><dd>−{formatBRL(order.platformDiscountCents)}</dd></div>
+          )}
+          {!!order.clubDiscountCents && (
+            <div className="flex justify-between text-emerald-700"><dt>Clube {order.clubLevelName}</dt><dd>−{formatBRL(order.clubDiscountCents)}</dd></div>
+          )}
+          {!!order.referralDiscountCents && (
+            <div className="flex justify-between text-emerald-700"><dt>Indicação de amigo</dt><dd>−{formatBRL(order.referralDiscountCents)}</dd></div>
+          )}
+          {!!order.rewardDiscountCents && (
+            <div className="flex justify-between text-emerald-700"><dt>Prêmio: {order.rewardName} ({order.pointsSpent} pts)</dt><dd>−{formatBRL(order.rewardDiscountCents)}</dd></div>
           )}
           <div className="flex justify-between font-semibold"><dt>Total</dt><dd>{formatBRL(order.totalCents)}</dd></div>
           <div className="flex justify-between text-zinc-500">

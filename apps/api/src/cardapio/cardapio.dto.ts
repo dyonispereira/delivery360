@@ -183,6 +183,10 @@ export class CreateOrderDto {
   @IsOptional() @IsString() @MaxLength(100) utmSource?: string;
   @IsOptional() @IsString() @MaxLength(100) utmCampaign?: string;
   @IsOptional() @IsString() @MaxLength(40) couponCode?: string;
+  /** Prêmio da fidelidade trocado por pontos. */
+  @IsOptional() @IsUUID() rewardId?: string;
+  /** Indique e Ganhe: código de quem indicou (vem do link ?indicacao=). */
+  @IsOptional() @IsString() @MaxLength(20) referralCode?: string;
 }
 
 /** Prévia da conta no carrinho (sem criar pedido). */
@@ -193,6 +197,8 @@ export class QuoteOrderDto {
   @IsOptional() @IsIn(PAYMENT_METHODS) paymentMethod?: (typeof PAYMENT_METHODS)[number];
   @IsOptional() @IsString() @MaxLength(20) phone?: string;
   @IsOptional() @IsString() @MaxLength(40) couponCode?: string;
+  @IsOptional() @IsUUID() rewardId?: string;
+  @IsOptional() @IsString() @MaxLength(20) referralCode?: string;
 }
 
 export class UpdateOrderStatusDto {
@@ -461,4 +467,40 @@ export class UpdateTabDto {
 
 export class ServiceFeeDto {
   @IsInt() @Min(0) @Max(2000) serviceFeeBps: number;
+}
+
+// ---------- Fidelidade ----------
+
+export class LoyaltyProgramDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsInt() @Min(1, { message: 'Dê pelo menos 1 ponto por real.' }) @Max(100) pointsPerReal?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(3650) expireDays?: number;
+  @IsOptional() @IsBoolean() clubEnabled?: boolean;
+  @IsOptional() @IsBoolean() referralEnabled?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) referralFriendCents?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) referralMinOrderCents?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(1_000_000) referralReferrerPoints?: number;
+}
+
+export class LoyaltyRewardDto {
+  @IsString() @MinLength(2, { message: 'Dê um nome ao prêmio.' }) @MaxLength(80) name: string;
+  @IsInt() @Min(1, { message: 'O prêmio precisa custar pelo menos 1 ponto.' }) @Max(1_000_000) pointsCost: number;
+  @IsIn(['FIXED', 'FREE_DELIVERY', 'PRODUCT']) type: 'FIXED' | 'FREE_DELIVERY' | 'PRODUCT';
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) valueCents?: number;
+  @IsOptional() @IsUUID() productId?: string | null;
+  @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) minOrderCents?: number;
+  @IsOptional() @IsBoolean() active?: boolean;
+}
+
+export class ClubLevelDto {
+  @IsString() @MinLength(2, { message: 'Dê um nome ao nível.' }) @MaxLength(40) name: string;
+  @IsInt() @Min(0) @Max(10_000_000) minPoints: number;
+  /** Pontos-base: 500 = 5%. Até 50%. */
+  @IsOptional() @IsInt() @Min(0) @Max(5000, { message: 'O desconto do nível vai até 50%.' }) discountBps?: number;
+  @IsOptional() @IsBoolean() freeDelivery?: boolean;
+}
+
+export class LoyaltyAdjustDto {
+  @IsInt() @Min(-1_000_000) @Max(1_000_000) points: number;
+  @IsString() @MinLength(2, { message: 'Diga o motivo do ajuste.' }) @MaxLength(120) note: string;
 }

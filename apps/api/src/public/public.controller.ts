@@ -1,18 +1,38 @@
-import { Body, Controller, Get, Headers, HttpCode, Ip, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, Ip, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { Public } from '../access/access.decorators';
 import { CreateOrderDto, PayCardDto, QuoteOrderDto, RateOrderDto, TipDto } from '../cardapio/cardapio.dto';
 import { OrdersService } from '../cardapio/orders.service';
+import { LoyaltyService } from '../cardapio/loyalty.service';
+import { normalizePhone } from '../cardapio/order-pricing';
 
 /** Rotas abertas da loja online (sem login). */
 @Public()
 @Controller('public')
 export class PublicController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly loyalty: LoyaltyService,
+  ) {}
 
   @Get('stores/:slug')
   store(@Param('slug') slug: string) {
     return this.orders.getPublicMenu(slug);
+  }
+
+  /**
+   * Fidelidade da loja: regras, prêmios e níveis. Com o telefone, o saldo e o nível do cliente
+   * (sem nome nem dados pessoais). Limite por IP para ninguém varrer telefones.
+   */
+  @Throttle({ default: { limit: process.env.NODE_ENV === 'test' ? 1000 : 20, ttl: 60_000 } })
+  @Get('stores/:slug/fidelidade')
+  async loyaltyInfo(@Param('slug') slug: string, @Query('telefone') phone?: string) {
+    const store = await this.orders.findPublicStore(slug);
+    const program = await this.loyalty.publicProgram(store.tenantId);
+    if (!program || !phone) return { program, customer: null };
+    const digits = normalizePhone(phone);
+    if (!digits) throw new BadRequestException('Informe um telefone com DDD.');
+    return { program, customer: await this.loyalty.customerStatus(store.tenantId, digits) };
   }
 
   /** Limite por IP para evitar pedidos em massa. */

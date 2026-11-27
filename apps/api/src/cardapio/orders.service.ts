@@ -19,6 +19,8 @@ import { PaymentAccountsService } from '../payments/payment-accounts.service';
 import { AsaasError } from '../payments/asaas.client';
 import { CreateOrderDto, PayCardDto, QuoteOrderDto, RateOrderDto, TipDto } from './cardapio.dto';
 import { CouponError, couponDiscount, couponLabel } from './coupon-rules';
+import { LoyaltyError, levelFor, loyaltyDiscounts, pointsFor } from './loyalty-rules';
+import { awardOrderPoints, earnedLastYear, ensureReferralCode, loyaltyProgram, pointsBalance, refundOrderPoints } from './loyalty.service';
 import { activePromoPrice, effectivePrice, unitCost, type CostItem } from '@delivery360/shared';
 import { MenuProduct, OrderValidationError, normalizePhone, priceOrder } from './order-pricing';
 import { normalizeDocument } from './document';
@@ -395,6 +397,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       changeForCents?: number;
       items: CreateOrderDto['items'];
       couponCode?: string;
+      rewardId?: string;
+      referralCode?: string;
     },
     phone: string | null,
     /** Entrega sem bairro escolhido ainda: calcula sem taxa (só na prévia). */
@@ -481,6 +485,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    // Fidelidade (bancada pelo restaurante): clube, indicação e prêmio trocado por pontos.
+    const loyalty = await this.loyaltyFor(tenantId, input, phone, priced, coupon?.discountCents ?? 0);
+
     // Impulso Delivery360: entra sozinho, o maior que se encaixar, e soma com o cupom do restaurante.
     let boost: { id: string; label: string; discountCents: number } | null = null;
     const boosts = await this.prisma.coupon.findMany({ where: { tenantId, fundedBy: 'PLATFORM', active: true } });
@@ -495,14 +502,95 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }
     }
     // Os dois descontos juntos nunca passam do valor do pedido.
-    if (boost) boost.discountCents = Math.min(boost.discountCents, priced.totalCents - (coupon?.discountCents ?? 0));
+    if (boost) boost.discountCents = Math.min(boost.discountCents, priced.totalCents - (coupon?.discountCents ?? 0) - loyalty.totalCents);
     if (boost && boost.discountCents <= 0) boost = null;
 
-    const totalCents = priced.totalCents - (coupon?.discountCents ?? 0) - (boost?.discountCents ?? 0);
+    const totalCents = priced.totalCents - (coupon?.discountCents ?? 0) - loyalty.totalCents - (boost?.discountCents ?? 0);
     if (input.paymentMethod === 'CASH_ON_DELIVERY' && input.changeForCents != null && input.changeForCents < totalCents) {
       throw new BadRequestException(`O troco precisa ser para um valor maior que o total (R$ ${(totalCents / 100).toFixed(2).replace('.', ',')}).`);
     }
-    return { priced, costOf, coupon, boost, totalCents };
+    return { priced, costOf, coupon, boost, loyalty, totalCents };
+  }
+
+  /**
+   * Descontos da fidelidade para este carrinho. O prêmio só com telefone (é pelo telefone que achamos os pontos).
+   * A indicação só vale para quem nunca pediu na loja e não pode ser o próprio cliente.
+   */
+  private async loyaltyFor(
+    tenantId: string,
+    input: { rewardId?: string; referralCode?: string },
+    phone: string | null,
+    priced: ReturnType<typeof priceOrder>,
+    couponCents: number,
+  ) {
+    const program = await loyaltyProgram(this.prisma, tenantId);
+    const customer = phone
+      ? await this.prisma.customer.findUnique({ where: { tenantId_phone: { tenantId, phone } }, select: { id: true, referredById: true } })
+      : null;
+    const [balance, earned, levels] = customer
+      ? await Promise.all([
+          program.enabled ? pointsBalance(this.prisma, tenantId, customer.id, program.expireDays) : 0,
+          program.clubEnabled ? earnedLastYear(this.prisma, tenantId, customer.id) : 0,
+          program.clubEnabled ? this.prisma.clubLevel.findMany({ where: { tenantId } }) : [],
+        ])
+      : [0, 0, []];
+    const level = program.clubEnabled ? levelFor(levels, earned) : null;
+
+    let reward = null;
+    if (input.rewardId) {
+      if (!program.enabled) throw new BadRequestException('Esta loja não está trocando pontos no momento.');
+      if (!phone) throw new BadRequestException('Informe seu telefone para usar seus pontos.');
+      reward = await this.prisma.loyaltyReward.findFirst({ where: { id: input.rewardId, tenantId } });
+      if (!reward) throw new BadRequestException('Prêmio não encontrado.');
+    }
+
+    // Indique e Ganhe: o código de quem indicou, para quem ainda não pediu nesta loja.
+    let referral: { discountCents: number; minOrderCents: number } | null = null;
+    let referrerId: string | null = null;
+    let referralNote: string | null = null;
+    const refCode = input.referralCode?.trim().toUpperCase();
+    if (program.referralEnabled && refCode) {
+      const referrer = await this.prisma.customer.findUnique({ where: { tenantId_referralCode: { tenantId, referralCode: refCode } }, select: { id: true, phone: true } });
+      const previous = customer ? await this.prisma.order.count({ where: { customerId: customer.id, status: { not: 'CANCELLED' } } }) : 0;
+      if (!referrer) referralNote = 'Código de indicação não encontrado.';
+      else if (phone && referrer.phone === phone) referralNote = 'Você não pode usar o seu próprio link de indicação.';
+      else if (previous > 0) referralNote = 'O desconto de indicação é só para o primeiro pedido na loja.';
+      else if (couponCents > 0) referralNote = 'O desconto de indicação não soma com cupom.';
+      else if (priced.subtotalCents < program.referralMinOrderCents) {
+        referralNote = `O desconto de indicação vale em pedidos a partir de R$ ${(program.referralMinOrderCents / 100).toFixed(2).replace('.', ',')}.`;
+      } else {
+        referral = { discountCents: program.referralFriendCents, minOrderCents: program.referralMinOrderCents };
+        referrerId = referrer.id;
+      }
+    }
+
+    let result;
+    try {
+      result = loyaltyDiscounts(
+        {
+          subtotalCents: priced.subtotalCents,
+          deliveryFeeCents: priced.deliveryFeeCents,
+          items: priced.items.map((i) => ({ productId: i.productId, basePriceCents: i.unitPriceCents - i.options.reduce((s, o) => s + o.priceCents, 0) })),
+          remainingCents: priced.totalCents - couponCents,
+          hasCoupon: couponCents > 0,
+        },
+        { level, reward, balance, referral },
+      );
+    } catch (err) {
+      if (err instanceof LoyaltyError) throw new BadRequestException(err.message);
+      throw err;
+    }
+    return {
+      ...result,
+      balance,
+      levelName: result.clubDiscountCents > 0 ? level!.name : null,
+      level: level ? { name: level.name, discountBps: level.discountBps, freeDelivery: level.freeDelivery } : null,
+      clubBlockedByCoupon: !!level && couponCents > 0,
+      reward: reward && result.rewardDiscountCents > 0 ? { id: reward.id, name: reward.name } : null,
+      referrerId: result.referralDiscountCents > 0 ? referrerId : null,
+      referralNote,
+      pointsEnabled: program.enabled,
+    };
   }
 
   /** Usos do cupom (ou do impulso) em pedidos não cancelados: no total, por este telefone e se o cliente já pediu. */
@@ -529,7 +617,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const phone = dto.phone ? normalizePhone(dto.phone) : null;
     // Antes de escolher o bairro a taxa ainda não existe: calcula sem ela.
     const zoneless = dto.type === 'DELIVERY' && !dto.zoneId;
-    const { priced, coupon, boost, totalCents } = await this.quoteFor(store, dto, phone, zoneless);
+    const { priced, coupon, boost, loyalty, totalCents } = await this.quoteFor(store, dto, phone, zoneless);
     return {
       subtotalCents: priced.subtotalCents,
       promoDiscountCents: priced.promoDiscountCents,
@@ -538,6 +626,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       coupon: coupon ? { code: coupon.code, label: coupon.label, discountCents: coupon.discountCents, promoExcluded: coupon.promoExcluded } : null,
       /** Desconto especial automático (impulso Delivery360). */
       platformDiscountCents: boost?.discountCents ?? 0,
+      loyalty: {
+        points: loyalty.balance,
+        level: loyalty.level,
+        clubDiscountCents: loyalty.clubDiscountCents,
+        clubBlockedByCoupon: loyalty.clubBlockedByCoupon,
+        reward: loyalty.reward ? { ...loyalty.reward, discountCents: loyalty.rewardDiscountCents, points: loyalty.pointsSpent } : null,
+        referralDiscountCents: loyalty.referralDiscountCents,
+        referralNote: loyalty.referralNote,
+        totalCents: loyalty.totalCents,
+      },
       totalCents,
       zonePending: zoneless,
     };
@@ -551,7 +649,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (!phone) throw new BadRequestException('Informe um telefone com DDD.');
     if (dto.type === 'DELIVERY' && !dto.address) throw new BadRequestException('Informe o endereço de entrega.');
 
-    const { priced, costOf, coupon, boost, totalCents } = await this.quoteFor(store, { ...dto, zoneId: dto.address?.zoneId }, phone);
+    const { priced, costOf, coupon, boost, loyalty, totalCents } = await this.quoteFor(store, { ...dto, zoneId: dto.address?.zoneId }, phone);
 
     const online = ONLINE_METHODS.includes(dto.paymentMethod);
     const gateway = online ? await this.payments.gatewayFor(tenantId) : null;
@@ -584,6 +682,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         },
         create: { tenantId, phone, name: dto.customer.name.trim(), document, gatewayCustomerId: charge?.gatewayCustomerId ?? null },
       });
+      // Prêmio: confere o saldo de novo com o cliente travado (dois pedidos ao mesmo tempo não gastam os mesmos pontos).
+      if (loyalty.pointsSpent > 0) {
+        await tx.$queryRaw`SELECT id FROM customers WHERE id = ${customer.id}::uuid FOR UPDATE`;
+        const balance = await pointsBalance(tx, tenantId, customer.id);
+        if (balance < loyalty.pointsSpent) throw new BadRequestException('Seus pontos mudaram. Confira o prêmio e tente de novo.');
+      }
+      if (loyalty.referrerId && !customer.referredById) {
+        await tx.customer.update({ where: { id: customer.id }, data: { referredById: loyalty.referrerId } });
+      }
+      await ensureReferralCode(tx, tenantId, customer);
       const status: OrderStatus = online ? 'AWAITING_PAYMENT' : 'PAID';
       const created = await tx.order.create({
         data: {
@@ -612,6 +720,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           couponPlatformCents: coupon?.platformCents ?? 0,
           platformDiscountCents: boost?.discountCents ?? 0,
           platformCouponId: boost?.id ?? null,
+          loyaltyDiscountCents: loyalty.totalCents,
+          rewardId: loyalty.reward?.id ?? null,
+          rewardName: loyalty.reward?.name ?? null,
+          rewardDiscountCents: loyalty.rewardDiscountCents,
+          pointsSpent: loyalty.pointsSpent,
+          clubLevelName: loyalty.levelName,
+          clubDiscountCents: loyalty.clubDiscountCents,
+          referralDiscountCents: loyalty.referralDiscountCents,
           deliveryFeeCents: priced.deliveryFeeCents,
           totalCents: totalCents,
           paymentMethod: dto.paymentMethod,
@@ -648,6 +764,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           },
         },
       });
+      if (loyalty.pointsSpent > 0) {
+        await tx.loyaltyTransaction.create({
+          data: { tenantId, customerId: customer.id, points: -loyalty.pointsSpent, kind: 'REDEEM', orderId: created.id, note: `${loyalty.reward!.name} · pedido #${number}` },
+        });
+      }
       if (!online) await this.publishReceived(tx, created.id, tenantId, totalCents, dto.paymentMethod);
       return created;
     });
@@ -668,9 +789,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         batch: { select: { courier: { select: { name: true, lastLat: true, lastLng: true, lastLocationAt: true } } } },
         tip: true,
         deliveryAttempts: { where: { outcome: 'DELIVERED' }, orderBy: { createdAt: 'desc' }, take: 1, select: { courierName: true } },
+        customer: { select: { id: true, referralCode: true } },
       },
     });
     if (!order) throw new NotFoundException('Pedido não encontrado.');
+    const loyalty = await this.trackingLoyalty(order);
     const payment = order.payments[0];
     const delivered = order.deliveryAttempts[0];
     const feedbackOpen = this.feedbackOpen(order);
@@ -701,6 +824,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       discountCents: order.discountCents,
       couponCode: order.couponCode,
       platformDiscountCents: order.platformDiscountCents,
+      loyaltyDiscountCents: order.loyaltyDiscountCents,
+      rewardName: order.rewardName,
+      rewardDiscountCents: order.rewardDiscountCents,
+      pointsSpent: order.pointsSpent,
+      clubLevelName: order.clubLevelName,
+      clubDiscountCents: order.clubDiscountCents,
+      referralDiscountCents: order.referralDiscountCents,
+      loyalty,
       deliveryFeeCents: order.deliveryFeeCents,
       totalCents: order.totalCents,
       paymentMethod: order.paymentMethod,
@@ -740,6 +871,36 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
               canSimulate: tip.provider === 'fake' && tip.status === 'PENDING' && this.fakeEnabled(),
             }
           : null,
+    };
+  }
+
+  /**
+   * Fidelidade na página do pedido: pontos deste pedido (ganhos ou a ganhar), saldo e o link de indicação do cliente.
+   * Só quem tem o código secreto do pedido vê.
+   */
+  private async trackingLoyalty(order: {
+    id: string;
+    tenantId: string;
+    channel: string;
+    type: string;
+    status: OrderStatus;
+    totalCents: number;
+    deliveryFeeCents: number;
+    customer: { id: string; referralCode: string | null };
+  }) {
+    if (order.channel !== 'LOJA' || order.type === 'DINE_IN') return null;
+    const program = await loyaltyProgram(this.prisma, order.tenantId);
+    if (!program.enabled && !program.referralEnabled) return null;
+    const earned = await this.prisma.loyaltyTransaction.findUnique({ where: { orderId_kind: { orderId: order.id, kind: 'EARN' } }, select: { points: true } });
+    const points = program.enabled && order.status !== 'CANCELLED' ? (earned?.points ?? pointsFor(order.totalCents, order.deliveryFeeCents, program.pointsPerReal)) : 0;
+    return {
+      pointsEnabled: program.enabled,
+      orderPoints: points,
+      orderPointsEarned: !!earned,
+      balance: program.enabled ? await pointsBalance(this.prisma, order.tenantId, order.customer.id, program.expireDays) : 0,
+      referral: program.referralEnabled && order.customer.referralCode
+        ? { code: order.customer.referralCode, friendCents: program.referralFriendCents, referrerPoints: program.referralReferrerPoints, minOrderCents: program.referralMinOrderCents }
+        : null,
     };
   }
 
@@ -951,6 +1112,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         const res = await tx.payment.updateMany({ where: { id: p.id, status: 'PENDING' }, data: { status: 'EXPIRED' } });
         if (res.count === 0) return;
         await tx.order.updateMany({ where: { id: p.orderId, status: 'AWAITING_PAYMENT' }, data: { status: 'CANCELLED' } });
+        await refundOrderPoints(tx, p.orderId);
         await tx.orderStatusHistory.create({ data: { orderId: p.orderId, status: 'CANCELLED', note: p.method === 'CREDIT_CARD' ? 'Cartão não pago no prazo' : 'PIX não pago no prazo' } });
       });
       // Cancela a cobrança no gateway para o cliente não pagar um pedido que já foi cancelado.
@@ -1013,7 +1175,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         tx,
       );
       await this.events.publish(tenantId, to === 'CANCELLED' ? 'pedido.cancelado' : 'pedido.status', { orderId, from: order.status, to, totalCents: order.totalCents }, tx);
-      if (to === 'COMPLETED') await tx.order.update({ where: { id: orderId }, data: { deliveredAt: new Date() } });
+      if (to === 'COMPLETED') {
+        await tx.order.update({ where: { id: orderId }, data: { deliveredAt: new Date() } });
+        await awardOrderPoints(tx, orderId);
+      }
+      if (to === 'CANCELLED') await refundOrderPoints(tx, orderId);
       await closeBatchIfDone(tx, order.batchId);
       return tx.order.findUniqueOrThrow({ where: { id: orderId } });
     });

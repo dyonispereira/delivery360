@@ -16,8 +16,10 @@ import {
   type PublicCoupon,
   type PublicOffer,
   type PublicProduct,
+  type PublicLoyalty,
   type PublicStore,
 } from '@delivery360/shared';
+import { LoyaltyCard, LoyaltyCheckout } from '@/components/loyalty';
 import { api, ApiError } from '@/lib/api';
 import { ErrorBox, Spinner } from '@/components/ui';
 import { CardFields, cardError, cardPayload, emptyCard, type CardState } from '@/components/card-form';
@@ -44,6 +46,8 @@ const cartKey = (slug: string) => `d360.cart.${slug}`;
 const ordersKey = (slug: string) => `d360.orders.${slug}`;
 const customerKey = 'd360.customer';
 const couponKey = (slug: string) => `d360.coupon.${slug}`;
+/** Indique e Ganhe: código de quem indicou, guardado até o primeiro pedido. */
+const referralKey = (slug: string) => `d360.ref.${slug}`;
 const MAX_PAST_ORDERS = 20;
 
 function load<T>(key: string, fallback: T): T {
@@ -86,9 +90,18 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
   const [last, setLast] = useState<OrderTracking | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [coupon, setCoupon] = useState<string | null>(null);
+  const [loyalty, setLoyalty] = useState<PublicLoyalty | null>(null);
+  const [referral, setReferral] = useState<string | null>(null);
 
   useEffect(() => {
     setCoupon(load<string | null>(couponKey(slug), null));
+    const ref = new URLSearchParams(window.location.search).get('indicacao')?.trim().toUpperCase();
+    if (ref) save(referralKey(slug), ref);
+    setReferral(ref || load<string | null>(referralKey(slug), null));
+    const phone = load<{ phone?: string }>(customerKey, {}).phone?.replace(/\D/g, '') ?? '';
+    api<PublicLoyalty>(`/public/stores/${encodeURIComponent(slug)}/fidelidade${phone.length >= 10 ? `?telefone=${phone}` : ''}`)
+      .then(setLoyalty)
+      .catch(() => setLoyalty(null));
     api<PublicStore>(`/public/stores/${encodeURIComponent(slug)}`)
       .then(setData)
       .catch((e: ApiError) => setError(e.status === 404 ? 'Loja não encontrada.' : e.message));
@@ -225,6 +238,8 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
               </div>
             </section>
           )}
+
+          {loyalty?.program && <LoyaltyCard data={loyalty} referral={referral} />}
 
           <div className="px-4 pt-4">
             <label className="sr-only" htmlFor="busca">Buscar no cardápio</label>
@@ -505,6 +520,13 @@ export default function StorePage({ params }: { params: Promise<{ slug: string }
           warnings={warnings}
           coupon={coupon}
           onCoupon={chooseCoupon}
+          loyalty={loyalty?.program ?? null}
+          referral={referral}
+          onOrdered={() => {
+            // Já é cliente: a indicação não vale mais.
+            setReferral(null);
+            save(referralKey(slug), null);
+          }}
           onCart={updateCart}
           onClose={() => {
             setCheckout(false);
@@ -951,6 +973,9 @@ function Checkout({
   warnings,
   coupon,
   onCoupon,
+  loyalty,
+  referral,
+  onOrdered,
   onCart,
   onClose,
 }: {
@@ -960,6 +985,9 @@ function Checkout({
   warnings: string[];
   coupon: string | null;
   onCoupon: (code: string | null) => void;
+  loyalty: PublicLoyalty['program'];
+  referral: string | null;
+  onOrdered: () => void;
   onCart: (c: CartItem[]) => void;
   onClose: () => void;
 }) {
@@ -996,10 +1024,12 @@ function Checkout({
   const [quote, setQuote] = useState<OrderQuote | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [rewardId, setRewardId] = useState<string | null>(null);
+  const [rewardError, setRewardError] = useState<string | null>(null);
   const phoneOk = phone.replace(/\D/g, '').length >= 10 ? phone : '';
   const cartSig = JSON.stringify(cart.map((i) => [i.productId, i.quantity, i.optionIds]));
   // Com cupom ou com desconto especial na loja, quem calcula a conta é o servidor.
-  const needsQuote = !!coupon || data.offers.length > 0;
+  const needsQuote = !!coupon || data.offers.length > 0 || !!loyalty;
   useEffect(() => {
     if (!needsQuote) {
       setQuote(null);
@@ -1018,6 +1048,8 @@ function Checkout({
           paymentMethod: method || undefined,
           phone: phoneOk || undefined,
           couponCode: couponCode ?? undefined,
+          rewardId: rewardId ?? undefined,
+          referralCode: referral ?? undefined,
         },
       });
     const t = setTimeout(async () => {
@@ -1026,8 +1058,15 @@ function Checkout({
         if (!alive) return;
         setQuote(q);
         setCouponError(null);
+        if (rewardId) setRewardError(null);
       } catch (e) {
         if (!alive) return;
+        // Prêmio recusado (falta ponto, produto fora do carrinho...): mostra o motivo e tira a escolha.
+        if (rewardId) {
+          setRewardError((e as ApiError).message);
+          setRewardId(null);
+          return;
+        }
         setCouponError(coupon ? (e as ApiError).message : null);
         // Cupom recusado: o desconto especial continua valendo sem ele.
         const q = coupon ? await ask(null).catch(() => null) : null;
@@ -1040,11 +1079,12 @@ function Checkout({
       alive = false;
       clearTimeout(t);
     };
-  }, [needsQuote, coupon, type, zoneId, phoneOk, method, cartSig, slug]);
+  }, [needsQuote, coupon, type, zoneId, phoneOk, method, cartSig, slug, rewardId, referral]);
 
   const discount = quote?.coupon ? quote.discountCents : 0;
   const special = quote?.platformDiscountCents ?? 0;
-  const total = subtotal + fee - discount - special;
+  const fid = quote?.loyalty;
+  const total = subtotal + fee - discount - special - (fid?.totalCents ?? 0);
   const applyCoupon = (code: string) => {
     const c = code.trim().toUpperCase();
     if (c) onCoupon(c);
@@ -1092,12 +1132,15 @@ function Checkout({
           paymentMethod: method,
           changeForCents,
           couponCode: quote?.coupon ? coupon : undefined,
+          rewardId: fid?.reward ? rewardId : undefined,
+          referralCode: referral ?? undefined,
           utmSource: utm.source ?? undefined,
           utmCampaign: utm.campaign ?? undefined,
         },
       });
       rememberOrder(slug, order);
       if (order.couponCode) onCoupon(null);
+      onOrdered();
       onCart([]);
       let cardFailure = '';
       if (method === 'CREDIT_CARD' && order.payment?.cardForm) {
@@ -1238,6 +1281,20 @@ function Checkout({
 
         <Upsell data={data} cart={cart} onAdd={(i) => onCart([...cart, i])} />
 
+        {loyalty && (
+          <LoyaltyCheckout
+            program={loyalty}
+            quote={fid}
+            phoneOk={!!phoneOk}
+            rewardId={rewardId}
+            onReward={(id) => {
+              setRewardError(null);
+              setRewardId(id);
+            }}
+            error={rewardError}
+          />
+        )}
+
         <CouponField
           applied={coupon}
           quote={quote}
@@ -1263,6 +1320,15 @@ function Checkout({
           )}
           {special > 0 && (
             <div className="flex justify-between text-emerald-700"><dt>Desconto especial</dt><dd>−{formatBRL(special)}</dd></div>
+          )}
+          {fid && fid.clubDiscountCents > 0 && (
+            <div className="flex justify-between text-emerald-700"><dt>Clube {fid.level?.name}</dt><dd>−{formatBRL(fid.clubDiscountCents)}</dd></div>
+          )}
+          {fid && fid.referralDiscountCents > 0 && (
+            <div className="flex justify-between text-emerald-700"><dt>Indicação de amigo</dt><dd>−{formatBRL(fid.referralDiscountCents)}</dd></div>
+          )}
+          {fid?.reward && (
+            <div className="flex justify-between text-emerald-700"><dt>Prêmio: {fid.reward.name} ({fid.reward.points} pts)</dt><dd>−{formatBRL(fid.reward.discountCents)}</dd></div>
           )}
           <div className="flex justify-between font-semibold"><dt>Total</dt><dd>{formatBRL(total)}</dd></div>
           {savings > 0 && <div className="flex justify-between text-emerald-700"><dt>Você economizou com as promoções</dt><dd>{formatBRL(savings)}</dd></div>}

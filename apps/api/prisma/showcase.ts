@@ -304,6 +304,46 @@ async function addExtras(prisma: PrismaClient, tenantId: string) {
   const banner = await prisma.campaign.findFirst({ where: { title: faixa.title, tenantIds: { has: tenantId } } });
   if (!banner) await prisma.campaign.create({ data: { ...faixa, tenantIds: [tenantId], position: 99 } });
   else if (!banner.fullArt) await prisma.campaign.update({ where: { id: banner.id }, data: faixa });
+
+  // Fidelidade de exemplo (só na primeira vez: depois o dono muda como quiser).
+  if (!(await prisma.loyaltyProgram.findUnique({ where: { tenantId } }))) {
+    await prisma.loyaltyProgram.create({
+      data: { tenantId, enabled: true, pointsPerReal: 1, clubEnabled: true, referralEnabled: true, referralFriendCents: 1000, referralMinOrderCents: 4000, referralReferrerPoints: 50 },
+    });
+    const guarana = await prisma.product.findFirst({ where: { tenantId, name: 'Guaraná 2L' } });
+    await prisma.loyaltyReward.createMany({
+      data: [
+        ...(guarana ? [{ tenantId, name: 'Guaraná 2L grátis', pointsCost: 80, type: 'PRODUCT' as const, productId: guarana.id }] : []),
+        { tenantId, name: 'Entrega grátis', pointsCost: 60, type: 'FREE_DELIVERY' as const },
+        { tenantId, name: 'R$ 15 de desconto', pointsCost: 150, type: 'FIXED' as const, valueCents: 1500, minOrderCents: 5000 },
+      ],
+    });
+    await prisma.clubLevel.createMany({
+      data: [
+        { tenantId, name: 'Prata', minPoints: 300, discountBps: 500 },
+        { tenantId, name: 'Ouro', minPoints: 800, discountBps: 1000, freeDelivery: true },
+      ],
+    });
+    // Pontos dos pedidos já entregues da loja modelo, para o painel e a loja já mostrarem saldos.
+    const done = await prisma.order.findMany({
+      where: { tenantId, status: 'COMPLETED', channel: 'LOJA', type: { not: 'DINE_IN' } },
+      select: { id: true, number: true, customerId: true, totalCents: true, deliveryFeeCents: true, deliveredAt: true, createdAt: true },
+    });
+    await prisma.loyaltyTransaction.createMany({
+      data: done
+        .map((o) => ({
+          tenantId,
+          customerId: o.customerId,
+          points: Math.floor(Math.max(0, o.totalCents - o.deliveryFeeCents) / 100),
+          kind: 'EARN' as const,
+          orderId: o.id,
+          note: `Pedido #${o.number}`,
+          createdAt: o.deliveredAt ?? o.createdAt,
+        }))
+        .filter((t) => t.points > 0),
+      skipDuplicates: true,
+    });
+  }
 }
 
 async function topUpOrders(prisma: PrismaClient, tenantId: string) {
