@@ -30,6 +30,7 @@ const paths = {
   history: 'M3 12a9 9 0 1 0 3-6.7M3 4v4h4m5-1v5l3 2',
   money: 'M3 6h18v12H3zm9 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 9v.01M18 15v.01',
   star: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z',
+  register: 'M4 11h16l1 9H3zm3 0V7h10v4M9 3h6v4H9zm-1 12h2m3 0h2m-7 3h2m3 0h2',
   spark: 'M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5m7 7L18 18M6 18l2.5-2.5m7-7L18 6',
 } as const;
 

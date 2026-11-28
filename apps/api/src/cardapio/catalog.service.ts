@@ -213,7 +213,7 @@ export class CatalogService {
     const promo = this.promo(dto);
     const position = dto.position ?? (await this.prisma.product.count({ where: { categoryId: dto.categoryId } }));
     return this.prisma.product
-      .create({ data: { ...dto, ...promo, costItems: toJson(dto.costItems ?? []), pdvCode: pdv(dto.pdvCode), channelPrices: prices(dto.channelPrices), tenantId, name: dto.name.trim(), position } })
+      .create({ data: { ...dto, ...promo, costItems: toJson(dto.costItems ?? []), pdvCode: pdv(dto.pdvCode), ncm: dto.ncm || null, cfop: dto.cfop || null, channelPrices: prices(dto.channelPrices), tenantId, name: dto.name.trim(), position } })
       .catch((e) => {
         throw this.unique(e, PDV_TAKEN);
       });
@@ -230,7 +230,7 @@ export class CatalogService {
     return this.prisma.product
       .update({
         where: { id },
-        data: { ...dto, ...promo, costItems: dto.costItems ? toJson(dto.costItems) : undefined, pdvCode: pdv(dto.pdvCode), channelPrices: prices(dto.channelPrices), name: dto.name?.trim() },
+        data: { ...dto, ...promo, costItems: dto.costItems ? toJson(dto.costItems) : undefined, pdvCode: pdv(dto.pdvCode), ncm: dto.ncm === undefined ? undefined : dto.ncm || null, cfop: dto.cfop === undefined ? undefined : dto.cfop || null, channelPrices: prices(dto.channelPrices), name: dto.name?.trim() },
       })
       .catch((e) => {
         throw this.unique(e, PDV_TAKEN);

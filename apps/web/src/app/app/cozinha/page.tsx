@@ -89,7 +89,7 @@ function KitchenCard({ order: o, now, withCouriers, onMove }: { order: BoardOrde
             <span className="rounded bg-sky-500 px-2 py-0.5 text-base font-black text-white">🍽 {o.tableName}{o.waiterName ? ` · ${o.waiterName}` : ''}</span>
           ) : (
             <>
-              {o.customerName.split(' ')[0]} · {o.type === 'DELIVERY' ? 'Entrega' : 'Retirada'}
+              {o.customerName.split(' ')[0]} · {o.type === 'DELIVERY' ? 'Entrega' : o.type === 'COUNTER' ? 'Balcão' : 'Retirada'}
             </>
           )}
         </div>

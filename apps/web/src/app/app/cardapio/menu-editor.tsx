@@ -243,6 +243,8 @@ function ProductEditor({
   const [costItems, setCostItems] = useState(product.costItems ?? []);
   const [extraCostBps, setExtraCostBps] = useState(product.extraCostBps ?? 0);
   const [pdvCode, setPdvCode] = useState(product.pdvCode ?? '');
+  const [ncm, setNcm] = useState(product.ncm ?? '');
+  const [cfop, setCfop] = useState(product.cfop ?? '');
   const [prices, setPrices] = useState<Record<string, string>>(() =>
     Object.fromEntries(Object.entries(product.channelPrices ?? {}).map(([k, v]) => [k, toMoney(v as number)])),
   );
@@ -273,6 +275,8 @@ function ProductEditor({
       costItems: costItems.filter((i) => i.name.trim()),
       extraCostBps,
       pdvCode: pdvCode.trim(),
+      ncm,
+      cfop,
       promoPriceCents,
       promoStartsAt: promoOn ? fromLocalInput(promo.starts) : null,
       promoEndsAt: promoOn ? fromLocalInput(promo.ends) : null,
@@ -356,6 +360,17 @@ function ProductEditor({
             onChange={(e) => setPdvCode(e.target.value.replace(/\s/g, ''))}
           />
           <p className="mt-1 text-xs text-zinc-500">Use o mesmo código no iFood, 99Food e Keeta: assim o pedido do app cai no produto certo, com a receita separada por canal.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label" htmlFor="prod-ncm">NCM (nota fiscal)</label>
+            <input id="prod-ncm" className="input" disabled={!canEdit} inputMode="numeric" maxLength={8} placeholder="Padrão da loja" value={ncm} onChange={(e) => setNcm(e.target.value.replace(/\D/g, ''))} />
+          </div>
+          <div>
+            <label className="label" htmlFor="prod-cfop">CFOP</label>
+            <input id="prod-cfop" className="input" disabled={!canEdit} inputMode="numeric" maxLength={4} placeholder="Padrão da loja" value={cfop} onChange={(e) => setCfop(e.target.value.replace(/\D/g, ''))} />
+          </div>
+          <p className="col-span-2 text-xs text-zinc-500">Só para a NFC-e. Vazio usa o padrão de PDV &gt; Nota fiscal. Ex.: bebida em lata costuma ter NCM 22021000 e CFOP 5405; confirme com o contador.</p>
         </div>
         {canEdit && activeChannels.length > 0 && (
           <div>

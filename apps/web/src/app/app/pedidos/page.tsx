@@ -10,6 +10,7 @@ import {
   autoPrint,
   minutesSince,
   scheduleText,
+  setKitchenWidth,
   playAlert,
   primaryAction,
   printOrder,
@@ -21,6 +22,7 @@ import {
   type BoardOrder,
 } from './board';
 import { OrderDetailModal, Stars } from './order-detail';
+import { api } from '@/lib/api';
 
 const COLUMNS: { title: string; statuses: OrderStatus[]; tone: string }[] = [
   { title: 'Novos', statuses: ['PAID'], tone: 'border-t-red-500' },
@@ -40,6 +42,9 @@ export default function PainelPedidosPage() {
   useEffect(() => {
     setSound(readPref('sound', true));
     setAuto(readPref('autoprint', false));
+    api<{ kitchenWidthMm?: number }>('/cardapio/store', { tenant: true })
+      .then((st) => setKitchenWidth(st.kitchenWidthMm))
+      .catch(() => undefined);
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
@@ -155,7 +160,7 @@ export default function PainelPedidosPage() {
                 {o.ratingStore && <Stars value={o.ratingStore} size="text-sm" />}
                 <span>{formatBRL(o.totalCents)}</span>
                 <span className={o.status === 'CANCELLED' ? 'text-red-600' : 'text-emerald-700'}>
-                  {o.type === 'PICKUP' && o.status === 'COMPLETED' ? 'Retirado' : o.type === 'DINE_IN' && o.status === 'COMPLETED' ? 'Servido' : ORDER_STATUS_LABELS[o.status]}
+                  {(o.type === 'PICKUP' || o.type === 'COUNTER') && o.status === 'COMPLETED' ? 'Retirado' : o.type === 'DINE_IN' && o.status === 'COMPLETED' ? 'Servido' : ORDER_STATUS_LABELS[o.status]}
                 </span>
                 <span className="text-sky-700 underline">Detalhes</span>
                 <button
@@ -218,7 +223,7 @@ function OrderCard({
         </div>
         <div className="text-right text-xs">
           {!o.held && <div className={late ? 'font-semibold text-red-600' : 'text-zinc-500'}>{mins} min</div>}
-          <div className="mt-1 rounded bg-zinc-100 px-1.5 py-0.5 font-medium">{o.type === 'DELIVERY' ? `Entrega · ${o.deliveryZoneName}` : o.type === 'DINE_IN' ? `Salão${o.waiterName ? ` · ${o.waiterName}` : ''}` : 'Retirada'}</div>
+          <div className="mt-1 rounded bg-zinc-100 px-1.5 py-0.5 font-medium">{o.type === 'DELIVERY' ? `Entrega · ${o.deliveryZoneName}` : o.type === 'DINE_IN' ? `Salão${o.waiterName ? ` · ${o.waiterName}` : ''}` : o.type === 'COUNTER' ? 'Balcão (PDV)' : 'Retirada'}</div>
           {o.status !== 'PAID' && o.status !== 'IN_PREPARATION' && <div className="mt-1 text-sky-700">{ORDER_STATUS_LABELS[o.status]}</div>}
         </div>
       </header>
@@ -249,7 +254,7 @@ function OrderCard({
 
       <div className="flex items-center justify-between border-t border-zinc-100 pt-2 text-xs text-zinc-600">
         <span>
-          {o.type === 'DINE_IN' ? 'Conta da mesa' : PAYMENT_METHOD_LABELS[o.paymentMethod]}
+          {o.type === 'DINE_IN' ? 'Conta da mesa' : o.type === 'COUNTER' ? 'Pago no balcão' : PAYMENT_METHOD_LABELS[o.paymentMethod]}
           {o.changeForCents ? ` · troco p/ ${formatBRL(o.changeForCents)}` : ''}
         </span>
         <b className="text-sm text-zinc-900">{formatBRL(o.totalCents)}</b>

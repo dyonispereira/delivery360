@@ -344,6 +344,14 @@ async function addExtras(prisma: PrismaClient, tenantId: string) {
       skipDuplicates: true,
     });
   }
+  // Nota fiscal de demonstração (homologação, emissor simulado): dá para testar a NFC-e no PDV sem certificado.
+  if (!(await prisma.fiscalSettings.findUnique({ where: { tenantId } }))) {
+    await prisma.fiscalSettings.create({
+      data: { tenantId, enabled: true, environment: 'HOMOLOGACAO', cnpj: '11222333000181', stateRegistration: 'ISENTO', legalName: 'Fornalha Pizzaria (demonstração)', uf: 'RJ', taxRegime: 1, cscId: '000001' },
+    });
+    const drinks = await prisma.product.findMany({ where: { tenantId, name: { in: ['Guaraná 2L', 'Coca-Cola 2L', 'Coca-Cola lata', 'Água sem gás'] } }, select: { id: true } });
+    if (drinks.length) await prisma.product.updateMany({ where: { id: { in: drinks.map((d) => d.id) } }, data: { ncm: '22021000', cfop: '5405' } });
+  }
 }
 
 async function topUpOrders(prisma: PrismaClient, tenantId: string) {
