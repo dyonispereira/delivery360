@@ -209,7 +209,7 @@ describe('PDV: caixa, venda de balcão, cupom e NFC-e (e2e)', () => {
     await sync();
     const rows: { counterparty: string | null; amountCents: number }[] = await prisma.financialEntry.findMany({
       where: { tenantId, externalKey: { startsWith: 'pdvpay:' }, account: { code: '1.8' }, description: { contains: `#${res.body.number}` } },
-      orderBy: { amountCents: 'desc' },
+      orderBy: [{ amountCents: 'desc' }, { counterparty: 'asc' }],
     });
     expect(rows.map((r) => [r.counterparty, r.amountCents])).toEqual([['Ana', 1700], ['Bia', 1650], ['Caio', 1650]]);
     await owner().post(`/cardapio/pdv/vendas/${res.body.orderId}/cancelar`).send({ reason: 'Teste do rateio entre clientes' });
