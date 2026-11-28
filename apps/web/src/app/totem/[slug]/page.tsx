@@ -1,14 +1,16 @@
 'use client';
 
 /**
- * Totem de autoatendimento (MODO DEMONSTRAÇÃO).
+ * Totem de autoatendimento.
  *
- * Usa o cardápio público da loja (fotos, preços, adicionais e disponibilidade), mas não cria pedido,
- * não mexe no caixa e não cobra: o pagamento é simulado na própria tela. Nada fica guardado no
+ * Usa o cardápio público da loja (fotos, preços, adicionais e disponibilidade). Nada fica guardado no
  * aparelho; ao finalizar, cancelar ou ficar parado, a sessão é apagada e o próximo cliente começa do zero.
  *
- * Endereço: /totem/<slug>. Opções no endereço (no lugar da configuração do totem, que vem na etapa real):
- *   ?consumo=aqui | levar | ambos (padrão)   ?observacao=nao (esconde o campo de observação)
+ * - Modo real: /totem/<slug>?t=<id do totem> (cadastro em PDV > Totens). Cria o pedido "aguardando
+ *   pagamento" e mostra a senha; o cliente paga no caixa e o caixa confirma no PDV (sem maquininha integrada).
+ *   Comer aqui/levar vem do cadastro do totem. O envio usa uma chave por pedido: repetir não duplica.
+ * - Modo demonstração: /totem/<slug> sem ?t. Não cria pedido nem cobra; pagamento simulado na tela.
+ *   Opções: ?consumo=aqui | levar | ambos (padrão)   ?observacao=nao (esconde o campo de observação)
  */
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -28,8 +30,12 @@ import {
   TOTEM_IDLE_GRACE_S,
   TOTEM_IDLE_WARN_MS,
   TOTEM_ORIGIN_LABEL,
+  TOTEM_PAY_HINT_LABELS,
   TOTEM_PAY_LABELS,
   type PublicProduct,
+  type PublicTotem,
+  type TotemOrderResult,
+  type TotemPayHint,
   type PublicStore,
   type TotemConsumption,
   type TotemLine,
@@ -49,6 +55,9 @@ export default function TotemPage({ params }: { params: Promise<{ slug: string }
   const [error, setError] = useState<string | null>(null);
   const [modes, setModes] = useState<TotemConsumption[]>(['EAT_IN', 'TAKEAWAY']);
   const [allowNotes, setAllowNotes] = useState(true);
+  /** Modo real: o totem cadastrado (vazio = demonstração). */
+  const [totem, setTotem] = useState<PublicTotem | null>(null);
+  const [placed, setPlaced] = useState<TotemOrderResult | null>(null);
 
   // Sessão do cliente: só na memória da tela (some ao recomeçar).
   const [step, setStep] = useState<Step>('welcome');
@@ -62,14 +71,27 @@ export default function TotemPage({ params }: { params: Promise<{ slug: string }
   const [doneLeft, setDoneLeft] = useState(TOTEM_DONE_RETURN_S);
   const lastTouch = useRef(Date.now());
   const paying = useRef(false);
+  /** Chave do pedido atual: a mesma em cada nova tentativa de envio, nova a cada cliente. */
+  const requestKey = useRef(newKey());
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     setModes(consumptionModes(q.get('consumo')));
     setAllowNotes(q.get('observacao') !== 'nao');
-    api<PublicStore>(`/public/stores/${encodeURIComponent(slug)}`)
-      .then(setData)
-      .catch((e: ApiError) => setError(e.status === 404 ? 'Loja não encontrada.' : e.message));
+    const totemId = q.get('t');
+    const s = encodeURIComponent(slug);
+    Promise.all([
+      api<PublicStore>(`/public/stores/${s}`),
+      totemId ? api<PublicTotem>(`/public/stores/${s}/totem/${encodeURIComponent(totemId)}`) : Promise.resolve(null),
+    ])
+      .then(([store, t]) => {
+        setData(store);
+        if (t) {
+          setTotem(t);
+          setModes(t.modes);
+        }
+      })
+      .catch((e: ApiError) => setError(e.status === 404 ? (totemId ? 'Totem não encontrado. Confira o endereço no painel (PDV > Totens).' : 'Loja não encontrada.') : e.message));
   }, [slug]);
 
   /** Apaga tudo do cliente anterior e volta para a tela de boas-vindas. */
@@ -82,6 +104,8 @@ export default function TotemPage({ params }: { params: Promise<{ slug: string }
     setCategory(null);
     setPay(PAY_IDLE);
     setTicket(null);
+    setPlaced(null);
+    requestKey.current = newKey();
     setIdleLeft(null);
     setDoneLeft(TOTEM_DONE_RETURN_S);
   }, []);
@@ -156,9 +180,29 @@ export default function TotemPage({ params }: { params: Promise<{ slug: string }
     } else setPay((p) => ({ ...p, status: 'failed' }));
   };
 
+  /** Modo real: manda o pedido (a API calcula o preço) e mostra a senha. */
+  const placeOrder = async (payHint: TotemPayHint) => {
+    if (!totem || !consumption) return;
+    const r = await api<TotemOrderResult>(`/public/stores/${encodeURIComponent(slug)}/totem/${totem.id}/orders`, {
+      method: 'POST',
+      body: {
+        requestKey: requestKey.current,
+        consumption,
+        payHint,
+        items: lines.map((l) => ({ productId: l.productId, quantity: l.quantity, optionIds: l.optionIds, notes: l.notes || undefined })),
+      },
+    });
+    setPlaced(r);
+    setTicket(r.ticket);
+    setLines([]);
+    setDoneLeft(TOTEM_DONE_RETURN_S);
+    setStep('done');
+  };
+
   if (error) return <Shell><Center><p className="text-3xl font-bold">{error}</p></Center></Shell>;
   if (!data) return <Shell><Center><p className="text-2xl text-zinc-500">Carregando o cardápio...</p></Center></Shell>;
   const store = data.store;
+  if (totem && !totem.active) return <Shell><Center><p className="text-4xl font-black">Totem fora de uso</p><p className="mt-4 text-2xl text-zinc-600">Faça o seu pedido no caixa.</p></Center></Shell>;
 
   return (
     <Shell>
@@ -307,7 +351,9 @@ export default function TotemPage({ params }: { params: Promise<{ slug: string }
         </>
       )}
 
-      {step === 'payment' && (
+      {step === 'payment' && totem && <RealPayment totalCents={totals.totalCents} onPlace={placeOrder} onBack={() => setStep('cart')} />}
+
+      {step === 'payment' && !totem && (
         <Payment
           totalCents={totals.totalCents}
           pay={pay}
@@ -319,7 +365,24 @@ export default function TotemPage({ params }: { params: Promise<{ slug: string }
         />
       )}
 
-      {step === 'done' && (
+      {step === 'done' && placed && (
+        <Center>
+          <p className="text-3xl font-bold text-emerald-700">Pedido feito!</p>
+          <p className="mt-6 text-2xl">Sua senha é</p>
+          <p className="my-2 text-[9rem] font-black leading-none tracking-tight">{placed.ticket}</p>
+          <div className="mt-4 rounded-3xl bg-amber-100 px-8 py-6 text-amber-950">
+            <p className="text-3xl font-black">Vá ao caixa e pague {formatBRL(placed.totalCents)}</p>
+            <p className="mt-2 text-2xl">Diga a senha {placed.ticket}. Seu pedido vai para a cozinha assim que o pagamento for confirmado.</p>
+          </div>
+          <p className="mt-4 text-2xl text-zinc-600">{TOTEM_CONSUMPTION_LABELS[placed.consumption]} · Acompanhe a senha no balcão.</p>
+          <button onClick={reset} className="mt-10 rounded-3xl bg-zinc-900 px-12 py-6 text-3xl font-black text-white">
+            Voltar ao início
+          </button>
+          <p className="mt-4 text-lg text-zinc-500">Volta sozinho em {Math.max(0, doneLeft)} s</p>
+        </Center>
+      )}
+
+      {step === 'done' && !placed && (
         <Center>
           <p className="text-3xl font-bold text-emerald-700">Pagamento aprovado (simulado)</p>
           <p className="mt-6 text-2xl">Sua senha é</p>
@@ -577,6 +640,55 @@ function ProductSheet({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Modo real: o cliente diz como vai pagar no caixa e o pedido é enviado (sem maquininha integrada). */
+function RealPayment({ totalCents, onPlace, onBack }: { totalCents: number; onPlace: (h: TotemPayHint) => Promise<void>; onBack: () => void }) {
+  const [busy, setBusy] = useState<TotemPayHint | null>(null);
+  const [failed, setFailed] = useState<{ hint: TotemPayHint; message: string } | null>(null);
+  const sending = useRef(false);
+  const send = async (hint: TotemPayHint) => {
+    if (sending.current) return;
+    sending.current = true;
+    setBusy(hint);
+    setFailed(null);
+    try {
+      await onPlace(hint);
+    } catch (e) {
+      setFailed({ hint, message: (e as Error).message });
+    } finally {
+      sending.current = false;
+      setBusy(null);
+    }
+  };
+  return (
+    <Center>
+      <p className="text-2xl text-zinc-600">Total</p>
+      <p className="text-6xl font-black">{formatBRL(totalCents)}</p>
+      <h2 className="mt-10 text-4xl font-black">Como você vai pagar no caixa?</h2>
+      <p className="mt-2 text-2xl text-zinc-600">Você recebe uma senha e paga no caixa.</p>
+      <div className="mt-6 grid w-full max-w-4xl gap-6 portrait:grid-cols-1 landscape:grid-cols-3">
+        {(['CARD', 'PIX', 'CASH'] as TotemPayHint[]).map((h) => (
+          <button key={h} disabled={!!busy} onClick={() => void send(h)} className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-3xl border-4 border-zinc-900 text-4xl font-black active:bg-zinc-100 disabled:opacity-50">
+            <span className="text-6xl" aria-hidden="true">{h === 'PIX' ? '⚡' : h === 'CARD' ? '💳' : '💵'}</span>
+            {busy === h ? 'Enviando...' : TOTEM_PAY_HINT_LABELS[h]}
+          </button>
+        ))}
+      </div>
+      {failed && (
+        <div className="mt-6 w-full max-w-2xl rounded-3xl bg-red-50 p-5 text-center" role="alert">
+          <p className="text-2xl font-black text-red-700">Não deu para enviar o pedido</p>
+          <p className="mt-1 text-xl text-zinc-700">{failed.message}</p>
+          <button onClick={() => void send(failed.hint)} className="mt-4 rounded-2xl bg-[var(--brand)] px-10 py-5 text-2xl font-black text-white">
+            Tentar de novo
+          </button>
+        </div>
+      )}
+      <button onClick={onBack} disabled={!!busy} className="mt-8 rounded-2xl px-8 py-5 text-2xl font-bold text-zinc-600 underline">
+        Voltar ao carrinho
+      </button>
+    </Center>
   );
 }
 

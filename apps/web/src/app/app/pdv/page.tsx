@@ -10,13 +10,14 @@ import { CashPanel, OpenCash } from './cash';
 import { SalesList } from './sales';
 import { SellView } from './sell';
 import { PdvSettings } from './settings';
+import { TotemSettings } from './totems';
 
 export interface PdvState {
   session: CashSessionView | null;
   nfce: { available: boolean; defaultReceipt: ReceiptKind; environment: string };
 }
 
-type Tab = 'vender' | 'caixa' | 'vendas' | 'config';
+type Tab = 'vender' | 'caixa' | 'vendas' | 'totens' | 'config';
 
 /**
  * PDV de balcão: o caixa abre com o fundo de troco, lança a venda, recebe (dividido, com troco)
@@ -56,7 +57,7 @@ export default function PdvPage() {
     { id: 'vender', label: 'Vender' },
     { id: 'caixa', label: 'Caixa' },
     { id: 'vendas', label: 'Vendas' },
-    ...(canManage ? [{ id: 'config' as const, label: 'Nota fiscal e impressoras' }] : []),
+    ...(canManage ? [{ id: 'totens' as const, label: 'Totens' }, { id: 'config' as const, label: 'Nota fiscal e impressoras' }] : []),
   ];
 
   return (
@@ -89,6 +90,7 @@ export default function PdvPage() {
       {tab === 'vender' && (state.session ? <SellView state={state} onSold={load} /> : <OpenCash onOpened={load} />)}
       {tab === 'caixa' && <CashPanel session={state.session} onChange={load} />}
       {tab === 'vendas' && <SalesList canManage={canManage} nfceAvailable={state.nfce.available} />}
+      {tab === 'totens' && canManage && <TotemSettings />}
       {tab === 'config' && canManage && <PdvSettings onSaved={load} />}
     </div>
   );
