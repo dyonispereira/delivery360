@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 pnpm --filter @delivery360/api exec prisma migrate deploy
-pnpm --filter @delivery360/api exec prisma db seed
+# Plano grátis tem 512 MB: o seed roda sem checar tipos (isso já foi feito no build) e com limite de memória.
+NODE_OPTIONS="--max-old-space-size=320" pnpm --filter @delivery360/api exec prisma db seed
 # Pizzaria Simulada (idempotente; SEED_SIMULATION=false desliga). Se falhar, o site sobe mesmo assim.
 node apps/api/dist/simulation/run.js || echo "[simulação] não foi criada"
 

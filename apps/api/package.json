@@ -16,7 +16,7 @@
     "simulate": "node dist/simulation/run.js"
   },
   "prisma": {
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "ts-node --transpile-only prisma/seed.ts"
   },
   "dependencies": {
     "@delivery360/shared": "workspace:*",
