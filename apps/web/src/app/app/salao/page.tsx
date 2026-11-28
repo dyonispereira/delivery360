@@ -16,12 +16,18 @@ import {
 } from '@delivery360/shared';
 import { ErrorBox, Spinner } from '@/components/ui';
 import { api } from '@/lib/api';
+import { useSession } from '@/lib/session-context';
 import { useCurrentTenant } from '../tenant-context';
 import { playAlert, soundUnlocked, unlockSound } from '../pedidos/board';
 import { lineOptions, lineUnit, MenuPicker, type CartLine } from './menu-picker';
 import { TablesSetup } from './tables-setup';
 
 type Menu = { categories: { id: string; name: string; products: PublicProduct[] }[]; topProductIds: string[] };
+type Scope = 'mine' | 'all';
+const SCOPE_KEY = 'salao.scope';
+/** Prato pronto há mais que isso fica vermelho no painel. */
+const LATE_MIN = 5;
+
 type View = { kind: 'tables' } | { kind: 'table'; table: SalaoTable } | { kind: 'add'; table: SalaoTable } | { kind: 'close'; table: SalaoTable } | { kind: 'setup' };
 
 const sinceLabel = (iso: string) => {
@@ -37,6 +43,29 @@ export default function SalaoPage() {
   const tenant = useCurrentTenant();
   // Cadastro de mesas e taxa: dono, gerente e a nossa equipe (sem papel no restaurante).
   const canManage = tenant.role === 'OWNER' || tenant.role === 'MANAGER' || tenant.role === null;
+  const me = useSession().user?.id ?? null;
+  // Com muitos garçons, cada um abre em "Minhas mesas": só vê e só é avisado das mesas dele.
+  const [scope, setScopeState] = useState<Scope>(() => {
+    try {
+      const saved = localStorage.getItem(SCOPE_KEY);
+      if (saved === 'mine' || saved === 'all') return saved;
+    } catch {
+      /* sem storage */
+    }
+    return tenant.role === 'WAITER' ? 'mine' : 'all';
+  });
+  const setScope = (s: Scope) => {
+    setScopeState(s);
+    try {
+      localStorage.setItem(SCOPE_KEY, s);
+    } catch {
+      /* sem storage */
+    }
+  };
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  /** Mesa sem responsável (conta antiga) conta como de todos. */
+  const isMine = useCallback((waiterId: string | null | undefined) => !waiterId || waiterId === me, [me]);
   const [ready, setReady] = useState<ReadyRound[]>([]);
   const seenReady = useRef<Set<string> | null>(null);
   const [, force] = useState(0);
@@ -53,7 +82,8 @@ export default function SalaoPage() {
         api<ReadyRound[]>('/cardapio/salao/ready', { tenant: true }),
       ]);
       // Alerta: prato novo pronto na cozinha (som + vibração). Na primeira leitura não avisa.
-      const fresh = seenReady.current ? readyNow.filter((r) => !seenReady.current!.has(r.id)) : [];
+      // Em "Minhas mesas" só avisa dos pratos das mesas do garçom.
+      const fresh = seenReady.current ? readyNow.filter((r) => !seenReady.current!.has(r.id) && (scopeRef.current === 'all' || isMine(r.tabWaiterId))) : [];
       seenReady.current = new Set(readyNow.map((r) => r.id));
       if (fresh.length) {
         playAlert();
@@ -71,7 +101,7 @@ export default function SalaoPage() {
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [isMine]);
 
   useEffect(() => {
     void loadTables();
@@ -103,6 +133,9 @@ export default function SalaoPage() {
       )}
       {view.kind === 'tables' && (
         <TablesGrid
+          scope={scope}
+          onScope={setScope}
+          isMine={isMine}
           ready={ready}
           soundOn={soundUnlocked()}
           onSound={() => void unlockSound().then(() => { playAlert(); force((n) => n + 1); })}
@@ -129,7 +162,7 @@ export default function SalaoPage() {
         />
       )}
       {view.kind === 'table' && (
-        <TableView table={view.table} onBack={back} onAdd={() => setView({ kind: 'add', table: view.table })} onClose={() => setView({ kind: 'close', table: view.table })} />
+        <TableView table={view.table} me={me} onBack={back} onAdd={() => setView({ kind: 'add', table: view.table })} onClose={() => setView({ kind: 'close', table: view.table })} />
       )}
       {view.kind === 'add' && (
         <AddItems
@@ -138,7 +171,7 @@ export default function SalaoPage() {
           onSent={(number) => {
             setToast(`Pedido #${number} enviado para a cozinha`);
             void loadTables().then(() => undefined);
-            setView({ kind: 'table', table: { ...view.table, tab: view.table.tab ?? { id: '', openedAt: new Date().toISOString(), people: null, subtotalCents: 0, totalCents: 0, paidCents: 0, rounds: 1, readyCount: 0, kitchenCount: 1 } } });
+            setView({ kind: 'table', table: { ...view.table, tab: view.table.tab ?? { id: '', openedAt: new Date().toISOString(), people: null, subtotalCents: 0, totalCents: 0, paidCents: 0, rounds: 1, readyCount: 0, kitchenCount: 1, waiterId: me, waiterName: null } } });
           }}
         />
       )}
@@ -160,6 +193,9 @@ export default function SalaoPage() {
 // ---------- Mesas ----------
 
 function TablesGrid({
+  scope,
+  onScope,
+  isMine,
   ready,
   soundOn,
   onSound,
@@ -170,6 +206,9 @@ function TablesGrid({
   onOpen,
   onSetup,
 }: {
+  scope: Scope;
+  onScope: (s: Scope) => void;
+  isMine: (waiterId: string | null | undefined) => boolean;
   tables: SalaoTable[] | null;
   error: string | null;
   canManage: boolean;
@@ -181,14 +220,21 @@ function TablesGrid({
   onSetup: () => void;
 }) {
   const busy = tables?.filter((t) => t.tab) ?? [];
-  const readyCount = ready.length;
+  const mineBusy = busy.filter((t) => isMine(t.tab!.waiterId));
+  // "Minhas": as mesas do garçom primeiro e as livres depois (para abrir mesa nova); as dos outros somem.
+  const shown =
+    scope === 'all' || !tables
+      ? tables
+      : [...tables.filter((t) => t.tab && isMine(t.tab.waiterId)), ...tables.filter((t) => !t.tab)];
+  const shownReady = scope === 'all' ? ready : ready.filter((r) => isMine(r.tabWaiterId));
+  const readyCount = shownReady.length;
   return (
     <>
       <div className="mb-5 flex flex-wrap items-end gap-3">
         <div>
           <h1 className="text-2xl font-bold">Salão</h1>
           <p className="text-sm text-zinc-500">
-            {tables ? `${busy.length} de ${tables.length} mesas ocupadas` : 'Toque na mesa para lançar o pedido'}
+            {tables ? (scope === 'mine' ? `${mineBusy.length} mesa${mineBusy.length === 1 ? '' : 's'} sua${mineBusy.length === 1 ? '' : 's'} · ${busy.length} de ${tables.length} ocupadas no salão` : `${busy.length} de ${tables.length} mesas ocupadas`) : 'Toque na mesa para lançar o pedido'}
             {readyCount > 0 && <span className="ml-2 font-semibold text-emerald-700">· {readyCount} pronto{readyCount > 1 ? 's' : ''} para servir</span>}
           </p>
         </div>
@@ -203,7 +249,19 @@ function TablesGrid({
           🔔 Ativar som dos avisos de prato pronto
         </button>
       )}
-      <ReadyPanel ready={ready} onServed={onServed} />
+      <div className="mb-3 grid grid-cols-2 rounded-xl bg-zinc-100 p-1 text-sm font-semibold" role="tablist" aria-label="Quais mesas mostrar">
+        {(
+          [
+            ['mine', `Minhas mesas (${mineBusy.length})`],
+            ['all', `Todas (${busy.length})`],
+          ] as const
+        ).map(([key, label]) => (
+          <button key={key} role="tab" aria-selected={scope === key} className={`rounded-lg py-2 ${scope === key ? 'bg-white shadow-sm' : 'text-zinc-500'}`} onClick={() => onScope(key)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <ReadyPanel ready={shownReady} showWaiter={scope === 'all'} onServed={onServed} />
       <ErrorBox message={error} />
       {!tables ? (
         <Spinner />
@@ -219,7 +277,7 @@ function TablesGrid({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-          {tables.map((t) => (
+          {shown!.map((t) => (
             <button
               key={t.id}
               onClick={() => onOpen(t)}
@@ -236,6 +294,7 @@ function TablesGrid({
                     {sinceLabel(t.tab.openedAt)}
                     {t.tab.people ? ` · ${t.tab.people} pessoas` : ''}
                   </span>
+                  {scope === 'all' && t.tab.waiterName && <span className="block truncate text-xs font-semibold text-white/90">{t.tab.waiterName}</span>}
                 </span>
               ) : (
                 <span className="text-sm text-zinc-400">Livre</span>
@@ -253,49 +312,74 @@ function TablesGrid({
   );
 }
 
-/** Painel "prontos para servir": o que a cozinha já deixou pronto, de todas as mesas. */
-function ReadyPanel({ ready, onServed }: { ready: ReadyRound[]; onServed: (orderId: string) => Promise<void> }) {
+/**
+ * Painel "prontos para servir", compacto: uma linha por pedido, o mais antigo no topo, vermelho
+ * depois de alguns minutos. Toque na linha para ver os itens. Com muitos pedidos mostra só os primeiros.
+ */
+function ReadyPanel({ ready, showWaiter, onServed }: { ready: ReadyRound[]; showWaiter: boolean; onServed: (orderId: string) => Promise<void> }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
+  const LIMIT = 3;
+  if (ready.length === 0) {
+    return <p className="mb-4 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-500">Nenhum prato esperando. Quando ficar pronto, aparece aqui com aviso.</p>;
+  }
+  const sorted = [...ready].sort((a, b) => a.readyAt.localeCompare(b.readyAt));
+  const list = all ? sorted : sorted.slice(0, LIMIT);
   return (
-    <section className={`mb-5 rounded-2xl border p-4 ${ready.length ? 'border-emerald-300 bg-emerald-50' : 'border-zinc-200 bg-white'}`}>
-      <h2 className="mb-2 flex items-center gap-2 font-bold">
+    <section className="mb-5 overflow-hidden rounded-2xl border border-emerald-300 bg-white">
+      <h2 className="flex items-center gap-2 bg-emerald-50 px-3 py-2 text-sm font-bold">
         Prontos para servir
-        <span className={`rounded-full px-2 py-0.5 text-xs ${ready.length ? 'bg-emerald-600 text-white' : 'bg-zinc-100 text-zinc-500'}`}>{ready.length}</span>
+        <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-xs text-white">{ready.length}</span>
       </h2>
-      {ready.length === 0 ? (
-        <p className="text-sm text-zinc-500">Nada esperando na cozinha. Quando um prato ficar pronto, aparece aqui com aviso.</p>
-      ) : (
-        <ul className="space-y-2">
-          {ready.map((r) => (
-            <li key={r.id} className="rounded-xl bg-white p-3 shadow-sm">
-              <div className="mb-1 flex items-center gap-2">
-                <span className="text-lg font-black">{r.tableName}</span>
-                <span className="text-sm text-zinc-500">
-                  #{r.number} · pronto há {sinceLabel(r.readyAt)}
-                </span>
+      <ul className="divide-y divide-zinc-100">
+        {list.map((r) => {
+          const mins = Math.floor((Date.now() - new Date(r.readyAt).getTime()) / 60000);
+          const late = mins >= LATE_MIN;
+          const qty = r.items.reduce((n, i) => n + i.quantity, 0);
+          const expanded = open === r.id;
+          return (
+            <li key={r.id} className={late ? 'bg-red-50' : ''}>
+              <div className="flex items-center gap-2 px-3 py-2">
+                <button className="min-w-0 flex-1 text-left" onClick={() => setOpen(expanded ? null : r.id)} aria-expanded={expanded}>
+                  <span className="font-black">{r.tableName}</span>
+                  <span className="text-sm text-zinc-500">
+                    {' '}
+                    · {qty} {qty === 1 ? 'item' : 'itens'} ·{' '}
+                  </span>
+                  <span className={`text-sm ${late ? 'font-bold text-red-600' : 'text-zinc-500'}`}>{sinceLabel(r.readyAt)}</span>
+                  {showWaiter && r.tabWaiterName && <span className="block truncate text-xs text-zinc-500">{r.tabWaiterName}</span>}
+                </button>
+                <button
+                  className="btn shrink-0 bg-emerald-600 px-4 py-2 text-sm text-white"
+                  disabled={busy === r.id}
+                  onClick={() => {
+                    setBusy(r.id);
+                    void onServed(r.id).finally(() => setBusy(null));
+                  }}
+                >
+                  Levei
+                </button>
               </div>
-              <ul className="mb-2 text-sm">
-                {r.items.map((i) => (
-                  <li key={i.id}>
-                    <b>{i.quantity}x</b> {i.name}
-                    {i.options.length > 0 && <span className="text-zinc-500"> ({i.options.join(', ')})</span>}
-                    {i.notes && <span className="font-medium text-amber-700"> · {i.notes}</span>}
-                  </li>
-                ))}
-              </ul>
-              <button
-                className="btn w-full bg-emerald-600 py-2.5 text-white"
-                disabled={busy === r.id}
-                onClick={() => {
-                  setBusy(r.id);
-                  void onServed(r.id).finally(() => setBusy(null));
-                }}
-              >
-                Levei à mesa
-              </button>
+              {expanded && (
+                <ul className="px-3 pb-2 text-sm">
+                  {r.items.map((i) => (
+                    <li key={i.id}>
+                      <b>{i.quantity}x</b> {i.name}
+                      {i.options.length > 0 && <span className="text-zinc-500"> ({i.options.join(', ')})</span>}
+                      {i.notes && <span className="font-medium text-amber-700"> · {i.notes}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
-          ))}
-        </ul>
+          );
+        })}
+      </ul>
+      {sorted.length > LIMIT && (
+        <button className="w-full border-t border-zinc-100 py-2 text-sm font-semibold text-emerald-700" onClick={() => setAll(!all)}>
+          {all ? 'Mostrar menos' : `Ver mais ${sorted.length - LIMIT}`}
+        </button>
       )}
     </section>
   );
@@ -345,9 +429,24 @@ function useTab(tableId: string) {
   return { tab, error, reload: load };
 }
 
-function TableView({ table, onBack, onAdd, onClose }: { table: SalaoTable; onBack: () => void; onAdd: () => void; onClose: () => void }) {
+function TableView({ table, me, onBack, onAdd, onClose }: { table: SalaoTable; me: string | null; onBack: () => void; onAdd: () => void; onClose: () => void }) {
   const { tab, error, reload } = useTab(table.id);
   const [busy, setBusy] = useState<string | null>(null);
+
+  const [assumeError, setAssumeError] = useState<string | null>(null);
+  /** Troca de turno ou ajuda: a mesa passa para este garçom, com os avisos de prato pronto. */
+  async function assume() {
+    setBusy('assume');
+    setAssumeError(null);
+    try {
+      await api(`/cardapio/salao/tabs/${tab!.id}/assume`, { method: 'POST', tenant: true });
+    } catch (e) {
+      setAssumeError((e as Error).message);
+    } finally {
+      setBusy(null);
+      await reload();
+    }
+  }
 
   async function served(id: string) {
     setBusy(id);
@@ -373,7 +472,17 @@ function TableView({ table, onBack, onAdd, onClose }: { table: SalaoTable; onBac
   return (
     <>
       <Header title={table.name} subtitle={`Aberta há ${sinceLabel(tab.openedAt)}${tab.people ? ` · ${tab.people} pessoas` : ''}`} onBack={onBack} />
-      <ErrorBox message={error} />
+      <ErrorBox message={error ?? assumeError} />
+      <div className="mb-3 flex items-center gap-2 rounded-xl bg-zinc-100 px-3 py-2 text-sm">
+        <span className="mr-auto">
+          Garçom: <b>{tab.waiterId && tab.waiterId === me ? 'você' : (tab.waiterName ?? 'sem responsável')}</b>
+        </span>
+        {tab.waiterId !== me && (
+          <button className="btn-ghost bg-white py-1.5 text-xs" disabled={busy === 'assume'} onClick={() => void assume()}>
+            Assumir mesa
+          </button>
+        )}
+      </div>
       <div className="space-y-3">
         {tab.rounds.map((r) => (
           <article key={r.id} className={`card p-4 ${r.status === 'CANCELLED' ? 'opacity-60' : ''}`}>

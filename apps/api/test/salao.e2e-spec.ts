@@ -117,7 +117,7 @@ describe('Salão: garçom lança na mesa, cozinha recebe, caixa fecha (e2e)', ()
 
     const { tables } = (await waiter().get('/cardapio/salao/tables')).body;
     const m1 = tables.find((t: { id: string }) => t.id === ids.mesa1);
-    expect(m1.tab).toMatchObject({ subtotalCents: 11_400, rounds: 2, kitchenCount: 2, people: 2 });
+    expect(m1.tab).toMatchObject({ subtotalCents: 11_400, rounds: 2, kitchenCount: 2, people: 2, waiterName: 'Caio Brandão' });
     expect(tables.find((t: { id: string }) => t.id === ids.mesa2).tab).toBeNull();
   });
 
@@ -141,7 +141,8 @@ describe('Salão: garçom lança na mesa, cozinha recebe, caixa fecha (e2e)', ()
     }
     const ready = (await as(ids.biaToken).get('/cardapio/salao/ready')).body;
     expect(ready).toHaveLength(1);
-    expect(ready[0]).toMatchObject({ id: ids.round1, tableName: 'Mesa 1', tableId: ids.mesa1 });
+    expect(ready[0]).toMatchObject({ id: ids.round1, tableName: 'Mesa 1', tableId: ids.mesa1, tabWaiterName: 'Caio Brandão' });
+    expect(ready[0].tabWaiterId).toBeTruthy();
     expect(ready[0].items[0]).toMatchObject({ name: 'Parmegiana', quantity: 2, options: ['Arroz e fritas'], notes: 'sem cebola' });
     const { tables } = (await waiter().get('/cardapio/salao/tables')).body;
     expect(tables.find((t: { id: string }) => t.id === ids.mesa1).tab.readyCount).toBe(1);
@@ -149,6 +150,20 @@ describe('Salão: garçom lança na mesa, cozinha recebe, caixa fecha (e2e)', ()
     expect((await waiter().get('/cardapio/salao/ready')).body).toHaveLength(0);
     const o = await prisma.order.findUnique({ where: { id: ids.round1 } });
     expect(o.status).toBe('COMPLETED');
+  });
+
+  it('outro garçom assume a mesa: os avisos de pronto passam a ser dele', async () => {
+    const before = (await waiter().get(`/cardapio/salao/tables/${ids.mesa1}/tab`)).body;
+    const caioId = before.waiterId;
+    const res = await as(ids.biaToken).post(`/cardapio/salao/tabs/${ids.tab}/assume`);
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ waiterName: 'Bia Garçom' });
+    expect(res.body.waiterId).not.toBe(caioId);
+    const { tables } = (await waiter().get('/cardapio/salao/tables')).body;
+    expect(tables.find((t: { id: string }) => t.id === ids.mesa1).tab).toMatchObject({ waiterId: res.body.waiterId, waiterName: 'Bia Garçom' });
+    // A rodada continua com o nome de quem lançou; só o responsável pela mesa muda.
+    expect(res.body.rounds[0].waiterName).toBe('Caio Brandão');
+    expect((await waiter().post(`/cardapio/salao/tabs/${ids.tab}/assume`)).body.waiterName).toBe('Caio Brandão');
   });
 
   it('não dá para desativar mesa com conta aberta', async () => {
