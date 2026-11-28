@@ -16,12 +16,13 @@ import { SalaoService } from './salao.service';
 import { LoyaltyController } from './loyalty.controller';
 import { LoyaltyService } from './loyalty.service';
 import { PdvController } from './pdv.controller';
+import { TotemService } from './totem.service';
 import { PdvService } from './pdv.service';
 import { FiscalService } from '../fiscal/fiscal.service';
 
 @Module({
   controllers: [CardapioManageController, ChannelsController, IfoodWebhookController, PublicController, CampaignsController, SalaoController, LoyaltyController, PdvController],
-  providers: [CatalogService, OrdersService, ChannelOrdersService, ChannelHubService, CouponsService, CombosService, CampaignsService, SalaoService, LoyaltyService, PdvService, FiscalService],
+  providers: [CatalogService, OrdersService, ChannelOrdersService, ChannelHubService, CouponsService, CombosService, CampaignsService, SalaoService, LoyaltyService, PdvService, FiscalService, TotemService],
   exports: [OrdersService],
 })
 export class CardapioModule {}

@@ -352,7 +352,14 @@ async function addExtras(prisma: PrismaClient, tenantId: string) {
     const drinks = await prisma.product.findMany({ where: { tenantId, name: { in: ['Guaraná 2L', 'Coca-Cola 2L', 'Coca-Cola lata', 'Água sem gás'] } }, select: { id: true } });
     if (drinks.length) await prisma.product.updateMany({ where: { id: { in: drinks.map((d) => d.id) } }, data: { ncm: '22021000', cfop: '5405' } });
   }
+  // Totem de demonstração com endereço fixo: /totem/<slug>?t=<FORNALHA_TOTEM_ID> (pedido real, paga no caixa).
+  if (!(await prisma.totem.findFirst({ where: { tenantId } }))) {
+    await prisma.totem.create({ data: { id: FORNALHA_TOTEM_ID, tenantId, name: 'Totem da entrada' } });
+  }
 }
+
+/** Id fixo do totem da Fornalha (link de teste estável). */
+export const FORNALHA_TOTEM_ID = '7a0e0000-0000-4000-8000-000000000001';
 
 async function topUpOrders(prisma: PrismaClient, tenantId: string) {
   const since = new Date(Date.now() - 20 * DAY);

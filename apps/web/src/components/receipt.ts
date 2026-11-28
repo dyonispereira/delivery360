@@ -29,6 +29,7 @@ export async function receiptHtml(r: Receipt): Promise<string> {
     }
     <div class="c s">Pedido #${r.number} · ${when(r.issuedAt)}</div>
     <div class="c b">Origem: ${esc(r.origin)}</div>
+    ${r.ticketLine ? `<div class="c b big">${esc(r.ticketLine)}</div>` : ''}
     <hr>
     ${r.items
       .map(

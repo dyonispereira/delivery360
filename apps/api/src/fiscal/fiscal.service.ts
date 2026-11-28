@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type FiscalSettings } from '@prisma/client';
-import { orderOrigin, pdvPayLabel, type Receipt } from '@delivery360/shared';
+import { orderOrigin, pdvPayLabel, totemTicketLine, type Receipt } from '@delivery360/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../core/audit.service';
 import { normalizeDocument } from '../cardapio/document';
@@ -146,7 +146,7 @@ export class FiscalService {
         changeCents: order.counterPayments.reduce((s, p) => s + p.changeCents, 0),
         document,
         customerName: order.customerName,
-        origin: orderOrigin(order.type, order.channel),
+        origin: orderOrigin(order.type, order.channel, !!order.totemId),
       });
     } catch (e) {
       if (e instanceof FiscalError) throw new BadRequestException(e.message);
@@ -268,8 +268,9 @@ export class FiscalService {
     return {
       kind: useFiscal ? 'NFCE' : 'NAO_FISCAL',
       orderId: order.id,
-      origin: orderOrigin(order.type, order.channel),
+      origin: orderOrigin(order.type, order.channel, !!order.totemId),
       number: order.number,
+      ticketLine: totemTicketLine(order),
       test: useFiscal ? doc!.environment !== 'PRODUCAO' : false,
       store: {
         name: store?.displayName ?? tenant?.name ?? '',
@@ -280,7 +281,7 @@ export class FiscalService {
         phone: store?.whatsapp ?? tenant?.phone ?? null,
       },
       issuedAt: (useFiscal ? doc!.authorizedAt ?? doc!.createdAt : order.createdAt).toISOString(),
-      customer: { name: order.type === 'COUNTER' && order.customerName === 'Balcão' ? null : order.customerName, document: (useFiscal ? doc!.document : null) ?? order.customerDocument },
+      customer: { name: order.type === 'COUNTER' && (order.customerName === 'Balcão' || order.customerName === 'Totem') ? null : order.customerName, document: (useFiscal ? doc!.document : null) ?? order.customerDocument },
       items: order.items.map((i) => ({
         code: i.product?.pdvCode || '',
         name: i.name,

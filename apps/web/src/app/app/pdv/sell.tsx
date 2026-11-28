@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { formatBRL, parseBRL, PDV_PAYMENT_METHODS, splitAmong, type PdvPayKey, type PublicProduct, type Receipt, type ReceiptKind } from '@delivery360/shared';
+import { formatBRL, parseBRL, PDV_PAYMENT_METHODS, splitAmong, type PdvPayKey, type PublicProduct, type Receipt, type ReceiptKind, type TotemPendingOrder } from '@delivery360/shared';
+import { TotemQueue } from './totem-queue';
 import { ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { openReceiptPdf, printReceipt } from '@/components/receipt';
 import { api } from '@/lib/api';
@@ -38,6 +39,8 @@ export function SellView({ state, onSold }: { state: PdvState; onSold: () => voi
   const [step, setStep] = useState<'cart' | 'pay'>('cart');
   const [done, setDone] = useState<SaleResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Pedido do totem sendo recebido no caixa (no lugar do carrinho). */
+  const [totem, setTotem] = useState<TotemPendingOrder | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -68,7 +71,8 @@ export function SellView({ state, onSold }: { state: PdvState; onSold: () => voi
         result={done}
         onNew={() => {
           setDone(null);
-          setCart([]);
+          if (!totem) setCart([]);
+          setTotem(null);
           setStep('cart');
         }}
       />
@@ -77,6 +81,14 @@ export function SellView({ state, onSold }: { state: PdvState; onSold: () => voi
   if (!menu) return error ? <ErrorBox message={error} /> : <Spinner />;
 
   return (
+    <div className="space-y-4">
+    <TotemQueue
+      activeId={totem?.id ?? null}
+      onReceive={(o) => {
+        setTotem(o);
+        setStep('pay');
+      }}
+    />
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_400px]">
       <div className={step === 'pay' ? 'hidden lg:block' : ''}>
         <MenuPicker categories={menu.categories} topIds={menu.topProductIds} cart={cart} onAdd={add} />
@@ -123,10 +135,15 @@ export function SellView({ state, onSold }: { state: PdvState; onSold: () => voi
           </div>
         ) : (
           <Checkout
+            key={totem?.id ?? 'balcao'}
             cart={cart}
-            subtotal={subtotal}
+            subtotal={totem ? totem.totalCents : subtotal}
+            totem={totem}
             nfce={state.nfce}
-            onBack={() => setStep('cart')}
+            onBack={() => {
+              setTotem(null);
+              setStep('cart');
+            }}
             onDone={(r) => {
               setDone(r);
               onSold();
@@ -136,18 +153,24 @@ export function SellView({ state, onSold }: { state: PdvState; onSold: () => voi
         )}
       </div>
     </div>
+    </div>
   );
 }
+
+const HINT_KEY: Record<string, PdvPayKey | null> = { PIX: 'PIX', CASH: 'CASH', CARD: null };
 
 function Checkout({
   cart,
   subtotal,
+  totem,
   nfce,
   onBack,
   onDone,
 }: {
   cart: CartLine[];
   subtotal: number;
+  /** Recebendo um pedido do totem: total fixo, sem desconto e sempre vai para a cozinha. */
+  totem: TotemPendingOrder | null;
   nfce: PdvState['nfce'];
   onBack: () => void;
   onDone: (r: SaleResult) => void;
@@ -157,7 +180,8 @@ function Checkout({
   const [discount, setDiscount] = useState('');
   const [kitchen, setKitchen] = useState(true);
   const [receipt, setReceipt] = useState<ReceiptKind>(nfce.available ? nfce.defaultReceipt : 'NAO_FISCAL');
-  const [pays, setPays] = useState<PayLine[]>([]);
+  const hint = totem?.payHint ? HINT_KEY[totem.payHint] : null;
+  const [pays, setPays] = useState<PayLine[]>(hint ? [{ id: 1, key: hint, amount: money(subtotal), received: '', label: '' }] : []);
   const [people, setPeople] = useState(2);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -179,13 +203,18 @@ function Checkout({
     setError(null);
     if (left > 0) return setError(`Falta receber ${formatBRL(left)}.`);
     setBusy(true);
+    const payments = pays.map((p) => ({ key: p.key, amountCents: cents(p.amount), receivedCents: p.key === 'CASH' && p.received ? cents(p.received) : undefined, label: p.label.trim() || undefined }));
     try {
+      if (totem) {
+        onDone(await api<SaleResult>(`/cardapio/pdv/totem/pedidos/${totem.id}/receber`, { method: 'POST', tenant: true, body: { payments, receipt, document: doc.trim() || undefined } }));
+        return;
+      }
       const r = await api<SaleResult>('/cardapio/pdv/vendas', {
         method: 'POST',
         tenant: true,
         body: {
           items: cart.map((l) => ({ productId: l.product.id, quantity: l.quantity, optionIds: l.optionIds, notes: l.notes || undefined })),
-          payments: pays.map((p) => ({ key: p.key, amountCents: cents(p.amount), receivedCents: p.key === 'CASH' && p.received ? cents(p.received) : undefined, label: p.label.trim() || undefined })),
+          payments,
           customerName: customer.trim() || undefined,
           document: doc.trim() || undefined,
           discountCents: discountCents || undefined,
@@ -207,32 +236,44 @@ function Checkout({
         <button className="text-sm text-zinc-500 underline" onClick={onBack}>
           ← Itens
         </button>
-        <h2 className="font-semibold">Pagamento</h2>
+        <h2 className="font-semibold">{totem ? `Totem · senha ${totem.ticket}` : 'Pagamento'}</h2>
       </div>
 
+      {totem && (
+        <div className="rounded-xl bg-amber-50 p-3 text-sm">
+          <p className="font-semibold">Pedido #{totem.number} · {totem.consumption === 'EAT_IN' ? 'Comer aqui' : 'Levar'}</p>
+          <ul className="mt-1 text-zinc-700">
+            {totem.items.map((i, k) => (
+              <li key={k}>{i.quantity}x {i.name}{i.options.length ? ` (${i.options.join(', ')})` : ''}</li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-zinc-500">Recebeu? Registre abaixo o que o cliente pagou. Aí o pedido vai para a cozinha.</p>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-2">
-        <label className="col-span-2 block">
+        {!totem && <label className="col-span-2 block">
           <span className="label">Cliente (opcional)</span>
           <input className="input" value={customer} maxLength={60} onChange={(e) => setCustomer(e.target.value)} placeholder="Nome para chamar no balcão" />
-        </label>
+        </label>}
         <label className="block">
           <span className="label">CPF/CNPJ na nota</span>
           <input className="input" inputMode="numeric" value={doc} maxLength={20} onChange={(e) => setDoc(e.target.value)} placeholder="Opcional" />
         </label>
-        <label className="block">
+        {!totem && <label className="block">
           <span className="label">Desconto (R$)</span>
           <input className="input" inputMode="decimal" value={discount} onChange={(e) => setDiscount(e.target.value)} placeholder="0,00" />
-        </label>
+        </label>}
       </div>
 
       <div className="space-y-2 rounded-xl bg-zinc-50 p-3 text-sm">
-        <div className="flex items-center justify-between gap-3">
+        {!totem && <div className="flex items-center justify-between gap-3">
           <span>
             <b>Mandar para a cozinha</b>
             <span className="block text-xs text-zinc-500">Desligue para bebida ou item pronto (sai entregue).</span>
           </span>
           <Toggle checked={kitchen} onChange={setKitchen} />
-        </div>
+        </div>}
         <div>
           <p className="mb-1 font-semibold">Cupom</p>
           <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Tipo de cupom">
@@ -355,7 +396,7 @@ function Checkout({
       {pays.length > 0 && left !== 0 && <p className={`text-sm font-medium ${left > 0 ? 'text-amber-700' : 'text-red-700'}`}>{left > 0 ? `Falta ${formatBRL(left)}` : `Passou ${formatBRL(-left)} do total`}</p>}
       <ErrorBox message={error} />
       <button className="btn-primary w-full py-3 text-base" disabled={busy || !pays.length || left !== 0} onClick={finish}>
-        {busy ? 'Finalizando...' : `Finalizar venda · ${receipt === 'NFCE' ? 'NFC-e' : 'cupom não fiscal'}`}
+        {busy ? 'Finalizando...' : `${totem ? 'Recebido, mandar para a cozinha' : 'Finalizar venda'} · ${receipt === 'NFCE' ? 'NFC-e' : 'cupom não fiscal'}`}
       </button>
     </div>
   );

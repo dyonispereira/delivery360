@@ -220,10 +220,11 @@ function OrderCard({
             #{o.number} <ChannelTag channel={o.channel} code={o.externalCode} className="align-middle" />
           </div>
           <div className="text-sm font-medium">{o.customerName}</div>
+          {o.ticket && <div className="mt-0.5 inline-block rounded bg-zinc-900 px-1.5 py-0.5 text-sm font-black text-white">Senha {o.ticket}</div>}
         </div>
         <div className="text-right text-xs">
           {!o.held && <div className={late ? 'font-semibold text-red-600' : 'text-zinc-500'}>{mins} min</div>}
-          <div className="mt-1 rounded bg-zinc-100 px-1.5 py-0.5 font-medium">{o.type === 'DELIVERY' ? `Entrega · ${o.deliveryZoneName}` : o.type === 'DINE_IN' ? `Salão${o.waiterName ? ` · ${o.waiterName}` : ''}` : o.type === 'COUNTER' ? 'Balcão (PDV)' : 'Retirada'}</div>
+          <div className="mt-1 rounded bg-zinc-100 px-1.5 py-0.5 font-medium">{o.type === 'DELIVERY' ? `Entrega · ${o.deliveryZoneName}` : o.type === 'DINE_IN' ? `Salão${o.waiterName ? ` · ${o.waiterName}` : ''}` : o.type === 'COUNTER' ? (o.totemId ? `Totem · ${o.consumption === 'EAT_IN' ? 'Comer aqui' : 'Levar'}` : 'Balcão (PDV)') : 'Retirada'}</div>
           {o.status !== 'PAID' && o.status !== 'IN_PREPARATION' && <div className="mt-1 text-sky-700">{ORDER_STATUS_LABELS[o.status]}</div>}
         </div>
       </header>

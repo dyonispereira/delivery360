@@ -17,9 +17,10 @@ export function pdvPayLabel(method: PaymentMethod, cardKind?: string | null) {
 
 export type ReceiptKind = 'NAO_FISCAL' | 'NFCE';
 
-/** Origem do pedido, impressa em todo cupom (fiscal ou não): PDV, Cardápio Digital, Salão ou o app. */
-export function orderOrigin(type: OrderType, channel: SalesChannel | null | undefined): string {
+/** Origem do pedido, impressa em todo cupom (fiscal ou não): PDV, Totem, Cardápio Digital, Salão ou o app. */
+export function orderOrigin(type: OrderType, channel: SalesChannel | null | undefined, fromTotem = false): string {
   if (channel && channel !== 'LOJA') return CHANNEL_LABELS[channel];
+  if (fromTotem) return 'Totem (autoatendimento)';
   if (type === 'COUNTER') return 'PDV (balcão)';
   if (type === 'DINE_IN') return 'Salão';
   return 'Cardápio Digital';
@@ -129,6 +130,8 @@ export interface Receipt {
   number: number;
   /** Origem do pedido (PDV, Cardápio Digital, Salão, iFood, 99Food, Keeta). */
   origin: string;
+  /** Totem: "Senha 141 · Comer aqui" (vazio nos outros pedidos). */
+  ticketLine: string | null;
   /** Em homologação a nota não tem valor fiscal (aviso obrigatório no cupom). */
   test: boolean;
   store: { name: string; legalName: string | null; cnpj: string | null; stateRegistration: string | null; address: string | null; phone: string | null };

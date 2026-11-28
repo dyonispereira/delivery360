@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CHANNEL_LABELS, formatBRL, orderOrigin, PAYMENT_METHOD_LABELS, type DeliveryFailReason, type OrderStatus, type PaymentMethod, type SalesChannel } from '@delivery360/shared';
+import { CHANNEL_LABELS, formatBRL, orderOrigin, PAYMENT_METHOD_LABELS, totemTicketLine, type DeliveryFailReason, type TotemConsumption, type OrderStatus, type PaymentMethod, type SalesChannel } from '@delivery360/shared';
 import { api } from '@/lib/api';
 
 export interface BoardOrder {
@@ -35,6 +35,10 @@ export interface BoardOrder {
   /** De onde veio: loja própria ou app de delivery (com o número do pedido no app). */
   channel: SalesChannel;
   externalCode: string | null;
+  /** Totem de autoatendimento: de onde veio, senha de chamada e comer aqui/levar. */
+  totemId?: string | null;
+  ticket?: string | null;
+  consumption?: TotemConsumption | null;
   printedAt: string | null;
   createdAt: string;
   /** O motoboy não conseguiu entregar e o restaurante precisa decidir (reenviar ou cancelar). */
@@ -208,7 +212,8 @@ export function printOrder(o: BoardOrder, storeName: string, markPrinted = true)
     <h1>PEDIDO #${o.number}</h1>
     ${o.channel && o.channel !== 'LOJA' ? `<div class="c big">${CHANNEL_LABELS[o.channel]}${o.externalCode ? ` ${esc(o.externalCode)}` : ''}</div>` : ''}
     <div class="c">${when}</div>
-    <div class="c"><b>Origem: ${esc(orderOrigin(o.type, o.channel))}</b></div><hr>
+    <div class="c"><b>Origem: ${esc(orderOrigin(o.type, o.channel, !!o.totemId))}</b></div>
+    ${totemTicketLine(o) ? `<h1>${esc(totemTicketLine(o)!)}</h1>` : ''}<hr>
     ${
       o.type === 'DINE_IN'
         ? `<h1>${esc(o.tableName ?? 'SALÃO')}</h1>${o.waiterName ? `<div class="c">Garçom: ${esc(o.waiterName)}</div>` : ''}<hr>`

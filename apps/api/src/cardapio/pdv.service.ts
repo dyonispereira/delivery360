@@ -62,7 +62,7 @@ export class PdvService {
     }
   }
 
-  private async lockOpen(tx: Prisma.TransactionClient, tenantId: string) {
+  async lockOpen(tx: Prisma.TransactionClient, tenantId: string) {
     const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM cash_sessions WHERE open_key = ${tenantId}::uuid FOR UPDATE`;
     if (!rows.length) throw new ConflictException('Abra o caixa antes.');
     return tx.cashSession.findUniqueOrThrow({ where: { id: rows[0].id } });

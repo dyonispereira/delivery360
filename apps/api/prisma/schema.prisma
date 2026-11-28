@@ -80,6 +80,7 @@ model Tenant {
   counterPayments  CounterPayment[]
   fiscalSettings   FiscalSettings?
   fiscalDocuments  FiscalDocument[]
+  totems           Totem[]
 
   @@map("tenants")
 }
@@ -542,8 +543,19 @@ model Order {
   customerDocument      String?              @map("customer_document")
   counterPayments       CounterPayment[]
   fiscalDocuments       FiscalDocument[]
+  /// Totem de autoatendimento: de qual totem veio (vazio = não veio do totem), comer aqui ou levar,
+  /// a senha de chamada e como o cliente disse que ia pagar no caixa (só aviso).
+  totemId               String?              @map("totem_id") @db.Uuid
+  totem                 Totem?               @relation(fields: [totemId], references: [id], onDelete: SetNull)
+  consumption           TotemConsumption?
+  ticket                String?
+  payHint               String?              @map("pay_hint")
+  /// Chave que a tela manda ao criar o pedido: se a internet piscar e ela mandar de novo, não duplica.
+  requestKey            String?              @map("request_key")
 
   @@unique([tenantId, number])
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, totemId, status])
   @@unique([tenantId, channel, externalId])
   @@index([tenantId, status, createdAt])
   @@index([batchId])
@@ -1429,6 +1441,29 @@ enum CashSessionStatus {
 
 /// Turno do caixa: abre com o fundo de troco e fecha com a contagem da gaveta.
 /// O esperado em dinheiro = fundo + vendas em dinheiro (PDV e salão) + suprimentos − sangrias.
+/// Comer aqui ou levar (totem de autoatendimento).
+enum TotemConsumption {
+  EAT_IN
+  TAKEAWAY
+}
+
+/// Totem de autoatendimento do restaurante. Endereço: /totem/<slug>?t=<id>.
+model Totem {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  active    Boolean  @default(true)
+  /// Modos oferecidos na tela (nenhum ligado = os dois).
+  eatIn     Boolean  @default(true) @map("eat_in")
+  takeaway  Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders    Order[]
+
+  @@index([tenantId])
+  @@map("totems")
+}
+
 model CashSession {
   id              String            @id @default(uuid()) @db.Uuid
   tenantId        String            @map("tenant_id") @db.Uuid

@@ -64,12 +64,18 @@ Dinheiro sempre em centavos. O fuso é Brasília. Os textos do sistema são em p
   entra na cozinha perto da hora.
 - Acompanhamento em `/pedido/<código>`: status, mapa do motoboy, avaliação e gorjeta via Pix.
 
-### 3.1b Totem de autoatendimento (demonstração): `/totem/<slug>`
+### 3.1b Totem de autoatendimento: `/totem/<slug>?t=<id>` (real) e `/totem/<slug>` (demonstração)
 - Fluxo por toque: boas-vindas, comer aqui ou levar, cardápio com fotos, adicionais, carrinho, pagamento e senha.
-- **Só demonstração:** lê o cardápio público, mas não cria pedido, não mexe no caixa e não cobra (Pix e cartão simulados).
-- Opções no endereço: `?consumo=aqui|levar|ambos` e `?observacao=nao`. Regras puras em `packages/shared/src/totem.ts`.
-- Aviso de inatividade em 60 s; sem resposta em mais 20 s, limpa o carrinho e volta ao início (não durante pagamento pendente).
-- Origem no cupom quando for real: "Totem (autoatendimento)".
+- **Real (PR #36):** cadastro em PDV > Totens (nome, ligado/desligado, comer aqui/levar; modelo `Totem`). O pedido nasce
+  `COUNTER` + `AWAITING_PAYMENT` com `totemId`, `consumption`, `ticket` (senha 100 a 999 pelo número) e `payHint`.
+  **Sem maquininha integrada:** o cliente paga no caixa (maquininha comum, Pix ou dinheiro); o caixa toca em "Receber"
+  na fila do PDV (Vender) e registra o que entrou. Só aí vai para painel/cozinha e entra no caixa (`CounterPayment`).
+  Idempotente por `requestKey` (único por loja). Não pago some da fila em 3 h e não entra em nada; "Descartar" cancela.
+- Financeiro: igual ao balcão, `pdv.venda_paga` → **1.8 Balcão** com "Totem · pedido #N" (a confirmar com o Dyonis).
+- Cupom e comanda: "Origem: Totem (autoatendimento)" (`orderOrigin(type, channel, !!totemId)`) + "Senha 136 · Comer aqui".
+- Fornalha: totem fixo `7a0e0000-0000-4000-8000-000000000001`.
+- **Demonstração:** sem `?t`, não cria pedido nem cobra. Opções `?consumo=aqui|levar|ambos` e `?observacao=nao`.
+- Aviso de inatividade em 60 s; sem resposta em mais 20 s, limpa o carrinho e volta ao início.
 
 ### 3.2 Painel do restaurante: `/app`
 - **Painel de pedidos:** colunas por status, alerta sonoro, impressão automática e detalhe do pedido.
@@ -174,6 +180,7 @@ Dinheiro sempre em centavos. O fuso é Brasília. Os textos do sistema são em p
 | #30 | Pedido agendado |
 | #32 | PDV, caixa, cupom não fiscal e NFC-e, PDF, impressoras, origem no cupom, rateio |
 | #33 | Totem de autoatendimento em modo demonstração |
+| #36 | Totem real: cadastro, pedido com senha e comer aqui/levar, paga no caixa (sem maquininha), fila no PDV, cozinha, 1.8 |
 | #34 | Hub iFood (1º PR, simulado): webhook `POST /public/webhooks/ifood` assinado (`IFOOD_WEBHOOK_SECRET`), restaurante pelo merchantId, eventos com estado e reprocessamento, vínculo com situação do iFood, cancelamento, comissão/taxa/desconto do iFood no financeiro |
 
 ---
