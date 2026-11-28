@@ -3,7 +3,19 @@ import { CurrentTenant, RequireModule, TenantRoles } from '../access/access.deco
 import type { TenantContext } from '../access/access.types';
 import { ChannelOrderDto, ChannelSettingDto, MARKETPLACE_CODES, type MarketplaceCode } from './cardapio.dto';
 import { ChannelOrdersService } from './channel-orders.service';
+import { IsBoolean, Matches } from 'class-validator';
+import { IfoodCatalogService } from './ifood-catalog.service';
 import { ChannelHubService } from './channel-hub.service';
+
+class IfoodCatalogPreviewDto {
+  @IsBoolean()
+  revised!: boolean;
+}
+
+class IfoodCatalogConfirmDto extends IfoodCatalogPreviewDto {
+  @Matches(/^[a-f0-9]{64}$/)
+  token!: string;
+}
 
 const CHANNEL = new ParseEnumPipe(Object.fromEntries(MARKETPLACE_CODES.map((c) => [c, c])), {
   exceptionFactory: () => new BadRequestException('Canal inválido.'),
@@ -20,7 +32,20 @@ export class ChannelsController {
   constructor(
     private readonly channels: ChannelOrdersService,
     private readonly hub: ChannelHubService,
+    private readonly catalog: IfoodCatalogService,
   ) {}
+
+  @Post('ifood/cardapio/previa')
+  @HttpCode(200)
+  previewIfoodCatalog(@CurrentTenant() t: TenantContext, @Body() dto: IfoodCatalogPreviewDto) {
+    return this.catalog.preview(t.tenantId, dto.revised);
+  }
+
+  @Post('ifood/cardapio/confirmar')
+  @HttpCode(200)
+  confirmIfoodCatalog(@CurrentTenant() t: TenantContext, @Body() dto: IfoodCatalogConfirmDto) {
+    return this.catalog.confirm(t.tenantId, dto.revised, dto.token);
+  }
 
   /** Eventos recebidos do iFood (o que chegou, se entrou e o erro, quando houver). */
   @Get('ifood/eventos')

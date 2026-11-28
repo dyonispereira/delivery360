@@ -87,6 +87,42 @@ describe('Hub iFood: webhook simulado, eventos, vínculo e cancelamento (e2e)', 
   const entries = async (search: string) =>
     (await as('a').get(`/gestao/entries?search=${encodeURIComponent(search)}`)).body.items as { status: string; amountCents: number; account: { code: string }; description: string }[];
 
+  it('importa o catálogo simulado uma vez por loja e confirma separadamente a mudança de preço', async () => {
+    const base = '/cardapio/canais/ifood/cardapio';
+    const preview = (who: 'a' | 'b', revised: boolean) =>
+      as(who).post(`${base}/previa`).send({ revised }).expect(200);
+    const confirm = (who: 'a' | 'b', revised: boolean, token: string) =>
+      as(who).post(`${base}/confirmar`).send({ revised, token });
+    const product = () => prisma.product.findUniqueOrThrow({
+      where: { tenantId_pdvCode: { tenantId: tenants.a, pdvCode: 'IFOOD-DEMO-CLASSICO' } },
+      include: { optionGroups: { include: { options: true } } },
+    });
+
+    const first = (await preview('a', false)).body;
+    expect(first.rows.map((r: { action: string }) => r.action)).toEqual(Array(5).fill('Criar'));
+    await confirm('b', false, first.token).expect(409);
+    expect((await confirm('a', false, first.token).expect(200)).body.affected).toBe(5);
+    await confirm('a', false, first.token).expect(409);
+    const repeat = (await preview('a', false)).body;
+    expect((await confirm('a', false, repeat.token).expect(200)).body.affected).toBe(0);
+    const created = await product();
+    expect(created.optionGroups).toHaveLength(1);
+    expect(created.optionGroups[0].options).toHaveLength(2);
+
+    const costItems = [{ name: 'Pão', kind: 'INGREDIENT', costCents: 300 }];
+    await prisma.product.update({ where: { id: created.id }, data: { costItems } });
+    const revised = (await preview('a', true)).body;
+    expect(revised.rows).toContainEqual(expect.objectContaining({
+      kind: 'Produto', action: 'Atualizar preço', currentPrice: 2990, price: 3490,
+    }));
+    expect((await product()).channelPrices).toEqual({ IFOOD: 2990 });
+    expect((await confirm('a', true, revised.token).expect(200)).body.affected).toBe(1);
+    expect(await product()).toEqual(expect.objectContaining({
+      id: created.id, priceCents: 2990, channelPrices: { IFOOD: 3490 }, costItems,
+    }));
+    expect((await preview('b', false)).body.rows.map((r: { action: string }) => r.action)).toEqual(Array(5).fill('Criar'));
+  });
+
   it('o código da loja é de um restaurante só; assinatura errada é recusada', async () => {
     const taken = await as('b').put('/cardapio/canais/IFOOD').send({ merchantId: 'merchant-a' });
     expect(taken.status).toBe(409);

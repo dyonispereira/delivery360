@@ -6,6 +6,7 @@ import { OrdersService } from './orders.service';
 import { ChannelsController } from './channels.controller';
 import { ChannelOrdersService } from './channel-orders.service';
 import { ChannelHubService } from './channel-hub.service';
+import { IfoodCatalogService } from './ifood-catalog.service';
 import { IfoodWebhookController } from './ifood-webhook.controller';
 import { CouponsService } from './coupons.service';
 import { CombosService } from './combos.service';
@@ -22,7 +23,7 @@ import { FiscalService } from '../fiscal/fiscal.service';
 
 @Module({
   controllers: [CardapioManageController, ChannelsController, IfoodWebhookController, PublicController, CampaignsController, SalaoController, LoyaltyController, PdvController],
-  providers: [CatalogService, OrdersService, ChannelOrdersService, ChannelHubService, CouponsService, CombosService, CampaignsService, SalaoService, LoyaltyService, PdvService, FiscalService, TotemService],
+  providers: [CatalogService, OrdersService, ChannelOrdersService, ChannelHubService, IfoodCatalogService, CouponsService, CombosService, CampaignsService, SalaoService, LoyaltyService, PdvService, FiscalService, TotemService],
   exports: [OrdersService],
 })
 export class CardapioModule {}

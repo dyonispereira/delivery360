@@ -65,6 +65,7 @@ model Tenant {
   financeSettings  FinanceSettings?
   channelSettings  ChannelSetting[]
   channelMerchants ChannelMerchant[]
+  ifoodCatalogLinks IfoodCatalogLink[]
   channelEvents    ChannelEvent[]
   channelLinks     ChannelOrderLink[]
   employees        Employee[]
@@ -1620,4 +1621,16 @@ model FiscalDocument {
   @@index([orderId])
   @@index([tenantId, createdAt])
   @@map("fiscal_documents")
+}
+
+model IfoodCatalogLink {
+  tenantId   String @map("tenant_id") @db.Uuid
+  kind       String
+  externalId String @map("external_id")
+  localId    String @map("local_id") @db.Uuid
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, kind, externalId])
+  @@unique([tenantId, kind, localId])
+  @@map("ifood_catalog_links")
 }
