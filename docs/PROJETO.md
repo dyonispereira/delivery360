@@ -64,6 +64,13 @@ Dinheiro sempre em centavos. O fuso é Brasília. Os textos do sistema são em p
   entra na cozinha perto da hora.
 - Acompanhamento em `/pedido/<código>`: status, mapa do motoboy, avaliação e gorjeta via Pix.
 
+### 3.1b Totem de autoatendimento (demonstração): `/totem/<slug>`
+- Fluxo por toque: boas-vindas, comer aqui ou levar, cardápio com fotos, adicionais, carrinho, pagamento e senha.
+- **Só demonstração:** lê o cardápio público, mas não cria pedido, não mexe no caixa e não cobra (Pix e cartão simulados).
+- Opções no endereço: `?consumo=aqui|levar|ambos` e `?observacao=nao`. Regras puras em `packages/shared/src/totem.ts`.
+- Aviso de inatividade em 60 s; sem resposta em mais 20 s, limpa o carrinho e volta ao início (não durante pagamento pendente).
+- Origem no cupom quando for real: "Totem (autoatendimento)".
+
 ### 3.2 Painel do restaurante: `/app`
 - **Painel de pedidos:** colunas por status, alerta sonoro, impressão automática e detalhe do pedido.
 - **Cozinha (KDS):** tela grande com os pedidos em preparo.
@@ -166,6 +173,7 @@ Dinheiro sempre em centavos. O fuso é Brasília. Os textos do sistema são em p
 | #28 | Fidelidade |
 | #30 | Pedido agendado |
 | #32 | PDV, caixa, cupom não fiscal e NFC-e, PDF, impressoras, origem no cupom, rateio |
+| #33 | Totem de autoatendimento em modo demonstração |
 | #34 | Hub iFood (1º PR, simulado): webhook `POST /public/webhooks/ifood` assinado (`IFOOD_WEBHOOK_SECRET`), restaurante pelo merchantId, eventos com estado e reprocessamento, vínculo com situação do iFood, cancelamento, comissão/taxa/desconto do iFood no financeiro |
 
 ---
