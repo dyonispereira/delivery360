@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   ArrayMaxSize,
   IsArray,
   IsBoolean,
@@ -594,4 +595,37 @@ export class FiscalSettingsDto {
   @IsOptional() @Matches(/^[5-7]\d{3}$/, { message: 'CFOP: 4 números (ex.: 5102).' }) defaultCfop?: string;
   @IsOptional() @Matches(/^\d{2,3}$/, { message: 'CSOSN/CST: 2 ou 3 números (ex.: 102).' }) defaultCsosn?: string;
   @IsOptional() @IsIn(['NAO_FISCAL', 'NFCE']) pdvReceipt?: 'NAO_FISCAL' | 'NFCE';
+}
+
+// ---------- Totem de autoatendimento ----------
+
+export class TotemDto {
+  @IsString() @MinLength(2) @MaxLength(40) name: string;
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsBoolean() eatIn?: boolean;
+  @IsOptional() @IsBoolean() takeaway?: boolean;
+}
+
+export class UpdateTotemDto {
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(40) name?: string;
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsBoolean() eatIn?: boolean;
+  @IsOptional() @IsBoolean() takeaway?: boolean;
+}
+
+/** Pedido feito no totem. O preço quem calcula é o servidor. */
+export class TotemOrderDto {
+  /** Chave gerada pela tela para este pedido: mandar de novo (internet caiu) não duplica. */
+  @IsString() @MinLength(8) @MaxLength(64) requestKey: string;
+  @IsIn(['EAT_IN', 'TAKEAWAY']) consumption: 'EAT_IN' | 'TAKEAWAY';
+  @IsIn(['CARD', 'PIX', 'CASH']) payHint: 'CARD' | 'PIX' | 'CASH';
+  @IsArray() @ArrayMinSize(1, { message: 'Adicione pelo menos um item.' }) @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => TabItemDto) items: TabItemDto[];
+  @IsOptional() @IsString() @MaxLength(40) customerName?: string;
+}
+
+/** O caixa confirma o pagamento do pedido do totem (o que entrou de fato) e escolhe o cupom. */
+export class TotemPayDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => PdvPaymentDto) payments: PdvPaymentDto[];
+  @IsIn(['NAO_FISCAL', 'NFCE']) receipt: 'NAO_FISCAL' | 'NFCE';
+  @IsOptional() @IsString() @MaxLength(20) document?: string;
 }

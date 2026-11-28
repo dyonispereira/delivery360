@@ -1,11 +1,12 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Put, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentTenant, CurrentUser, RequireModule, TenantRoles } from '../access/access.decorators';
 import type { AuthUser, TenantContext } from '../access/access.types';
 import { FiscalService } from '../fiscal/fiscal.service';
 import { receiptPdf } from '../fiscal/receipt-pdf';
-import { CancelSaleDto, CashMovementDto, CloseCashDto, EmitNfceDto, FiscalSettingsDto, OpenCashDto, PdvSaleDto } from './cardapio.dto';
+import { CancelSaleDto, CashMovementDto, CloseCashDto, EmitNfceDto, FiscalSettingsDto, OpenCashDto, PdvSaleDto, TotemDto, TotemPayDto, UpdateTotemDto } from './cardapio.dto';
 import { PdvService } from './pdv.service';
+import { TotemService } from './totem.service';
 
 const UUID = new ParseUUIDPipe();
 
@@ -19,7 +20,42 @@ export class PdvController {
   constructor(
     private readonly pdv: PdvService,
     private readonly fiscal: FiscalService,
+    private readonly totem: TotemService,
   ) {}
+
+  // ---------- Totem: cadastro e pedidos esperando pagamento no caixa ----------
+
+  @Get('totens')
+  totems(@CurrentTenant() t: TenantContext) {
+    return this.totem.list(t.tenantId);
+  }
+
+  @TenantRoles('OWNER', 'MANAGER')
+  @Post('totens')
+  createTotem(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Body() dto: TotemDto) {
+    return this.totem.create(t.tenantId, u.id, dto);
+  }
+
+  @TenantRoles('OWNER', 'MANAGER')
+  @Patch('totens/:id')
+  updateTotem(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string, @Body() dto: UpdateTotemDto) {
+    return this.totem.update(t.tenantId, u.id, id, dto);
+  }
+
+  @Get('totem/pedidos')
+  totemPending(@CurrentTenant() t: TenantContext) {
+    return this.totem.pending(t.tenantId);
+  }
+
+  @Post('totem/pedidos/:id/receber')
+  totemPay(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string, @Body() dto: TotemPayDto) {
+    return this.totem.pay(t.tenantId, u.id, id, dto);
+  }
+
+  @Post('totem/pedidos/:id/descartar')
+  totemDiscard(@CurrentTenant() t: TenantContext, @CurrentUser() u: AuthUser, @Param('id', UUID) id: string) {
+    return this.totem.cancelPending(t.tenantId, u.id, id);
+  }
 
   @Get('caixa')
   async current(@CurrentTenant() t: TenantContext) {

@@ -318,13 +318,13 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
             ...base,
             type: 'RECEIVABLE',
             code: '1.8',
-            description: `Balcão · pedido #${order.number} · ${label}`,
+            description: `${order.totemId ? 'Totem' : 'Balcão'} · pedido #${order.number} · ${label}`,
             counterparty: pay.label ?? (order.customerName === 'Balcão' ? null : order.customerName),
             amountCents: pay.amountCents,
           });
           const fee = Math.round((pay.amountCents * paymentFeeBps(rates, method)) / 10_000);
           if (fee > 0) {
-            await this.upsert(tx, t, `pdvpay:${pay.id}:fee`, { ...base, type: 'PAYABLE', code: '2.3', description: `Taxa ${label} · balcão #${order.number}`, amountCents: fee });
+            await this.upsert(tx, t, `pdvpay:${pay.id}:fee`, { ...base, type: 'PAYABLE', code: '2.3', description: `Taxa ${label} · ${order.totemId ? 'totem' : 'balcão'} #${order.number}`, amountCents: fee });
           }
         }
         return;

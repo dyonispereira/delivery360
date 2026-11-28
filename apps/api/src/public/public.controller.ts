@@ -1,7 +1,8 @@
 import { BadRequestException, Body, Controller, Get, Headers, HttpCode, Ip, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { Public } from '../access/access.decorators';
-import { CreateOrderDto, PayCardDto, QuoteOrderDto, RateOrderDto, TipDto } from '../cardapio/cardapio.dto';
+import { CreateOrderDto, PayCardDto, QuoteOrderDto, RateOrderDto, TipDto, TotemOrderDto } from '../cardapio/cardapio.dto';
+import { TotemService } from '../cardapio/totem.service';
 import { OrdersService } from '../cardapio/orders.service';
 import { LoyaltyService } from '../cardapio/loyalty.service';
 import { normalizePhone } from '../cardapio/order-pricing';
@@ -13,7 +14,21 @@ export class PublicController {
   constructor(
     private readonly orders: OrdersService,
     private readonly loyalty: LoyaltyService,
+    private readonly totem: TotemService,
   ) {}
+
+  /** Totem de autoatendimento: nome, se está ligado e os modos de consumo. */
+  @Get('stores/:slug/totem/:id')
+  totemInfo(@Param('slug') slug: string, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.totem.publicTotem(slug, id);
+  }
+
+  /** Pedido do totem (aguarda pagamento no caixa). Repetir com a mesma chave devolve o mesmo pedido. */
+  @Throttle({ default: { limit: process.env.NODE_ENV === 'test' ? 1000 : 30, ttl: 60_000 } })
+  @Post('stores/:slug/totem/:id/orders')
+  totemOrder(@Param('slug') slug: string, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: TotemOrderDto) {
+    return this.totem.createOrder(slug, id, dto);
+  }
 
   @Get('stores/:slug')
   store(@Param('slug') slug: string) {

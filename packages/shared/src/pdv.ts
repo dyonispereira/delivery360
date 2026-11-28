@@ -130,6 +130,8 @@ export interface Receipt {
   number: number;
   /** Origem do pedido (PDV, Cardápio Digital, Salão, iFood, 99Food, Keeta). */
   origin: string;
+  /** Totem: "Senha 141 · Comer aqui" (vazio nos outros pedidos). */
+  ticketLine: string | null;
   /** Em homologação a nota não tem valor fiscal (aviso obrigatório no cupom). */
   test: boolean;
   store: { name: string; legalName: string | null; cnpj: string | null; stateRegistration: string | null; address: string | null; phone: string | null };

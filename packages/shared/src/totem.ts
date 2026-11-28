@@ -176,3 +176,9 @@ export function upsertLine(lines: TotemLine[], line: TotemLine): TotemLine[] {
 export function demoTicket(random: () => number = Math.random): string {
   return String(100 + Math.floor(random() * 900));
 }
+
+/** Linha do cupom e da comanda do pedido do totem: "Senha 141 · Comer aqui". */
+export function totemTicketLine(o: { ticket?: string | null; consumption?: TotemConsumption | null }): string | null {
+  if (!o.ticket) return null;
+  return [`Senha ${o.ticket}`, o.consumption ? TOTEM_CONSUMPTION_LABELS[o.consumption] : null].filter(Boolean).join(' · ');
+}
