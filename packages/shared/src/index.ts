@@ -8,3 +8,4 @@ export * from './reorder';
 export * from './promo';
 export * from './salao';
 export * from './pdv';
+export * from './totem';
