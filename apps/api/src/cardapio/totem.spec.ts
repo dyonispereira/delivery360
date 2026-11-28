@@ -2,6 +2,9 @@ import {
   cartTotals,
   consumptionModes,
   demoTicket,
+  orderOrigin,
+  totemModes,
+  totemTicket,
   selectionErrors,
   setQuantity,
   toggleOption,
@@ -110,5 +113,26 @@ describe('totem: configuração e senha', () => {
   it('senha de demonstração tem 3 dígitos', () => {
     expect(demoTicket(() => 0)).toBe('100');
     expect(demoTicket(() => 0.9999)).toBe('999');
+  });
+});
+
+describe('totem real: cadastro, senha e origem', () => {
+  it('modos de consumo vêm do cadastro do totem (nenhum ligado = os dois)', () => {
+    expect(totemModes({ eatIn: true, takeaway: false })).toEqual(['EAT_IN']);
+    expect(totemModes({ eatIn: false, takeaway: true })).toEqual(['TAKEAWAY']);
+    expect(totemModes({ eatIn: false, takeaway: false })).toEqual(['EAT_IN', 'TAKEAWAY']);
+  });
+
+  it('senha sai do número do pedido: 3 dígitos, de 100 a 999, e recomeça', () => {
+    expect(totemTicket(1)).toBe('100');
+    expect(totemTicket(42)).toBe('141');
+    expect(totemTicket(900)).toBe('999');
+    expect(totemTicket(901)).toBe('100');
+  });
+
+  it('cupom e comanda mostram a origem "Totem (autoatendimento)"', () => {
+    expect(orderOrigin('COUNTER', 'LOJA', true)).toBe('Totem (autoatendimento)');
+    expect(orderOrigin('COUNTER', 'LOJA')).toBe('PDV (balcão)');
+    expect(orderOrigin('DELIVERY', 'IFOOD', true)).toBe('iFood');
   });
 });

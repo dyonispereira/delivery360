@@ -1,8 +1,11 @@
 /**
- * Totem de autoatendimento: regras puras do carrinho (sem servidor).
+ * Totem de autoatendimento: regras puras do carrinho e do pedido.
  *
- * Nesta primeira etapa o totem roda em modo demonstração: lê o cardápio público da loja,
- * calcula tudo aqui e não cria pedido, não mexe no caixa e não cobra ninguém.
+ * Dois modos:
+ * - demonstração (/totem/<slug>): calcula tudo aqui, não cria pedido e não cobra ninguém;
+ * - real (/totem/<slug>?t=<id do totem>): cria o pedido "aguardando pagamento" e mostra a senha.
+ *   O cliente paga no caixa (maquininha comum, Pix ou dinheiro); o caixa confirma no PDV e só então
+ *   o pedido vai para o painel e a cozinha. Sem integração com maquininha por enquanto.
  */
 import type { PublicOptionGroup, PublicProduct } from './orders';
 
@@ -18,6 +21,69 @@ export const TOTEM_CONSUMPTION_LABELS: Record<TotemConsumption, string> = {
 
 export type TotemPayMethod = 'PIX' | 'CARD';
 export const TOTEM_PAY_LABELS: Record<TotemPayMethod, string> = { PIX: 'Pix', CARD: 'Cartão' };
+
+/** Modo real: como o cliente diz que vai pagar no caixa (só um aviso; o caixa registra o que entrou de fato). */
+export type TotemPayHint = 'CARD' | 'PIX' | 'CASH';
+export const TOTEM_PAY_HINT_LABELS: Record<TotemPayHint, string> = { CARD: 'Cartão', PIX: 'Pix', CASH: 'Dinheiro' };
+
+/** Configuração pública de um totem (o que a tela precisa para funcionar). */
+export interface PublicTotem {
+  id: string;
+  name: string;
+  active: boolean;
+  modes: TotemConsumption[];
+}
+
+/** Cadastro do totem no painel. */
+export interface TotemView {
+  id: string;
+  name: string;
+  active: boolean;
+  eatIn: boolean;
+  takeaway: boolean;
+  createdAt: string;
+}
+
+/** Pedido do totem esperando o pagamento no caixa. */
+export interface TotemPendingOrder {
+  id: string;
+  number: number;
+  ticket: string;
+  consumption: TotemConsumption | null;
+  payHint: TotemPayHint | null;
+  totemName: string | null;
+  totalCents: number;
+  createdAt: string;
+  items: { name: string; quantity: number; options: string[]; notes: string | null }[];
+}
+
+/** Resposta do totem depois de criar o pedido. */
+export interface TotemOrderResult {
+  number: number;
+  ticket: string;
+  totalCents: number;
+  consumption: TotemConsumption;
+}
+
+/** Modos de consumo ligados no cadastro do totem (nenhum ligado = os dois). */
+export function totemModes(cfg: { eatIn: boolean; takeaway: boolean }): TotemConsumption[] {
+  const modes: TotemConsumption[] = [];
+  if (cfg.eatIn) modes.push('EAT_IN');
+  if (cfg.takeaway) modes.push('TAKEAWAY');
+  return modes.length ? modes : ['EAT_IN', 'TAKEAWAY'];
+}
+
+/**
+ * Senha de chamada do pedido real: 3 dígitos a partir do número do pedido (100 a 999, depois recomeça).
+ * Curta para falar em voz alta e única dentro de 900 pedidos seguidos.
+ */
+export function totemTicket(orderNumber: number): string {
+  const n = Math.max(1, Math.floor(orderNumber));
+  return String(((n - 1) % 900) + 100);
+}
+
+/** O pedido do totem que não foi pago some da lista do caixa depois disto (não entra em nada). */
+export const TOTEM_UNPAID_HOURS = 3;
 
 /** Inatividade: aviso depois de 60 s sem toque; mais 20 s sem resposta e a sessão recomeça. */
 export const TOTEM_IDLE_WARN_MS = 60_000;
@@ -39,8 +105,8 @@ export interface TotemLine {
 }
 
 /**
- * Quais modos de consumo a loja oferece. No demo vem do endereço (?consumo=aqui, levar ou ambos);
- * na etapa real vem da configuração do totem.
+ * Quais modos de consumo a loja oferece no demo (?consumo=aqui, levar ou ambos).
+ * No modo real vem do cadastro do totem (`totemModes`).
  */
 export function consumptionModes(param: string | null | undefined): TotemConsumption[] {
   const p = (param ?? '').trim().toLowerCase();

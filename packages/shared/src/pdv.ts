@@ -17,9 +17,10 @@ export function pdvPayLabel(method: PaymentMethod, cardKind?: string | null) {
 
 export type ReceiptKind = 'NAO_FISCAL' | 'NFCE';
 
-/** Origem do pedido, impressa em todo cupom (fiscal ou não): PDV, Cardápio Digital, Salão ou o app. */
-export function orderOrigin(type: OrderType, channel: SalesChannel | null | undefined): string {
+/** Origem do pedido, impressa em todo cupom (fiscal ou não): PDV, Totem, Cardápio Digital, Salão ou o app. */
+export function orderOrigin(type: OrderType, channel: SalesChannel | null | undefined, fromTotem = false): string {
   if (channel && channel !== 'LOJA') return CHANNEL_LABELS[channel];
+  if (fromTotem) return 'Totem (autoatendimento)';
   if (type === 'COUNTER') return 'PDV (balcão)';
   if (type === 'DINE_IN') return 'Salão';
   return 'Cardápio Digital';
