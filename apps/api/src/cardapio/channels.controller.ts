@@ -1,8 +1,9 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Param, ParseEnumPipe, Post, Put } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, Param, ParseEnumPipe, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
 import { CurrentTenant, RequireModule, TenantRoles } from '../access/access.decorators';
 import type { TenantContext } from '../access/access.types';
 import { ChannelOrderDto, ChannelSettingDto, MARKETPLACE_CODES, type MarketplaceCode } from './cardapio.dto';
 import { ChannelOrdersService } from './channel-orders.service';
+import { ChannelHubService } from './channel-hub.service';
 
 const CHANNEL = new ParseEnumPipe(Object.fromEntries(MARKETPLACE_CODES.map((c) => [c, c])), {
   exceptionFactory: () => new BadRequestException('Canal inválido.'),
@@ -16,7 +17,23 @@ const CHANNEL = new ParseEnumPipe(Object.fromEntries(MARKETPLACE_CODES.map((c) =
 @TenantRoles('OWNER', 'MANAGER')
 @Controller('cardapio/canais')
 export class ChannelsController {
-  constructor(private readonly channels: ChannelOrdersService) {}
+  constructor(
+    private readonly channels: ChannelOrdersService,
+    private readonly hub: ChannelHubService,
+  ) {}
+
+  /** Eventos recebidos do iFood (o que chegou, se entrou e o erro, quando houver). */
+  @Get('ifood/eventos')
+  ifoodEvents(@CurrentTenant() t: TenantContext, @Query('status') status?: string) {
+    return this.hub.listEvents(t.tenantId, status);
+  }
+
+  /** Tenta de novo um evento do iFood que deu erro (ex.: depois de cadastrar o código PDV que faltava). */
+  @Post('ifood/eventos/:id/reprocessar')
+  @HttpCode(200)
+  reprocess(@CurrentTenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
+    return this.hub.reprocess(t.tenantId, id);
+  }
 
   @Get()
   list(@CurrentTenant() t: TenantContext) {

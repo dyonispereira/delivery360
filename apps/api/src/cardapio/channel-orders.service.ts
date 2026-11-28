@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, SalesChannel } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import { CHANNEL_LABELS, MARKETPLACES, unitCost, type CostItem } from '@delivery360/shared';
@@ -7,6 +7,11 @@ import { CatalogService } from './catalog.service';
 import { ChannelOrderDto, ChannelSettingDto, MarketplaceCode } from './cardapio.dto';
 import { normalizePhone } from './order-pricing';
 import { OrdersService } from './orders.service';
+
+export interface OrderLinkInput {
+  externalStatus: string;
+  externalAmounts: object;
+}
 
 const code = () => {
   const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
@@ -35,16 +40,30 @@ export class ChannelOrdersService {
 
   async updateSetting(tenantId: string, channel: MarketplaceCode, dto: ChannelSettingDto) {
     const data = { ...dto, merchantId: dto.merchantId === undefined ? undefined : dto.merchantId.trim() || null };
-    await this.prisma.channelSetting.upsert({
-      where: { tenantId_channel: { tenantId, channel } },
-      update: data,
-      create: { tenantId, channel, ...data },
+    await this.prisma.$transaction(async (tx) => {
+      if (data.merchantId !== undefined) {
+        // O código da loja no app aponta para um restaurante só: é por ele que o webhook acha o pedido de quem é.
+        if (data.merchantId) {
+          const owner = await tx.channelMerchant.findUnique({ where: { channel_merchantId: { channel, merchantId: data.merchantId } } });
+          if (owner && owner.tenantId !== tenantId) throw new ConflictException('Este código de loja já está ligado a outro restaurante.');
+        }
+        await tx.channelMerchant.deleteMany({ where: { tenantId, channel } });
+        if (data.merchantId) await tx.channelMerchant.create({ data: { channel, merchantId: data.merchantId, tenantId } });
+      }
+      await tx.channelSetting.upsert({
+        where: { tenantId_channel: { tenantId, channel } },
+        update: data,
+        create: { tenantId, channel, ...data },
+      });
     });
     return this.catalog.channelConfigs(tenantId);
   }
 
-  /** Importa o pedido do app. Idempotente: o mesmo pedido (canal + id no app) entra uma vez só. */
-  async importOrder(tenantId: string, dto: ChannelOrderDto) {
+  /**
+   * Importa o pedido do app. Idempotente: o mesmo pedido (canal + id no app) entra uma vez só.
+   * `link`: situação e valores informados pelo app (Hub), gravados junto com o pedido.
+   */
+  async importOrder(tenantId: string, dto: ChannelOrderDto, link?: OrderLinkInput) {
     const existing = await this.prisma.order.findUnique({
       where: { tenantId_channel_externalId: { tenantId, channel: dto.channel, externalId: dto.externalId } },
       select: { id: true, number: true },
@@ -154,6 +173,15 @@ export class ChannelOrdersService {
             },
           },
         });
+        if (link) {
+          // Antes do evento do financeiro: a Gestão usa a comissão e a taxa que o app informou.
+          const data = { orderId: created.id, externalStatus: link.externalStatus, externalAmounts: link.externalAmounts as Prisma.InputJsonValue };
+          await tx.channelOrderLink.upsert({
+            where: { tenantId_channel_externalId: { tenantId, channel: dto.channel, externalId: dto.externalId } },
+            update: data,
+            create: { tenantId, channel: dto.channel, externalId: dto.externalId, ...data },
+          });
+        }
         await this.orders.publishReceived(tx, created.id, tenantId, totalCents, dto.paymentMethod);
         return created;
       });
