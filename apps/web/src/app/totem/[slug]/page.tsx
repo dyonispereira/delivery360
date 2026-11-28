@@ -205,7 +205,7 @@ export default function TotemPage({ params }: { params: Promise<{ slug: string }
   if (totem && !totem.active) return <Shell><Center><p className="text-4xl font-black">Totem fora de uso</p><p className="mt-4 text-2xl text-zinc-600">Faça o seu pedido no caixa.</p></Center></Shell>;
 
   return (
-    <Shell>
+    <Shell demo={!totem}>
       {step === 'welcome' && (
         <button
           onClick={start}
@@ -432,12 +432,14 @@ export default function TotemPage({ params }: { params: Promise<{ slug: string }
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, demo = false }: { children: React.ReactNode; demo?: boolean }) {
   return (
     <div className="flex h-dvh select-none flex-col overflow-hidden bg-white text-zinc-950 [touch-action:manipulation]">
-      <div className="bg-amber-400 px-4 py-2 text-center text-lg font-black text-zinc-950" role="status">
-        MODO DEMONSTRAÇÃO · nenhum pedido, cobrança ou caixa real
-      </div>
+      {demo && (
+        <div className="bg-amber-400 px-4 py-2 text-center text-lg font-black text-zinc-950" role="status">
+          MODO DEMONSTRAÇÃO · nenhum pedido, cobrança ou caixa real
+        </div>
+      )}
       {children}
     </div>
   );
