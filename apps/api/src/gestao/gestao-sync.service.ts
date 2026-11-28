@@ -21,7 +21,7 @@ const PAYMENT_METHOD_LABELS_SALAO: Partial<Record<PaymentMethod, string>> = Obje
  * - pedido.status → COMPLETED → baixa do a receber (dinheiro/maquininha recebidos na entrega)
  * - pedido.cancelado  → cancela o a receber e o imposto; se já estava pago, a pagar 2.5 (devolver ao cliente)
  * - entrega.concluida → a pagar 6.1 ao motoboy (valor por entrega)
- * - pdv.venda_paga   → cada pagamento do balcão: 1.8 Balcão (já recebido) + taxa 2.3
+ * - pdv.venda_paga   → cada pagamento do balcão: 1.8 Balcão (já recebido) + taxa 2.3; do totem: 1.9 Totem
  * - salao.conta_fechada → cada pagamento da mesa: 1.1 Salão + 11.3 taxa de serviço (fora da DRE) + taxa 2.3; a pagar 11.4 à equipe
  * - gorjeta.recebida  → entrada 11.1 + a pagar 11.2 ao motoboy (fora da DRE)
  * - gorjeta.repassada → baixa do 11.2
@@ -102,7 +102,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         // Balcão (PDV): igual ao salão, o dinheiro entra pelos pagamentos (pdv.venda_paga), já recebido.
         const dineIn = order.type === 'DINE_IN' || order.type === 'COUNTER';
         const online = ONLINE.includes(order.paymentMethod) || dineIn;
-        const revenueCode = order.type === 'COUNTER' ? '1.8' : dineIn ? '1.1' : '1.2';
+        const revenueCode = order.totemId ? '1.9' : order.type === 'COUNTER' ? '1.8' : dineIn ? '1.1' : '1.2';
         const method = order.paymentMethod as PaymentMethod;
         const restaurantCoupon = order.discountCents - order.couponPlatformCents;
         // Venda pelo que o cliente pagou de fato: é o que entra no caixa e no extrato do gateway.
@@ -317,7 +317,8 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
           await this.upsert(tx, t, `pdvpay:${pay.id}:sale`, {
             ...base,
             type: 'RECEIVABLE',
-            code: '1.8',
+            // Totem tem linha própria (1.9) para medir quanto vende; o resto do balcão fica em 1.8.
+            code: order.totemId ? '1.9' : '1.8',
             description: `${order.totemId ? 'Totem' : 'Balcão'} · pedido #${order.number} · ${label}`,
             counterparty: pay.label ?? (order.customerName === 'Balcão' ? null : order.customerName),
             amountCents: pay.amountCents,
@@ -420,6 +421,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         id: true,
         number: true,
         type: true,
+        totemId: true,
         customerName: true,
         tableName: true,
         totalCents: true,

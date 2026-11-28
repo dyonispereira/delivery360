@@ -112,7 +112,7 @@ describe('Totem de autoatendimento: pedido real, caixa e cozinha (e2e)', () => {
     await owner().patch(`/cardapio/pdv/totens/${ids.totem}`).send({ active: true });
   });
 
-  it('caixa recebe (crédito na maquininha comum): vai para a cozinha, cupom com origem Totem e senha, 1.8', async () => {
+  it('caixa recebe (crédito na maquininha comum): vai para a cozinha, cupom com origem Totem e senha, 1.9 Totem', async () => {
     expect((await waiter().post(`/cardapio/pdv/totem/pedidos/${ids.o1}/receber`).send({ payments: [{ key: 'CREDIT', amountCents: 6400 }], receipt: 'NAO_FISCAL' })).status).toBe(409);
     await waiter().post('/cardapio/pdv/caixa/abrir').send({ openingCents: 0 });
     expect((await waiter().post(`/cardapio/pdv/totem/pedidos/${ids.o1}/receber`).send({ payments: [{ key: 'CREDIT', amountCents: 6000 }], receipt: 'NAO_FISCAL' })).status).toBe(400);
@@ -128,7 +128,8 @@ describe('Totem de autoatendimento: pedido real, caixa e cozinha (e2e)', () => {
 
     await sync();
     const entries = await prisma.financialEntry.findMany({ where: { tenantId, status: { not: 'CANCELLED' }, memo: false }, include: { account: true } });
-    const sale = entries.find((e: { account: { code: string } }) => e.account.code === '1.8');
+    const sale = entries.find((e: { account: { code: string } }) => e.account.code === '1.9');
+    expect(entries.some((e: { account: { code: string } }) => e.account.code === '1.8')).toBe(false);
     expect(sale).toMatchObject({ amountCents: 6400, status: 'PAID', paymentMethod: 'CARD_ON_DELIVERY', description: expect.stringContaining('Totem · pedido #') });
   });
 
