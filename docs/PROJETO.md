@@ -71,7 +71,7 @@ Dinheiro sempre em centavos. O fuso é Brasília. Os textos do sistema são em p
   **Sem maquininha integrada:** o cliente paga no caixa (maquininha comum, Pix ou dinheiro); o caixa toca em "Receber"
   na fila do PDV (Vender) e registra o que entrou. Só aí vai para painel/cozinha e entra no caixa (`CounterPayment`).
   Idempotente por `requestKey` (único por loja). Não pago some da fila em 3 h e não entra em nada; "Descartar" cancela.
-- Financeiro: igual ao balcão, `pdv.venda_paga` → **1.8 Balcão** com "Totem · pedido #N" (a confirmar com o Dyonis).
+- Financeiro: `pdv.venda_paga` → **1.9 Totem (autoatendimento)**, linha própria para medir o totem (Dyonis, 28/11). Migração `20261128040000_conta_totem` renumera conta própria 1.9 que já existia.
 - Cupom e comanda: "Origem: Totem (autoatendimento)" (`orderOrigin(type, channel, !!totemId)`) + "Senha 136 · Comer aqui".
 - Fornalha: totem fixo `7a0e0000-0000-4000-8000-000000000001`.
 - **Demonstração:** sem `?t`, não cria pedido nem cobra. Opções `?consumo=aqui|levar|ambos` e `?observacao=nao`.
@@ -180,7 +180,7 @@ Dinheiro sempre em centavos. O fuso é Brasília. Os textos do sistema são em p
 | #30 | Pedido agendado |
 | #32 | PDV, caixa, cupom não fiscal e NFC-e, PDF, impressoras, origem no cupom, rateio |
 | #33 | Totem de autoatendimento em modo demonstração |
-| #36 | Totem real: cadastro, pedido com senha e comer aqui/levar, paga no caixa (sem maquininha), fila no PDV, cozinha, 1.8 |
+| #36, #37 | Totem real: cadastro, pedido com senha e comer aqui/levar, paga no caixa (sem maquininha), fila no PDV, cozinha; receita em 1.9 Totem |
 | #34 | Hub iFood (1º PR, simulado): webhook `POST /public/webhooks/ifood` assinado (`IFOOD_WEBHOOK_SECRET`), restaurante pelo merchantId, eventos com estado e reprocessamento, vínculo com situação do iFood, cancelamento, comissão/taxa/desconto do iFood no financeiro |
 
 ---
