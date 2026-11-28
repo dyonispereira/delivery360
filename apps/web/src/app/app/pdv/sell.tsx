@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { formatBRL, parseBRL, PDV_PAYMENT_METHODS, type PdvPayKey, type PublicProduct, type Receipt, type ReceiptKind } from '@delivery360/shared';
+import { formatBRL, parseBRL, PDV_PAYMENT_METHODS, splitAmong, type PdvPayKey, type PublicProduct, type Receipt, type ReceiptKind } from '@delivery360/shared';
 import { ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { openReceiptPdf, printReceipt } from '@/components/receipt';
 import { api } from '@/lib/api';
@@ -14,6 +14,8 @@ interface PayLine {
   key: PdvPayKey;
   amount: string;
   received: string;
+  /** Rateio: de quem é (vazio = pagamento único). */
+  label: string;
 }
 interface SaleResult {
   orderId: string;
@@ -156,6 +158,7 @@ function Checkout({
   const [kitchen, setKitchen] = useState(true);
   const [receipt, setReceipt] = useState<ReceiptKind>(nfce.available ? nfce.defaultReceipt : 'NAO_FISCAL');
   const [pays, setPays] = useState<PayLine[]>([]);
+  const [people, setPeople] = useState(2);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -165,7 +168,9 @@ function Checkout({
   const left = total - paid;
   const change = pays.filter((p) => p.key === 'CASH').reduce((s, p) => s + Math.max(0, cents(p.received) - cents(p.amount)), 0);
 
-  const addPay = (key: PdvPayKey) => setPays((ps) => [...ps, { id: Date.now(), key, amount: money(Math.max(0, total - ps.reduce((s, p) => s + cents(p.amount), 0))), received: '' }]);
+  const addPay = (key: PdvPayKey) => setPays((ps) => [...ps, { id: Date.now(), key, amount: money(Math.max(0, total - ps.reduce((s, p) => s + cents(p.amount), 0))), received: '', label: '' }]);
+  // Rateio entre clientes: uma linha por pessoa, cada uma escolhe a forma (pode ser um cartão para cada).
+  const split = () => setPays(splitAmong(total, people).map((c, i) => ({ id: Date.now() + i, key: 'CREDIT', amount: money(c), received: '', label: `Cliente ${i + 1}` })));
   const setPay = (id: number, patch: Partial<PayLine>) => setPays((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   // Notas comuns para o "valor entregue" (a próxima nota acima do valor em dinheiro).
   const notesFor = useMemo(() => (amount: number) => [amount, ...[2000, 5000, 10000, 20000].filter((n) => n > amount)].slice(0, 4), []);
@@ -180,7 +185,7 @@ function Checkout({
         tenant: true,
         body: {
           items: cart.map((l) => ({ productId: l.product.id, quantity: l.quantity, optionIds: l.optionIds, notes: l.notes || undefined })),
-          payments: pays.map((p) => ({ key: p.key, amountCents: cents(p.amount), receivedCents: p.key === 'CASH' && p.received ? cents(p.received) : undefined })),
+          payments: pays.map((p) => ({ key: p.key, amountCents: cents(p.amount), receivedCents: p.key === 'CASH' && p.received ? cents(p.received) : undefined, label: p.label.trim() || undefined })),
           customerName: customer.trim() || undefined,
           document: doc.trim() || undefined,
           discountCents: discountCents || undefined,
@@ -281,6 +286,22 @@ function Checkout({
           ))}
         </div>
       </div>
+      <div className="flex flex-wrap items-center gap-2 rounded-xl bg-zinc-50 p-2 text-sm">
+        <span className="font-medium">Dividir entre</span>
+        <div className="flex items-center rounded-lg border border-zinc-200 bg-white">
+          <button type="button" className="px-2.5 py-1" aria-label="Menos pessoas" onClick={() => setPeople((n) => Math.max(2, n - 1))}>
+            −
+          </button>
+          <span className="w-6 text-center font-semibold">{people}</span>
+          <button type="button" className="px-2.5 py-1" aria-label="Mais pessoas" onClick={() => setPeople((n) => Math.min(20, n + 1))}>
+            +
+          </button>
+        </div>
+        <span>clientes</span>
+        <button type="button" className="btn-ghost ml-auto px-3 py-1 text-sm" onClick={split}>
+          Ratear {formatBRL(total)}
+        </button>
+      </div>
 
       {pays.length > 0 && (
         <ul className="space-y-2">
@@ -288,8 +309,17 @@ function Checkout({
             const label = PDV_PAYMENT_METHODS.find((m) => m.key === p.key)!.label;
             return (
               <li key={p.id} className="rounded-xl border border-zinc-200 p-2">
+                {(p.label || pays.length > 1) && (
+                  <input className="input mb-2 py-1 text-sm" aria-label="De quem é este pagamento" placeholder="De quem? (ex.: Ana)" maxLength={40} value={p.label} onChange={(e) => setPay(p.id, { label: e.target.value })} />
+                )}
                 <div className="flex items-center gap-2">
-                  <span className="w-20 text-sm font-semibold">{label}</span>
+                  <select className="input w-24 py-1.5 text-sm font-semibold" aria-label="Forma de pagamento" value={p.key} onChange={(e) => setPay(p.id, { key: e.target.value as PdvPayKey })}>
+                    {PDV_PAYMENT_METHODS.map((m) => (
+                      <option key={m.key} value={m.key}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
                   <input className="input flex-1 py-1.5" inputMode="decimal" aria-label={`Valor em ${label}`} value={p.amount} onChange={(e) => setPay(p.id, { amount: e.target.value })} />
                   <button className="h-8 w-8 rounded-full text-zinc-400 hover:bg-zinc-100" aria-label={`Tirar ${label}`} onClick={() => setPays((ps) => ps.filter((x) => x.id !== p.id))}>
                     ✕

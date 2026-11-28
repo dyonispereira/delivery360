@@ -551,11 +551,12 @@ export class PdvPaymentDto {
   @IsIn(['CASH', 'PIX', 'DEBIT', 'CREDIT']) key: 'CASH' | 'PIX' | 'DEBIT' | 'CREDIT';
   @IsInt() @Min(1) @Max(MAX_CENTS) amountCents: number;
   @IsOptional() @IsInt() @Min(0) @Max(MAX_CENTS) receivedCents?: number;
+  @IsOptional() @IsString() @MaxLength(40) label?: string;
 }
 
 export class PdvSaleDto {
   @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => TabItemDto) items: TabItemDto[];
-  @IsArray() @ArrayMaxSize(6) @ValidateNested({ each: true }) @Type(() => PdvPaymentDto) payments: PdvPaymentDto[];
+  @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => PdvPaymentDto) payments: PdvPaymentDto[];
   @IsOptional() @IsString() @MaxLength(60) customerName?: string;
   /** CPF ou CNPJ na nota. */
   @IsOptional() @IsString() @MaxLength(20) document?: string;

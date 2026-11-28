@@ -63,6 +63,7 @@ export async function receiptPdf(r: Receipt): Promise<Buffer> {
     center('Não é documento fiscal', small);
   }
   center(`Pedido #${r.number} · ${brDateTime(r.issuedAt)}`, small);
+  center(`Origem: ${r.origin}`, normal, true);
   hr();
 
   doc.font('Helvetica-Bold').fontSize(small).text('Item', margin, doc.y, { continued: false });

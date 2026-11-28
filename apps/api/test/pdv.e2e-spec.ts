@@ -90,7 +90,7 @@ describe('PDV: caixa, venda de balcão, cupom e NFC-e (e2e)', () => {
     });
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ totalCents: 6000, changeCents: 4000, fiscalError: null });
-    expect(res.body.receipt).toMatchObject({ kind: 'NAO_FISCAL', totalCents: 6000, discountCents: 400, changeCents: 4000, payments: [{ label: 'Dinheiro', amountCents: 10000 }], customer: { name: 'Joana' } });
+    expect(res.body.receipt).toMatchObject({ kind: 'NAO_FISCAL', origin: 'PDV (balcão)', totalCents: 6000, discountCents: 400, changeCents: 4000, payments: [{ label: 'Dinheiro', amountCents: 10000 }], customer: { name: 'Joana' } });
     ids.sale1 = res.body.orderId;
     const order = await prisma.order.findUnique({ where: { id: ids.sale1 } });
     expect(order).toMatchObject({ type: 'COUNTER', status: 'PAID', paymentMethod: 'CASH_ON_DELIVERY' });
@@ -140,7 +140,7 @@ describe('PDV: caixa, venda de balcão, cupom e NFC-e (e2e)', () => {
     ids.sale2 = res.body.orderId;
     expect(await prisma.order.findUnique({ where: { id: ids.sale2 }, select: { status: true } })).toEqual({ status: 'COMPLETED' });
     const doc = await prisma.fiscalDocument.findFirstOrThrow({ where: { orderId: ids.sale2 } });
-    expect(doc.payload).toMatchObject({ cpf_destinatario: '52998224725', formas_pagamento: [{ forma_pagamento: '17', valor_pagamento: 4 }, { forma_pagamento: '04', valor_pagamento: 10, tipo_integracao: 2 }] });
+    expect(doc.payload).toMatchObject({ informacoes_adicionais_contribuinte: 'Origem do pedido: PDV (balcão)', cpf_destinatario: '52998224725', formas_pagamento: [{ forma_pagamento: '17', valor_pagamento: 4 }, { forma_pagamento: '04', valor_pagamento: 10, tipo_integracao: 2 }] });
 
     // Emitir de novo devolve a mesma nota (sem número novo).
     const again = await waiter().post(`/cardapio/pdv/pedidos/${ids.sale2}/nfce`).send({});
@@ -193,6 +193,28 @@ describe('PDV: caixa, venda de balcão, cupom e NFC-e (e2e)', () => {
     expect(list.body.find((s: { id: string }) => s.id === ids.sale2)).toMatchObject({ status: 'CANCELLED', receipt: 'NFCE', fiscalStatus: 'CANCELLED' });
   });
 
+  it('rateio entre clientes: um cartão para cada, com o nome no cupom e no financeiro', async () => {
+    const res = await waiter().post('/cardapio/pdv/vendas').send({
+      items: [{ productId: ids.prato, quantity: 1 }],
+      payments: [
+        { key: 'CREDIT', amountCents: 1700, label: 'Ana' },
+        { key: 'CREDIT', amountCents: 1650, label: 'Bia' },
+        { key: 'DEBIT', amountCents: 1650, label: 'Caio' },
+      ],
+      kitchen: false,
+      receipt: 'NAO_FISCAL',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.receipt.payments.map((p: { label: string }) => p.label)).toEqual(['Crédito (Ana)', 'Crédito (Bia)', 'Débito (Caio)']);
+    await sync();
+    const rows: { counterparty: string | null; amountCents: number }[] = await prisma.financialEntry.findMany({
+      where: { tenantId, externalKey: { startsWith: 'pdvpay:' }, account: { code: '1.8' }, description: { contains: `#${res.body.number}` } },
+      orderBy: { amountCents: 'desc' },
+    });
+    expect(rows.map((r) => [r.counterparty, r.amountCents])).toEqual([['Ana', 1700], ['Bia', 1650], ['Caio', 1650]]);
+    await owner().post(`/cardapio/pdv/vendas/${res.body.orderId}/cancelar`).send({ reason: 'Teste do rateio entre clientes' });
+  });
+
   it('nota passou de 30 minutos: não cancela pela SEFAZ e a venda continua', async () => {
     const res = await waiter().post('/cardapio/pdv/vendas').send({ items: [{ productId: ids.refri, quantity: 1 }], payments: [{ key: 'CREDIT', amountCents: 700 }], kitchen: false, receipt: 'NFCE' });
     expect(res.body.receipt.fiscal.number).toBe(2);
@@ -206,7 +228,7 @@ describe('PDV: caixa, venda de balcão, cupom e NFC-e (e2e)', () => {
   it('fecha o caixa com a contagem da gaveta e mostra a diferença', async () => {
     const res = await waiter().post('/cardapio/pdv/caixa/fechar').send({ countedCents: 12950, notes: 'Faltou uma moeda' });
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ status: 'CLOSED', expectedCents: 13000, countedCents: 12950, differenceCents: -50, summary: { cancelledCount: 1, salesCount: 2 } });
+    expect(res.body).toMatchObject({ status: 'CLOSED', expectedCents: 13000, countedCents: 12950, differenceCents: -50, summary: { cancelledCount: 2, salesCount: 2 } });
     expect((await waiter().get('/cardapio/pdv/caixa')).body.session).toBeNull();
     const hist = await waiter().get('/cardapio/pdv/caixas');
     expect(hist.body[0]).toMatchObject({ id: res.body.id, differenceCents: -50 });

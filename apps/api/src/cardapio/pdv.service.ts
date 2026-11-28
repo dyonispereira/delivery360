@@ -263,7 +263,7 @@ export class PdvService {
             })),
           },
           counterPayments: {
-            create: settled.map((p) => ({ tenantId, sessionId: session.id, method: p.method, cardKind: p.cardKind, amountCents: p.amountCents, receivedCents: p.receivedCents, changeCents: p.changeCents })),
+            create: settled.map((p) => ({ tenantId, sessionId: session.id, method: p.method, cardKind: p.cardKind, amountCents: p.amountCents, receivedCents: p.receivedCents, changeCents: p.changeCents, label: p.label })),
           },
           statusHistory: {
             create: [
@@ -313,7 +313,7 @@ export class PdvService {
       status: o.status,
       totalCents: o.totalCents,
       customerName: o.customerName,
-      payments: o.counterPayments.map((p) => pdvPayLabel(p.method, p.cardKind)).join(' + '),
+      payments: o.counterPayments.map((p) => `${pdvPayLabel(p.method, p.cardKind)}${p.label ? ` (${p.label})` : ''}`).join(' + '),
       receipt: o.fiscalDocuments[0] && o.fiscalDocuments[0].status !== 'REJECTED' ? 'NFCE' : 'NAO_FISCAL',
       fiscalStatus: o.fiscalDocuments[0]?.status ?? null,
     }));

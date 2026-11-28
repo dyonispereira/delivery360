@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { PdvPaymentError, settlePayments } from '@delivery360/shared';
+import { orderOrigin, PdvPaymentError, settlePayments, splitAmong } from '@delivery360/shared';
 import { accessKey, allocate, buildNfcePayload, FiscalError, mod11, qrCodeUrl, TPAG, type NfceInput } from './nfce';
 
 const base: NfceInput = {
@@ -41,6 +41,7 @@ describe('NFC-e', () => {
     expect(body.items[0].descricao).toContain('HOMOLOGACAO');
     expect(body.items[0].valor_unitario_comercial).toBe(25);
     expect(body.modalidade_frete).toBe(9);
+    expect((buildNfcePayload({ ...base, origin: 'iFood' }).body as Record<string, unknown>).informacoes_adicionais_contribuinte).toBe('Origem do pedido: iFood');
   });
 
   it('entrega em domicílio leva o frete, e o cartão sai como não integrado', () => {
@@ -86,6 +87,18 @@ describe('NFC-e', () => {
   });
 });
 
+describe('Origem do pedido no cupom', () => {
+  it('PDV, Cardápio Digital, Salão e apps', () => {
+    expect(orderOrigin('COUNTER', 'LOJA')).toBe('PDV (balcão)');
+    expect(orderOrigin('DELIVERY', 'LOJA')).toBe('Cardápio Digital');
+    expect(orderOrigin('PICKUP', 'LOJA')).toBe('Cardápio Digital');
+    expect(orderOrigin('DINE_IN', 'LOJA')).toBe('Salão');
+    expect(orderOrigin('DELIVERY', 'IFOOD')).toBe('iFood');
+    expect(orderOrigin('DELIVERY', 'FOOD99')).toBe('99Food');
+    expect(orderOrigin('DELIVERY', 'KEETA')).toBe('Keeta');
+  });
+});
+
 describe('Pagamento no PDV', () => {
   it('dinheiro com troco e pagamento dividido', () => {
     const r = settlePayments(4200, [
@@ -95,6 +108,11 @@ describe('Pagamento no PDV', () => {
     expect(r[1]).toMatchObject({ method: 'CASH_ON_DELIVERY', changeCents: 2800, receivedCents: 5000 });
     expect(r[0]).toMatchObject({ method: 'PIX', changeCents: 0 });
     expect(settlePayments(1000, [{ key: 'DEBIT', amountCents: 1000 }])[0]).toMatchObject({ method: 'CARD_ON_DELIVERY', cardKind: 'DEBIT' });
+  });
+
+  it('rateio entre clientes sem perder centavos', () => {
+    expect(splitAmong(10000, 3)).toEqual([3334, 3333, 3333]);
+    expect(settlePayments(10000, splitAmong(10000, 3).map((c, i) => ({ key: 'CREDIT' as const, amountCents: c, label: `Cliente ${i + 1}` })))[2].label).toBe('Cliente 3');
   });
 
   it('recusa falta, sobra e dinheiro entregue a menos', () => {

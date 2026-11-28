@@ -312,14 +312,14 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         const many = order.counterPayments.length > 1;
         for (const [i, pay] of order.counterPayments.entries()) {
           const method = pay.method as PaymentMethod;
-          const label = `${pdvPayLabel(method, pay.cardKind)}${many ? ` ${i + 1}/${order.counterPayments.length}` : ''}`;
+          const label = `${pdvPayLabel(method, pay.cardKind)}${many ? ` ${i + 1}/${order.counterPayments.length}` : ''}${pay.label ? ` (${pay.label})` : ''}`;
           const base = { day, status: 'PAID' as EntryStatus, source: 'cardapio', paymentMethod: method, channel: 'LOJA' as const };
           await this.upsert(tx, t, `pdvpay:${pay.id}:sale`, {
             ...base,
             type: 'RECEIVABLE',
             code: '1.8',
             description: `Balcão · pedido #${order.number} · ${label}`,
-            counterparty: order.customerName === 'Balcão' ? null : order.customerName,
+            counterparty: pay.label ?? (order.customerName === 'Balcão' ? null : order.customerName),
             amountCents: pay.amountCents,
           });
           const fee = Math.round((pay.amountCents * paymentFeeBps(rates, method)) / 10_000);

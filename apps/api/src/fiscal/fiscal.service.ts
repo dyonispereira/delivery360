@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type FiscalSettings } from '@prisma/client';
-import { pdvPayLabel, type Receipt } from '@delivery360/shared';
+import { orderOrigin, pdvPayLabel, type Receipt } from '@delivery360/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../core/audit.service';
 import { normalizeDocument } from '../cardapio/document';
@@ -146,6 +146,7 @@ export class FiscalService {
         changeCents: order.counterPayments.reduce((s, p) => s + p.changeCents, 0),
         document,
         customerName: order.customerName,
+        origin: orderOrigin(order.type, order.channel),
       });
     } catch (e) {
       if (e instanceof FiscalError) throw new BadRequestException(e.message);
@@ -260,13 +261,14 @@ export class FiscalService {
     const doc = order.fiscalDocuments.find((d) => d.status !== 'REJECTED') ?? null;
     const useFiscal = kind ? kind === 'NFCE' && !!doc : !!doc;
     const payments = order.counterPayments.length
-      ? order.counterPayments.map((p) => ({ label: pdvPayLabel(p.method, p.cardKind), amountCents: p.amountCents + p.changeCents }))
+      ? order.counterPayments.map((p) => ({ label: `${pdvPayLabel(p.method, p.cardKind)}${p.label ? ` (${p.label})` : ''}`, amountCents: p.amountCents + p.changeCents }))
       : order.type === 'DINE_IN'
         ? []
         : [{ label: pdvPayLabel(order.paymentMethod), amountCents: order.totalCents }];
     return {
       kind: useFiscal ? 'NFCE' : 'NAO_FISCAL',
       orderId: order.id,
+      origin: orderOrigin(order.type, order.channel),
       number: order.number,
       test: useFiscal ? doc!.environment !== 'PRODUCAO' : false,
       store: {

@@ -44,6 +44,8 @@ export interface NfceInput {
   changeCents: number;
   document: string | null;
   customerName: string | null;
+  /** Origem do pedido (PDV, Cardápio Digital, iFood...): vai nas informações complementares da nota. */
+  origin?: string;
 }
 
 export interface NfcePayloadItem {
@@ -133,6 +135,7 @@ export function buildNfcePayload(i: NfceInput) {
         ...(p.tPag === TPAG.CREDIT || p.tPag === TPAG.DEBIT ? { tipo_integracao: 2 } : {}),
       })),
       ...(i.changeCents > 0 ? { valor_troco: reais(i.changeCents) } : {}),
+      ...(i.origin ? { informacoes_adicionais_contribuinte: `Origem do pedido: ${i.origin}` } : {}),
     },
   };
 }

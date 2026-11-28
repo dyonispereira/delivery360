@@ -28,6 +28,7 @@ export async function receiptHtml(r: Receipt): Promise<string> {
         : '<div class="c b">CUPOM NÃO FISCAL</div><div class="c s">Não é documento fiscal</div>'
     }
     <div class="c s">Pedido #${r.number} · ${when(r.issuedAt)}</div>
+    <div class="c b">Origem: ${esc(r.origin)}</div>
     <hr>
     ${r.items
       .map(

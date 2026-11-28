@@ -73,6 +73,7 @@ CREATE TABLE "counter_payments" (
     "amount_cents" INTEGER NOT NULL,
     "received_cents" INTEGER,
     "change_cents" INTEGER NOT NULL DEFAULT 0,
+    "label" TEXT,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "counter_payments_pkey" PRIMARY KEY ("id")

@@ -1424,6 +1424,8 @@ model CounterPayment {
   /// Dinheiro: quanto o cliente entregou e o troco devolvido (recebido − valor).
   receivedCents Int?          @map("received_cents")
   changeCents   Int           @default(0) @map("change_cents")
+  /// Rateio entre clientes: de quem é este pagamento (ex.: "Ana", "Cliente 2").
+  label         String?
   createdAt     DateTime      @default(now()) @map("created_at")
   tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
