@@ -180,6 +180,7 @@ Dinheiro sempre em centavos. O fuso é Brasília. Os textos do sistema são em p
 | #30 | Pedido agendado |
 | #32 | PDV, caixa, cupom não fiscal e NFC-e, PDF, impressoras, origem no cupom, rateio |
 | #33 | Totem de autoatendimento em modo demonstração |
+| #38 | Importação simulada do cardápio do iFood (prévia, sem duplicar, preço do iFood separado) |
 | #36, #37 | Totem real: cadastro, pedido com senha e comer aqui/levar, paga no caixa (sem maquininha), fila no PDV, cozinha; receita em 1.9 Totem |
 | #34 | Hub iFood (1º PR, simulado): webhook `POST /public/webhooks/ifood` assinado (`IFOOD_WEBHOOK_SECRET`), restaurante pelo merchantId, eventos com estado e reprocessamento, vínculo com situação do iFood, cancelamento, comissão/taxa/desconto do iFood no financeiro |
 
@@ -191,9 +192,11 @@ Lista de diferenças para a degusta.ai, um item por vez:
 1. ~~Fidelidade~~ (feito)
 2. ~~Pedido agendado~~ (feito)
 3. ~~PDV e NFC-e~~ (PR #32; falta escolher o **emissor real** de NFC-e: Focus NFe recomendado, ou Nuvem Fiscal ou PlugNotas)
-4. **Hub iFood**: 1º PR (#34, simulado) feito; falta importação do cardápio e a ligação real (conta de parceiro, OAuth, confirmar/despachar pela API)
+4. **Hub iFood**: 1º PR (#34, simulado) feito; importação do cardápio simulada (PR #38: Cardápio > Canais de venda, prévia + confirmação, tabela `ifood_catalog_links`, reimportar não duplica, preço novo só em `channelPrices.IFOOD`); falta a ligação real (conta de parceiro, OAuth, catálogo real, confirmar/despachar pela API)
 5. **Marketing extra:** domínio próprio, Meta Pixel e Google Analytics, mapa de calor, várias impressoras
 6. **Robô de WhatsApp com IA** (por último, a pedido do Dyonis)
+
+Divisão de trabalho: o Dyonis alterna entre esta thread e outro chat. Se o outro chat não conseguir dar push, ele manda um `.patch` (`git format-patch`), que aplicamos com `git am` e viramos PR. O estado de cada item fica na descrição do PR e neste arquivo.
 
 Outras pendências:
 - Servidor Evolution (WhatsApp) no ar.

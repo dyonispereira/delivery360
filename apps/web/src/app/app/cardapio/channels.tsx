@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { CHANNEL_LABELS, type ChannelConfig } from '@delivery360/shared';
 import { ErrorBox, Spinner, Toggle } from '@/components/ui';
 import { api } from '@/lib/api';
+import { IfoodCatalogImport } from './ifood-catalog-import';
 import type { Category } from './types';
 
 const pctText = (bps: number) => (bps / 100).toString().replace('.', ',');
@@ -58,6 +59,7 @@ export function ChannelsEditor() {
           </p>
         )}
       </div>
+      <IfoodCatalogImport />
       <div className="grid gap-4 lg:grid-cols-3">
         {channels.map((c) => (
           <ChannelCard key={c.channel} config={c} onSaved={setChannels} />
