@@ -261,7 +261,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         await tx.financialEntry.updateMany({
           where: {
             tenantId: t,
-            externalKey: { in: ['tax', 'fee', 'commission', 'gross', 'promo', 'coupon', 'loyalty', 'coupon360'].map((k) => `order:${String(p.orderId)}:${k}`) },
+            externalKey: { in: ['tax', 'fee', 'commission', 'subsidy', 'gross', 'promo', 'coupon', 'loyalty', 'coupon360'].map((k) => `order:${String(p.orderId)}:${k}`) },
             status: 'OPEN',
           },
           data: { status: 'CANCELLED', notes: 'Pedido cancelado' },
@@ -423,6 +423,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
         customerName: true,
         tableName: true,
         totalCents: true,
+        channelLink: { select: { externalAmounts: true } },
         promoDiscountCents: true,
         discountCents: true,
         couponCode: true,
@@ -469,7 +470,25 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
       status: 'OPEN',
       paymentMethod: method,
     });
-    const commission = Math.round((order.totalCents * (cfg?.commissionBps ?? 0)) / 10_000);
+    // Valores informados pelo app (Hub iFood) valem mais que o % configurado.
+    const informed = (order.channelLink?.externalAmounts ?? {}) as { commissionCents?: number; paymentFeeCents?: number; ifoodDiscountCents?: number };
+    const subsidy = inApp ? Math.max(0, Number(informed.ifoodDiscountCents ?? 0)) : 0;
+    if (subsidy > 0) {
+      // Desconto bancado pelo app: o cliente pagou menos, mas o app paga essa parte ao restaurante no repasse.
+      await this.upsert(tx, t, `order:${order.id}:subsidy`, {
+        ...base,
+        type: 'RECEIVABLE',
+        code: CHANNEL_REVENUE_ACCOUNT[channel],
+        description: `Desconto bancado pelo ${label} · ${ref}`,
+        counterparty: label,
+        amountCents: subsidy,
+        dueDay: payoutDay,
+        status: 'OPEN',
+        paymentMethod: method,
+      });
+    }
+    const commission =
+      typeof informed.commissionCents === 'number' ? informed.commissionCents : Math.round((order.totalCents * (cfg?.commissionBps ?? 0)) / 10_000);
     if (commission > 0) {
       await this.upsert(tx, t, `order:${order.id}:commission`, {
         ...base,
@@ -484,7 +503,7 @@ export class GestaoSyncService implements OnModuleInit, OnModuleDestroy {
       });
     }
     const feeBps = inApp ? (cfg?.paymentFeeBps ?? 0) : paymentFeeBps(rates, method);
-    const fee = Math.round((order.totalCents * feeBps) / 10_000);
+    const fee = inApp && typeof informed.paymentFeeCents === 'number' ? informed.paymentFeeCents : Math.round((order.totalCents * feeBps) / 10_000);
     if (fee > 0) {
       await this.upsert(tx, t, `order:${order.id}:fee`, {
         ...base,

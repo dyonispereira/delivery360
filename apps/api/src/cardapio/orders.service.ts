@@ -1226,6 +1226,23 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * Cancelamento que vem de fora (ex.: o iFood cancelou). Vale em qualquer etapa do pedido, sem usuário,
+   * e segue o mesmo caminho do cancelamento no painel: histórico, auditoria, financeiro e pontos.
+   */
+  async cancelFromChannel(tx: Prisma.TransactionClient, tenantId: string, orderId: string, note: string) {
+    const order = await tx.order.findFirst({ where: { id: orderId, tenantId } });
+    if (!order || order.status === 'CANCELLED') return false;
+    const { count } = await tx.order.updateMany({ where: { id: orderId, status: order.status }, data: { status: 'CANCELLED' } });
+    if (count === 0) throw new ConflictException('O pedido mudou ao mesmo tempo. Tente de novo.');
+    await tx.orderStatusHistory.create({ data: { orderId, status: 'CANCELLED', note } });
+    await this.audit.log({ tenantId, action: 'order.status', entity: 'order', entityId: orderId, before: { status: order.status }, after: { status: 'CANCELLED', note } }, tx);
+    await this.events.publish(tenantId, 'pedido.cancelado', { orderId, from: order.status, to: 'CANCELLED', totalCents: order.totalCents }, tx);
+    await refundOrderPoints(tx, orderId);
+    await closeBatchIfDone(tx, order.batchId);
+    return true;
+  }
+
   /** Ficha completa do pedido para o painel: histórico, entregas (motoboy, placa, quem recebeu), avaliação e gorjeta. */
   async orderDetail(tenantId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({

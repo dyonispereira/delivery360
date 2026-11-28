@@ -64,6 +64,9 @@ model Tenant {
   financialEntries FinancialEntry[]
   financeSettings  FinanceSettings?
   channelSettings  ChannelSetting[]
+  channelMerchants ChannelMerchant[]
+  channelEvents    ChannelEvent[]
+  channelLinks     ChannelOrderLink[]
   employees        Employee[]
   payrolls         Payroll[]
   coupons          Coupon[]
@@ -532,6 +535,7 @@ model Order {
   items                 OrderItem[]
   statusHistory         OrderStatusHistory[]
   payments              Payment[]
+  channelLink           ChannelOrderLink?
   deliveryAttempts      DeliveryAttempt[]
   tip                   Tip?
   /// PDV: CPF ou CNPJ na nota (só números).
@@ -999,6 +1003,73 @@ model ChannelSetting {
 
   @@id([tenantId, channel])
   @@map("channel_settings")
+}
+
+/// Hub dos apps: qual restaurante é dono de cada código de loja (merchant id). Um código, um restaurante só.
+model ChannelMerchant {
+  channel    SalesChannel
+  merchantId String       @map("merchant_id")
+  tenantId   String       @map("tenant_id") @db.Uuid
+  createdAt  DateTime     @default(now()) @map("created_at")
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([channel, merchantId])
+  @@unique([tenantId, channel])
+  @@map("channel_merchants")
+}
+
+enum ChannelEventStatus {
+  RECEIVED
+  PROCESSED
+  /// Não é para nós (restaurante desconhecido, evento sem efeito).
+  IGNORED
+  /// Deu erro: pode ser reprocessado pelo dono.
+  FAILED
+}
+
+/// Evento recebido de um app (webhook), guardado como chegou. O mesmo evento (canal + id) entra uma vez só.
+model ChannelEvent {
+  id              String             @id @default(uuid()) @db.Uuid
+  /// null quando o código da loja não é de nenhum restaurante.
+  tenantId        String?            @map("tenant_id") @db.Uuid
+  channel         SalesChannel
+  eventId         String             @map("event_id")
+  /// Código do evento no app (ex.: PLACED, CONFIRMED, CANCELLED).
+  type            String
+  merchantId      String?            @map("merchant_id")
+  orderExternalId String?            @map("order_external_id")
+  payload         Json
+  status          ChannelEventStatus @default(RECEIVED)
+  attempts        Int                @default(0)
+  error           String?
+  processedAt     DateTime?          @map("processed_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  tenant          Tenant?            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([channel, eventId])
+  @@index([tenantId, channel, orderExternalId])
+  @@map("channel_events")
+}
+
+/// Vínculo pedido do app ↔ pedido interno, com a situação no app (separada do nosso status) e os valores que o app informou.
+model ChannelOrderLink {
+  id              String       @id @default(uuid()) @db.Uuid
+  tenantId        String       @map("tenant_id") @db.Uuid
+  channel         SalesChannel
+  externalId      String       @map("external_id")
+  /// null enquanto o pedido ainda não entrou (ex.: cancelado antes de chegar).
+  orderId         String?      @unique @map("order_id") @db.Uuid
+  /// Situação no app (PLACED, CONFIRMED, DISPATCHED, CONCLUDED, CANCELLED...).
+  externalStatus  String       @map("external_status")
+  /// Valores informados pelo app, em centavos: itens, entrega, descontos (app/loja), comissão, taxa, repasse previsto.
+  externalAmounts Json?        @map("external_amounts")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order           Order?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, channel, externalId])
+  @@map("channel_order_links")
 }
 
 // ---------- Gestão de pessoas ----------

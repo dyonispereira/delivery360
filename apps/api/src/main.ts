@@ -5,7 +5,7 @@ import { AppModule } from './app.module';
 import { setupApp } from './setup-app';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   // Atrás de proxy (Render, site na frente), o limite por IP precisa do IP real do cliente.
   const trustProxy = process.env.TRUST_PROXY;
   if (trustProxy) app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true');
